@@ -15,6 +15,18 @@
 
 浏览器运行使用本地演示适配器，便于 UI 调试；正式桌面数据只由 Rust/SQLite 链路持有。
 
+## BAT 测试入口
+
+先双击根目录的 `启动南枫情报台-测试版.bat`。它会直接启动本地测试程序，不安装系统组件，也不会生成安装包。
+
+当测试程序不存在或需要强制更新时，可在项目目录运行：
+
+```powershell
+.\启动南枫情报台-测试版.bat --rebuild
+```
+
+`--rebuild` 只执行 Tauri `--no-bundle` 构建，不生成安装器。
+
 ## 本地开发
 
 ```powershell
@@ -36,10 +48,9 @@ npm test
 npm run build
 npm run test:sites
 cargo test --manifest-path src-tauri/Cargo.toml
-npm run tauri:build
 ```
 
-NSIS 安装包输出到 `src-tauri/target/release/bundle/nsis/`。
+仅在 BAT 版本测试通过并获得明确确认后，再运行 `npm run tauri:build` 生成 NSIS 安装包。
 
 ## 文档入口
 
