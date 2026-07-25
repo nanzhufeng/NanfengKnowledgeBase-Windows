@@ -597,15 +597,33 @@ textarea:focus-visible,
 
 .records-list {
   height: calc(100% - 99px);
-  padding: 3px 4px 30px 0;
+  padding: 3px 8px 30px 0;
   overflow-x: hidden;
   overflow-y: auto;
-  scrollbar-width: none;
+  scrollbar-color: #8fa2bd #dfe5ed;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .records-list::-webkit-scrollbar {
-  width: 0;
+  width: 9px;
   height: 0;
+}
+
+.records-list::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: #dfe5ed;
+}
+
+.records-list::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  border: 2px solid #dfe5ed;
+  border-radius: 999px;
+  background: #8fa2bd;
+}
+
+.records-list::-webkit-scrollbar-thumb:hover {
+  background: #667f9f;
 }
 
 .record-card {
