@@ -57,11 +57,16 @@ import {
   versions,
   type IntelligenceRecord,
 } from "./mockData";
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
 type ImportStep = "empty" | "preview" | "mapping";
 type SaveState = "idle" | "saving" | "saved";
+type ConnectionMetrics = {
+  left: number;
+  top: number;
+  width: number;
+};
 type NavItem = {
   id: "inbox" | "records" | "tracking" | "updates" | "import";
   label: string;
@@ -91,13 +96,16 @@ function AppCard({
   children,
   className = "",
   onClick,
+  cardRef,
 }: {
   children: React.ReactNode;
   className?: string;
   onClick?: () => void;
+  cardRef?: React.Ref<HTMLElement>;
 }) {
   return (
     <section
+      ref={cardRef}
       className={`elevated-card ${className}`}
       onClick={onClick}
       tabIndex={onClick ? 0 : undefined}
@@ -199,13 +207,17 @@ function RecordList({
   search,
   setSearch,
   searchRef,
+  onSelectedGeometryChange,
 }: {
   selectedId: number;
   onSelect: (id: number) => void;
   search: string;
   setSearch: (value: string) => void;
   searchRef: React.RefObject<HTMLInputElement | null>;
+  onSelectedGeometryChange: (metrics: ConnectionMetrics | null) => void;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedCardRef = useRef<HTMLElement>(null);
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return records;
@@ -213,6 +225,50 @@ function RecordList({
       [record.title, record.summary, ...record.tags].join(" ").toLowerCase().includes(keyword),
     );
   }, [search]);
+
+  useLayoutEffect(() => {
+    const updateGeometry = () => {
+      const card = selectedCardRef.current;
+      const workspace = card?.closest<HTMLElement>(".records-workspace");
+      const detailPanel = workspace?.querySelector<HTMLElement>(".detail-panel");
+      if (!card || !workspace || !detailPanel) {
+        onSelectedGeometryChange(null);
+        return;
+      }
+
+      const cardRect = card.getBoundingClientRect();
+      const workspaceRect = workspace.getBoundingClientRect();
+      const detailRect = detailPanel.getBoundingClientRect();
+      const left = cardRect.right - workspaceRect.left;
+      const width = Math.max(0, detailRect.left - cardRect.right + 1);
+
+      onSelectedGeometryChange({
+        left,
+        top: cardRect.top - workspaceRect.top + cardRect.height / 2,
+        width,
+      });
+    };
+
+    const frame = window.requestAnimationFrame(updateGeometry);
+    const list = listRef.current;
+    const resizeObserver = new ResizeObserver(updateGeometry);
+    const card = selectedCardRef.current;
+    const workspace = card?.closest<HTMLElement>(".records-workspace");
+    const detailPanel = workspace?.querySelector<HTMLElement>(".detail-panel");
+
+    if (card) resizeObserver.observe(card);
+    if (workspace) resizeObserver.observe(workspace);
+    if (detailPanel) resizeObserver.observe(detailPanel);
+    list?.addEventListener("scroll", updateGeometry, { passive: true });
+    window.addEventListener("resize", updateGeometry);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      list?.removeEventListener("scroll", updateGeometry);
+      window.removeEventListener("resize", updateGeometry);
+    };
+  }, [filtered.length, onSelectedGeometryChange, selectedId]);
 
   return (
     <section className="record-pane">
@@ -237,7 +293,7 @@ function RecordList({
         <button>按更新时间 <ChevronDown size={15} /></button>
       </div>
 
-      <div className="records-list">
+      <div className="records-list" ref={listRef}>
         {filtered.length ? filtered.map((record) => {
           const selected = record.id === selectedId;
           return (
@@ -245,6 +301,7 @@ function RecordList({
               key={record.id}
               className={`record-card ${selected ? "selected" : ""}`}
               onClick={() => onSelect(record.id)}
+              cardRef={selected ? selectedCardRef : undefined}
             >
               <RecordIcon record={record} />
               <div className="record-copy">
@@ -446,6 +503,7 @@ function RecordsWorkspace({
 }) {
   const [search, setSearch] = useState("资本开支");
   const [selectedId, setSelectedId] = useState(3);
+  const [connectionMetrics, setConnectionMetrics] = useState<ConnectionMetrics | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -464,8 +522,23 @@ function RecordsWorkspace({
   }, [setIsEditing]);
 
   return (
-    <div className="records-workspace">
-      <RecordList selectedId={selectedId} onSelect={setSelectedId} search={search} setSearch={setSearch} searchRef={searchRef} />
+    <div
+      className="records-workspace"
+      style={connectionMetrics ? {
+        "--connection-left": `${connectionMetrics.left}px`,
+        "--connection-top": `${connectionMetrics.top}px`,
+        "--connection-width": `${connectionMetrics.width}px`,
+      } as React.CSSProperties : undefined}
+    >
+      <RecordList
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        search={search}
+        setSearch={setSearch}
+        searchRef={searchRef}
+        onSelectedGeometryChange={setConnectionMetrics}
+      />
+      {connectionMetrics && connectionMetrics.width > 0 ? <div className="record-detail-connector" aria-hidden="true" /> : null}
       <DetailPanel
         judgment={judgment}
         setJudgment={setJudgment}

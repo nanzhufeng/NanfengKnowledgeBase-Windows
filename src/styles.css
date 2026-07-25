@@ -258,6 +258,7 @@ textarea:focus-visible,
   min-width: 0;
   height: 100vh;
   overflow: hidden;
+  background: #eef1f5;
 }
 
 .app-header {
@@ -340,14 +341,21 @@ textarea:focus-visible,
 }
 
 .records-workspace {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: minmax(380px, 424px) minmax(580px, 1fr);
   gap: 25px;
   height: 100vh;
   padding: 34px 18px 16px 18px;
+  background:
+    radial-gradient(circle at 72% -18%, rgba(255, 255, 255, 0.72), transparent 44%),
+    #eef1f5;
 }
 
 .record-pane {
+  position: relative;
+  z-index: 2;
   min-width: 0;
   height: 100%;
   overflow: hidden;
@@ -442,9 +450,14 @@ textarea:focus-visible,
 .records-list {
   height: calc(100% - 99px);
   padding: 3px 4px 30px 0;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #c9d0d9 transparent;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.records-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .record-card {
@@ -467,26 +480,36 @@ textarea:focus-visible,
   box-shadow: 0 3px 3px rgba(20, 53, 127, 0.07), 0 15px 22px -11px rgba(17, 49, 143, 0.34);
 }
 
-.record-card.selected::before {
-  content: "";
+.record-detail-connector {
   position: absolute;
-  z-index: -2;
-  top: 50%;
-  right: -53px;
-  width: 52px;
-  border-top: 1px solid rgba(35, 74, 202, 0.58);
+  z-index: 3;
+  left: var(--connection-left);
+  top: var(--connection-top);
+  width: var(--connection-width);
+  height: 1px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, rgba(35, 74, 202, 0.7), rgba(35, 74, 202, 0.42));
+  pointer-events: none;
 }
 
-.record-card.selected .record-side::after {
+.record-detail-connector::before,
+.record-detail-connector::after {
   content: "";
   position: absolute;
-  top: calc(50% - 3px);
-  right: -58px;
+  top: -3px;
   width: 6px;
   height: 6px;
   border: 2px solid #eef1f5;
   border-radius: 50%;
   background: #2148d8;
+}
+
+.record-detail-connector::before {
+  left: -3px;
+}
+
+.record-detail-connector::after {
+  right: -3px;
 }
 
 .record-icon {
@@ -642,6 +665,8 @@ textarea:focus-visible,
 }
 
 .detail-panel {
+  position: relative;
+  z-index: 2;
   min-width: 0;
   height: calc(100% - 20px);
   margin-top: 20px;

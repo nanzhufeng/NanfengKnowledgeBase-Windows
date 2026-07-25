@@ -36,6 +36,14 @@
 - post-fix evidence：`docs/screenshots/design-qa-comparison.png`。
 - result：三大区域比例、详情标题坐标和卡片纵向节奏已对齐，无剩余 P0/P1/P2。
 
+### Iteration 3
+
+- [P2] 选中记录与详情面板的关联线被记录列表裁切，滚动条轨道形成一道硬切，冷灰底层没有连续贯穿两栏。
+- evidence：用户反馈截图 `codex-clipboard-407ef71c-4db1-478b-95b1-1c8ba823b99a.png`。
+- fix：关联线改为工作区层独立绘制，使用运行时几何跟随选中卡片；隐藏记录列表滚动条轨道；工作区与主区域统一使用冷灰最底层背景。
+- post-fix evidence：`docs/screenshots/implementation-1440x900.png`。
+- result：关联线宽 30 px、与选中卡片中心偏差 0 px；记录列表 `scrollWidth === clientWidth`，无横向溢出或滚动条硬切；左右两栏底层背景连续。
+
 ## Primary interactions tested
 
 - 搜索框与记录选中。
