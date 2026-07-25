@@ -311,12 +311,14 @@ fn parse_json_records(
     warnings: &mut Vec<String>,
 ) -> AppResult<Vec<CreateRecordInput>> {
     let root: Value = serde_json::from_str(text)?;
-    let values = match &root {
-        Value::Array(items) => items.clone(),
-        Value::Object(map) if map.get("records").and_then(Value::as_array).is_some() => {
-            map["records"].as_array().cloned().unwrap_or_default()
-        }
-        Value::Object(_) => vec![root],
+    let values: Vec<&Value> = match &root {
+        Value::Array(items) => items.iter().collect(),
+        Value::Object(map) if map.get("records").and_then(Value::as_array).is_some() => map
+            ["records"]
+            .as_array()
+            .map(|items| items.iter().collect())
+            .unwrap_or_default(),
+        Value::Object(_) => vec![&root],
         _ => {
             return Err(AppError::Validation(
                 "JSON 顶层必须是对象、对象数组或包含 records 数组".to_string(),
@@ -371,6 +373,10 @@ fn parse_json_records(
         tags.extend(string_array(object, &["topics"]));
         tags.sort();
         tags.dedup();
+        let source_text = match string_value(object, &["sourceText", "source_text"]) {
+            Some(source_text) => source_text,
+            None => serde_json::to_string(value)?,
+        };
         let key_evidence = object
             .get("keyEvidence")
             .or_else(|| object.get("key_evidence"))
@@ -412,8 +418,7 @@ fn parse_json_records(
             open_questions: string_array(object, &["openQuestions", "open_questions", "questions"]),
             next_actions: string_array(object, &["nextActions", "next_actions", "actions"]),
             notes: string_value(object, &["notes"]).unwrap_or_default(),
-            source_text: string_value(object, &["sourceText", "source_text"])
-                .unwrap_or_else(|| text.to_string()),
+            source_text,
             sources,
             is_favorite: object
                 .get("isFavorite")
@@ -611,6 +616,40 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("第 6 项缺少 title")));
+    }
+
+    #[test]
+    fn batch_json_source_text_is_scoped_to_each_item() {
+        let source = RecordSourceInput {
+            source_type: "import".to_string(),
+            title: "conversations.json".to_string(),
+            url: None,
+            local_path: Some("imports/raw/conversations.json".to_string()),
+            external_id: None,
+        };
+        let first_payload = "甲".repeat(4_096);
+        let second_payload = "乙".repeat(4_096);
+        let input = serde_json::json!([
+            {"name":"第一条","summary":"摘要甲","chat_messages":[{"text": first_payload}]},
+            {"name":"第二条","summary":"摘要乙","chat_messages":[{"text": second_payload}]}
+        ])
+        .to_string();
+        let mut warnings = Vec::new();
+        let records =
+            parse_json_records(&input, source, &mut warnings).expect("batch JSON should parse");
+
+        assert_eq!(records.len(), 2);
+        assert!(records[0].source_text.contains("摘要甲"));
+        assert!(!records[0].source_text.contains("摘要乙"));
+        assert!(records[1].source_text.contains("摘要乙"));
+        assert!(!records[1].source_text.contains("摘要甲"));
+        assert!(
+            records
+                .iter()
+                .map(|record| record.source_text.len())
+                .sum::<usize>()
+                < input.len() * 2
+        );
     }
 
     #[test]
