@@ -325,12 +325,45 @@ fn parse_json_records(
     };
     let mut records = Vec::new();
     for (index, value) in values.iter().enumerate() {
-        let object = value
-            .as_object()
-            .ok_or_else(|| AppError::Validation(format!("JSON 第 {} 项不是对象", index + 1)))?;
-        let title = string_value(object, &["title", "name"])
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| AppError::Validation(format!("JSON 第 {} 项缺少 title", index + 1)))?;
+        let item_number = index + 1;
+        let Some(object) = value.as_object() else {
+            warnings.push(format!("JSON 第 {item_number} 项不是对象，已跳过"));
+            continue;
+        };
+        if object.is_empty() {
+            warnings.push(format!("JSON 第 {item_number} 项为空对象，已跳过"));
+            continue;
+        }
+        let title = match string_value(object, &["title", "name"])
+            .and_then(|value| title_from_text(&value))
+        {
+            Some(title) => title,
+            None => {
+                let generated = [
+                    "summary",
+                    "description",
+                    "currentJudgment",
+                    "current_judgment",
+                    "judgment",
+                    "content",
+                    "text",
+                    "body",
+                    "notes",
+                ]
+                .iter()
+                .find_map(|key| {
+                    object
+                        .get(*key)
+                        .and_then(Value::as_str)
+                        .and_then(title_from_text)
+                })
+                .unwrap_or_else(|| format!("未命名导入记录 {item_number}"));
+                warnings.push(format!(
+                    "JSON 第 {item_number} 项缺少 title，已生成标题“{generated}”"
+                ));
+                generated
+            }
+        };
         let status = string_value(object, &["status"])
             .and_then(|value| RecordStatus::parse(value.trim()))
             .unwrap_or_default();
@@ -392,6 +425,11 @@ fn parse_json_records(
     if records.len() > 1 {
         warnings.push(format!("识别到 {} 条记录，将按顺序导入", records.len()));
     }
+    if records.is_empty() {
+        return Err(AppError::Validation(
+            "JSON 中没有可导入的对象记录".to_string(),
+        ));
+    }
     Ok(records)
 }
 
@@ -447,6 +485,25 @@ fn string_array(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Vec<S
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn title_from_text(text: &str) -> Option<String> {
+    let first_line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?
+        .trim_start_matches('#')
+        .trim();
+    if first_line.is_empty() {
+        return None;
+    }
+    let mut chars = first_line.chars();
+    let title = chars.by_ref().take(60).collect::<String>();
+    Some(if chars.next().is_some() {
+        format!("{title}…")
+    } else {
+        title
+    })
 }
 
 fn decode_text(bytes: &[u8]) -> (String, bool) {
@@ -514,6 +571,46 @@ mod tests {
             .expect_err("files larger than 200 MB must be rejected");
         assert!(matches!(error, AppError::Validation(message) if message.contains("200 MB")));
         assert!(LARGE_IMPORT_WARNING_BYTES < MAX_IMPORT_BYTES);
+    }
+
+    #[test]
+    fn json_import_recovers_missing_titles_and_skips_invalid_items() {
+        let source = RecordSourceInput {
+            source_type: "import".to_string(),
+            title: "mixed.json".to_string(),
+            url: None,
+            local_path: Some("imports/raw/mixed.json".to_string()),
+            external_id: None,
+        };
+        let mut warnings = Vec::new();
+        let records = parse_json_records(
+            r#"[
+                {"title":"正常标题"},
+                {"summary":"从摘要生成标题"},
+                {"content":"从正文生成标题"},
+                {},
+                "无效字符串",
+                {"status":"tracking","tags":["无标题"]}
+            ]"#,
+            source,
+            &mut warnings,
+        )
+        .expect("mixed JSON should remain importable");
+
+        assert_eq!(records.len(), 4);
+        assert_eq!(records[0].title, "正常标题");
+        assert_eq!(records[1].title, "从摘要生成标题");
+        assert_eq!(records[2].title, "从正文生成标题");
+        assert_eq!(records[3].title, "未命名导入记录 6");
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("第 4 项为空对象")));
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("第 5 项不是对象")));
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("第 6 项缺少 title")));
     }
 
     #[test]
