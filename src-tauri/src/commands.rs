@@ -7,9 +7,9 @@ use crate::database;
 use crate::error::{AppError, AppResult, CommandError};
 use crate::importer::{ConfirmImportInput, ImportPreview, ImportResult};
 use crate::models::{
-    AppendVersionInput, CreateRecordInput, CreateTagInput, DataLocation, IntelligenceRecord,
-    PermanentDeleteInput, RecordQuery, RecordVersion, RenameTagInput, RestoreVersionInput, TagItem,
-    UpdateRecordInput,
+    AppendVersionInput, CreateRecordInput, CreateTagInput, DataLocation, FavoriteUpdate,
+    IntelligenceRecord, PermanentDeleteInput, RecordQuery, RecordVersion, RenameTagInput,
+    RestoreVersionInput, TagItem, UpdateRecordInput,
 };
 use crate::paths::AppPaths;
 use crate::transfer::{ExportResult, RestoreResult};
@@ -93,9 +93,15 @@ pub fn set_favorite(
     state: State<'_, AppState>,
     record_id: i64,
     is_favorite: bool,
-) -> Result<IntelligenceRecord, CommandError> {
+) -> Result<FavoriteUpdate, CommandError> {
     let connection = command(state.connection())?;
-    command(database::set_favorite(&connection, record_id, is_favorite))
+    let update = command(database::set_favorite(&connection, record_id, is_favorite))?;
+    log::info!(
+        "收藏状态已更新：record_id={}, is_favorite={}",
+        record_id,
+        is_favorite
+    );
+    Ok(update)
 }
 
 #[tauri::command]

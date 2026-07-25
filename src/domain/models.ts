@@ -48,6 +48,13 @@ export const intelligenceRecordSchema = z.object({
 });
 export type IntelligenceRecord = z.infer<typeof intelligenceRecordSchema>;
 
+export const favoriteUpdateSchema = z.object({
+  recordId: z.number().int(),
+  isFavorite: z.boolean(),
+  updatedAt: z.string(),
+});
+export type FavoriteUpdate = z.infer<typeof favoriteUpdateSchema>;
+
 export const recordVersionSchema = z.object({
   id: z.number().int(),
   recordId: z.number().int(),

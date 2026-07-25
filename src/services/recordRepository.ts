@@ -10,6 +10,7 @@ import {
 } from "../mockData";
 import {
   dataLocationSchema,
+  favoriteUpdateSchema,
   importPreviewSchema,
   importResultSchema,
   exportResultSchema,
@@ -20,6 +21,7 @@ import {
   type CommandError,
   type CreateRecordInput,
   type DataLocation,
+  type FavoriteUpdate,
   type IntelligenceRecord,
   type ImportPreview,
   type ImportResult,
@@ -37,7 +39,7 @@ export interface RecordRepository {
   getRecord(recordId: number): Promise<IntelligenceRecord>;
   createRecord(input: CreateRecordInput): Promise<IntelligenceRecord>;
   updateRecord(recordId: number, input: UpdateRecordInput): Promise<IntelligenceRecord>;
-  setFavorite(recordId: number, isFavorite: boolean): Promise<IntelligenceRecord>;
+  setFavorite(recordId: number, isFavorite: boolean): Promise<FavoriteUpdate>;
   moveToTrash(recordId: number): Promise<IntelligenceRecord>;
   restoreRecord(recordId: number): Promise<IntelligenceRecord>;
   permanentlyDeleteRecord(recordId: number, confirmationTitle: string): Promise<void>;
@@ -88,8 +90,8 @@ class TauriRecordRepository implements RecordRepository {
     return intelligenceRecordSchema.parse(await invoke("update_record", { recordId, input }));
   }
 
-  async setFavorite(recordId: number, isFavorite: boolean): Promise<IntelligenceRecord> {
-    return intelligenceRecordSchema.parse(await invoke("set_favorite", { recordId, isFavorite }));
+  async setFavorite(recordId: number, isFavorite: boolean): Promise<FavoriteUpdate> {
+    return favoriteUpdateSchema.parse(await invoke("set_favorite", { recordId, isFavorite }));
   }
 
   async moveToTrash(recordId: number): Promise<IntelligenceRecord> {
@@ -295,12 +297,16 @@ export class BrowserRecordRepository implements RecordRepository {
     return clone(record);
   }
 
-  async setFavorite(recordId: number, isFavorite: boolean): Promise<IntelligenceRecord> {
+  async setFavorite(recordId: number, isFavorite: boolean): Promise<FavoriteUpdate> {
     const record = this.requireRecord(recordId);
     record.isFavorite = isFavorite;
     record.updatedAt = new Date().toISOString();
     this.save();
-    return clone(record);
+    return {
+      recordId,
+      isFavorite,
+      updatedAt: record.updatedAt,
+    };
   }
 
   async moveToTrash(recordId: number): Promise<IntelligenceRecord> {

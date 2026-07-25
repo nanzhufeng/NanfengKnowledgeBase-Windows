@@ -7,9 +7,9 @@ use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtensio
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AppendVersionInput, CreateRecordInput, CreateTagInput, EvidenceItem, IntelligenceRecord,
-    PermanentDeleteInput, RecordQuery, RecordSource, RecordSourceInput, RecordStatus,
-    RecordVersion, RenameTagInput, RestoreVersionInput, TagItem, UpdateRecordInput,
+    AppendVersionInput, CreateRecordInput, CreateTagInput, EvidenceItem, FavoriteUpdate,
+    IntelligenceRecord, PermanentDeleteInput, RecordQuery, RecordSource, RecordSourceInput,
+    RecordStatus, RecordVersion, RenameTagInput, RestoreVersionInput, TagItem, UpdateRecordInput,
 };
 
 const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_initial.sql");
@@ -291,15 +291,20 @@ pub fn set_favorite(
     connection: &Connection,
     record_id: i64,
     is_favorite: bool,
-) -> AppResult<IntelligenceRecord> {
+) -> AppResult<FavoriteUpdate> {
+    let updated_at = now();
     let changed = connection.execute(
         "UPDATE records SET is_favorite = ?1, updated_at = ?2 WHERE id = ?3",
-        params![is_favorite as i64, now(), record_id],
+        params![is_favorite as i64, updated_at, record_id],
     )?;
     if changed == 0 {
         return Err(AppError::NotFound("记录不存在".to_string()));
     }
-    load_record(connection, record_id)
+    Ok(FavoriteUpdate {
+        record_id,
+        is_favorite,
+        updated_at,
+    })
 }
 
 pub fn move_to_trash(connection: &Connection, record_id: i64) -> AppResult<IntelligenceRecord> {
@@ -1036,6 +1041,28 @@ mod tests {
                 .expect("read restored")
                 .current_judgment,
             "判断已经更新。"
+        );
+
+        let favorite = set_favorite(&connection, created.id, true).expect("favorite record");
+        assert_eq!(favorite.record_id, created.id);
+        assert!(favorite.is_favorite);
+        assert!(
+            serde_json::to_vec(&favorite)
+                .expect("serialize favorite update")
+                .len()
+                < 200
+        );
+        assert_eq!(
+            list_records(
+                &connection,
+                &RecordQuery {
+                    favorites_only: true,
+                    ..RecordQuery::default()
+                }
+            )
+            .expect("favorite records")
+            .len(),
+            1
         );
 
         move_to_trash(&connection, created.id).expect("move to trash");

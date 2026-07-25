@@ -3,7 +3,8 @@ chcp 65001 >nul
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "APP_EXE=%PROJECT_DIR%src-tauri\target\release\nanfeng-intelligence.exe"
+set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\test-build"
+set "APP_EXE=%TEST_TARGET_DIR%\release\nanfeng-intelligence.exe"
 
 title 南枫情报台 - 测试版启动器
 pushd "%PROJECT_DIR%" || (
@@ -27,6 +28,7 @@ if errorlevel 1 (
 )
 
 echo [准备] 正在生成本地测试程序，不会创建或安装安装包……
+set "CARGO_TARGET_DIR=%TEST_TARGET_DIR%"
 call npm run tauri:build -- --no-bundle
 if errorlevel 1 (
   echo.
@@ -43,6 +45,15 @@ if not exist "%APP_EXE%" (
   pause
   popd
   exit /b 1
+)
+
+tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
+if not errorlevel 1 (
+  echo [请先关闭] 检测到南枫情报台仍在运行。
+  echo 为避免旧版和测试版同时读写数据，请关闭现有窗口后再双击本文件。
+  pause
+  popd
+  exit /b 2
 )
 
 echo [启动] 南枫情报台测试版

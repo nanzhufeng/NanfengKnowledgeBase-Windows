@@ -69,7 +69,7 @@ import {
 } from "./domain/importedContent";
 import { connectionOpacity } from "./connectionGeometry";
 
-type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
+type Page = "records" | "favorites" | "tracking" | "updates" | "import" | "trash" | "settings";
 type ImportStep = "empty" | "preview" | "mapping";
 type SaveState = "idle" | "saving" | "saved";
 type Notice = {
@@ -83,7 +83,7 @@ type ConnectionMetrics = {
   opacity: number;
 };
 type NavItem = {
-  id: "records" | "tracking" | "updates" | "import";
+  id: "records" | "favorites" | "tracking" | "updates" | "import";
   label: string;
   count?: number;
   icon: React.ComponentType<{ size?: number }>;
@@ -102,6 +102,7 @@ const iconMap: Record<RecordIconKey, React.ComponentType<{ size?: number }>> = {
 
 const navItems: NavItem[] = [
   { id: "records", label: "全部记录", icon: Files },
+  { id: "favorites", label: "我的收藏", icon: Star },
   { id: "tracking", label: "持续跟踪", icon: RadioTower },
   { id: "updates", label: "判断更新", icon: FileCheck2, tone: "danger" },
   { id: "import", label: "导入中心", icon: Upload },
@@ -138,8 +139,14 @@ function recordSourceLabel(record: IntelligenceRecord): string {
   return record.sources[0]?.title || record.summary || "本地记录";
 }
 
+const recordDisplayTitleCache = new WeakMap<IntelligenceRecord, string>();
+
 function recordDisplayTitle(record: IntelligenceRecord): string {
-  return resolveImportedTitle(record.title, record.sourceText);
+  const cached = recordDisplayTitleCache.get(record);
+  if (cached !== undefined) return cached;
+  const displayTitle = resolveImportedTitle(record.title, record.sourceText);
+  recordDisplayTitleCache.set(record, displayTitle);
+  return displayTitle;
 }
 
 function recordIconKey(record: IntelligenceRecord): RecordIconKey {
@@ -260,6 +267,7 @@ function PrototypeDialog({
 function Sidebar({
   page,
   recordCount,
+  favoriteCount,
   trackingCount,
   updateCount,
   trashCount,
@@ -269,6 +277,7 @@ function Sidebar({
 }: {
   page: Page;
   recordCount: number;
+  favoriteCount: number;
   trackingCount: number;
   updateCount: number;
   trashCount: number;
@@ -279,6 +288,7 @@ function Sidebar({
   const [tagsOpen, setTagsOpen] = useState(false);
   const counts: Partial<Record<NavItem["id"], number>> = {
     records: recordCount,
+    favorites: favoriteCount,
     tracking: trackingCount,
     updates: updateCount,
   };
@@ -427,9 +437,9 @@ function RecordList({
   onNotify,
 }: {
   records: IntelligenceRecord[];
-  scope: "records" | "tracking" | "updates";
+  scope: "records" | "favorites" | "tracking" | "updates";
   selectedId: number | null;
-  onSelect: (id: number) => void;
+  onSelect: (id: number | null) => void;
   search: string;
   setSearch: (value: string) => void;
   searchRef: React.RefObject<HTMLInputElement | null>;
@@ -447,11 +457,13 @@ function RecordList({
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    const scopedRecords = scope === "tracking"
-      ? records.filter((record) => record.status === "tracking")
-      : scope === "updates"
-        ? records.filter((record) => record.status === "updated")
-        : records;
+    const scopedRecords = scope === "favorites"
+      ? records.filter((record) => record.isFavorite)
+      : scope === "tracking"
+        ? records.filter((record) => record.status === "tracking")
+        : scope === "updates"
+          ? records.filter((record) => record.status === "updated")
+          : records;
     const matches = scopedRecords
       .filter((record) => !keyword || [
         recordDisplayTitle(record),
@@ -468,7 +480,7 @@ function RecordList({
 
   useEffect(() => {
     if (filtered.some((record) => record.id === selectedId)) return;
-    if (filtered[0]) onSelect(filtered[0].id);
+    onSelect(filtered[0]?.id ?? null);
   }, [filtered, onSelect, selectedId]);
 
   useEffect(() => {
@@ -500,7 +512,13 @@ function RecordList({
     setOpenMenuId(null);
   };
 
-  const scopeLabel = scope === "updates" ? "判断更新" : scope === "tracking" ? "持续跟踪" : "全部记录";
+  const scopeLabel = scope === "favorites"
+    ? "我的收藏"
+    : scope === "updates"
+      ? "判断更新"
+      : scope === "tracking"
+        ? "持续跟踪"
+        : "全部记录";
 
   useLayoutEffect(() => {
     const updateGeometry = () => {
@@ -998,7 +1016,7 @@ function RecordsWorkspace({
   onNotify,
 }: {
   records: IntelligenceRecord[];
-  scope: "records" | "tracking" | "updates";
+  scope: "records" | "favorites" | "tracking" | "updates";
   selectedId: number | null;
   setSelectedId: (value: number | null) => void;
   search: string;
@@ -1889,6 +1907,7 @@ export function App() {
   const [newRecordOpen, setNewRecordOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<IntelligenceRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const favoriteRequests = useRef(new Set<number>());
 
   const notify = (message: string) => setNotice({ id: Date.now(), message });
 
@@ -1976,8 +1995,17 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const showRecords = page === "records" || page === "tracking" || page === "updates";
-  const recordScope = page === "tracking" ? "tracking" : page === "updates" ? "updates" : "records";
+  const showRecords = page === "records"
+    || page === "favorites"
+    || page === "tracking"
+    || page === "updates";
+  const recordScope = page === "favorites"
+    ? "favorites"
+    : page === "tracking"
+      ? "tracking"
+      : page === "updates"
+        ? "updates"
+        : "records";
 
   useEffect(() => {
     if (!notice) return;
@@ -2001,13 +2029,26 @@ export function App() {
   };
 
   const toggleFavorite = async (recordId: number) => {
+    if (favoriteRequests.current.has(recordId)) return;
+    const record = allRecords.find((item) => item.id === recordId);
+    if (!record) {
+      notify("记录不存在或已移除");
+      return;
+    }
+    favoriteRequests.current.add(recordId);
     try {
-      const record = await repository.getRecord(recordId);
       const updated = await repository.setFavorite(recordId, !record.isFavorite);
-      replaceRecord(updated);
+      const applyUpdate = (current: IntelligenceRecord[]) => current.map((item) =>
+        item.id === updated.recordId
+          ? { ...item, isFavorite: updated.isFavorite, updatedAt: updated.updatedAt }
+          : item);
+      setAllRecords(applyUpdate);
+      setVisibleRecords(applyUpdate);
       notify(updated.isFavorite ? "已加入收藏" : "已取消收藏");
     } catch (error) {
       notify(error instanceof Error ? error.message : "收藏操作失败");
+    } finally {
+      favoriteRequests.current.delete(recordId);
     }
   };
 
@@ -2104,6 +2145,7 @@ export function App() {
       <Sidebar
         page={page}
         recordCount={allRecords.length}
+        favoriteCount={allRecords.filter((record) => record.isFavorite).length}
         trackingCount={allRecords.filter((record) => record.status === "tracking").length}
         updateCount={allRecords.filter((record) => record.status === "updated").length}
         trashCount={trashRecords.length}

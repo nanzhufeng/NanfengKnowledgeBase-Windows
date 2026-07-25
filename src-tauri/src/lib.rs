@@ -6,23 +6,33 @@ mod models;
 mod paths;
 mod transfer;
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
+
 use commands::AppState;
 use tauri::Manager;
+use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
             let paths = paths::AppPaths::from_app(app.handle())?;
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .clear_targets()
+                    .target(Target::new(TargetKind::Folder {
+                        path: paths.logs.clone(),
+                        file_name: Some("nanfeng-intelligence".to_string()),
+                    }))
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
+            install_panic_log(paths.logs.clone());
+            log::info!("应用启动，数据目录：{}", paths.root.display());
+
             let connection = database::open_database(&paths.database)?;
             app.manage(AppState::new(connection, paths));
             Ok(())
@@ -57,4 +67,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("南枫情报台启动失败");
+}
+
+fn install_panic_log(log_directory: PathBuf) {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = std::fs::create_dir_all(&log_directory);
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_directory.join("panic.log"))
+        {
+            let _ = writeln!(
+                file,
+                "\n[{}] panic: {}\n{}",
+                chrono::Local::now().to_rfc3339(),
+                panic_info,
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
+        previous_hook(panic_info);
+    }));
 }

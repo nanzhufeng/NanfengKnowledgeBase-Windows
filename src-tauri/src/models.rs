@@ -97,6 +97,14 @@ pub struct IntelligenceRecord {
     pub version_count: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteUpdate {
+    pub record_id: i64,
+    pub is_favorite: bool,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRecordInput {
