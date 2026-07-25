@@ -44,6 +44,14 @@
 - post-fix evidence：`docs/screenshots/implementation-1440x900.png`。
 - result：关联线宽 30 px、与选中卡片中心偏差 0 px；记录列表 `scrollWidth === clientWidth`，无横向溢出或滚动条硬切；左右两栏底层背景连续。
 
+### Iteration 4
+
+- [P2] 关联线锚点使用负像素估算定位，圆心没有与 1 px 线段形成可直接验证的同轴合同；部分可见按钮仍是静态装饰。
+- evidence：用户反馈截图 `codex-clipboard-69e43b1d-f436-47a9-aeb4-1c9798990b10.png`。
+- fix：锚点改为独立 8 px 元素，以 `top: 50%` 和 `translateY(-50%)` 对齐线段中心；为筛选、排序、收藏、分享、菜单、详情展开、历史查看、设置和快捷键补齐阶段 1 本地交互。
+- post-fix evidence：`docs/screenshots/design-qa-comparison.png`、`docs/screenshots/implementation-1440x900.png`。
+- result：1440 × 900 下线段中心 y=438 px，左右锚点中心 y=438 px，偏差均为 0 px；页面横向溢出为 0；主流程按钮逐项浏览器验证通过。
+
 ## Primary interactions tested
 
 - 搜索框与记录选中。
@@ -51,6 +59,7 @@
 - 完成编辑、追加版本、出现 v4 成功提示并展开历史版本。
 - 进入导入中心、载入 JSON 示例、继续字段映射、完成导入预览。
 - 浏览器控制台错误：0。
+- 来源筛选、默认/最新/最早排序、列表与详情收藏同步、记录分享、记录/全局菜单、详情全集弹层、历史版本预览、设置预览、标签菜单、持续跟踪/判断更新视图与 Ctrl/⌘ + Enter 完成编辑。
 
 ## Follow-up polish
 
