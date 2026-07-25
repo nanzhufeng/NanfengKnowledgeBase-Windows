@@ -48,6 +48,49 @@ function makePreview(value: string): string {
   return compact.length > 760 ? `${compact.slice(0, 760)}…` : compact;
 }
 
+function titleFromText(value: string): string | null {
+  const firstLine = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean)
+    ?.replace(/^[#>*_`~\-\s]+/, "")
+    .replace(/[*_`~\s]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!firstLine) return null;
+
+  const characters = Array.from(firstLine);
+  return characters.length > 60
+    ? `${characters.slice(0, 60).join("")}…`
+    : firstLine;
+}
+
+export function isGenericImportedTitle(title: string): boolean {
+  const normalized = title
+    .trim()
+    .replace(/^[#>*_`~\-\s]+|[*_`~\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase();
+
+  return [
+    "conversation overview",
+    "conversation summary",
+    "untitled",
+    "new chat",
+    "new conversation",
+    "无标题",
+    "未命名",
+  ].includes(normalized) || /^未命名导入记录(?:\s+\d+)?$/.test(normalized);
+}
+
+export function resolveImportedTitle(title: string, sourceText: string): string {
+  if (!isGenericImportedTitle(title)) return title;
+
+  const firstUserMessage = readImportedContent(sourceText).messages
+    .find((message) => message.role === "用户");
+  return titleFromText(firstUserMessage?.text ?? "") ?? title;
+}
+
 export function shouldDisplaySummary(summary: string): boolean {
   const trimmed = summary.trim();
   if (!trimmed) return false;

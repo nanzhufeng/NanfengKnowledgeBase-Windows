@@ -62,7 +62,11 @@ import {
   getRecordRepository,
   type RecordRepository,
 } from "./services/recordRepository";
-import { readImportedContent, shouldDisplaySummary } from "./domain/importedContent";
+import {
+  readImportedContent,
+  resolveImportedTitle,
+  shouldDisplaySummary,
+} from "./domain/importedContent";
 import { connectionOpacity } from "./connectionGeometry";
 
 type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
@@ -134,8 +138,12 @@ function recordSourceLabel(record: IntelligenceRecord): string {
   return record.sources[0]?.title || record.summary || "本地记录";
 }
 
+function recordDisplayTitle(record: IntelligenceRecord): string {
+  return resolveImportedTitle(record.title, record.sourceText);
+}
+
 function recordIconKey(record: IntelligenceRecord): RecordIconKey {
-  const text = `${record.title} ${record.tags.join(" ")}`;
+  const text = `${recordDisplayTitle(record)} ${record.tags.join(" ")}`;
   if (/云|算力|AI/i.test(text)) return "cloud";
   if (/芯片|半导体|设备|GPU/i.test(text)) return "chip";
   if (/运营商|网络|通信/i.test(text)) return "radio";
@@ -446,7 +454,7 @@ function RecordList({
         : records;
     const matches = scopedRecords
       .filter((record) => !keyword || [
-        record.title,
+        recordDisplayTitle(record),
         record.summary,
         record.currentJudgment,
         ...record.tags,
@@ -473,7 +481,7 @@ function RecordList({
   ], [records]);
 
   const shareRecord = async (record: IntelligenceRecord) => {
-    const shareText = `${record.title} · 南枫情报台本地记录`;
+    const shareText = `${recordDisplayTitle(record)} · 南枫情报台本地记录`;
     try {
       await navigator.clipboard.writeText(shareText);
       onNotify("记录摘要已复制，可粘贴分享");
@@ -484,7 +492,7 @@ function RecordList({
 
   const copyRecordTitle = async (record: IntelligenceRecord) => {
     try {
-      await navigator.clipboard.writeText(record.title);
+      await navigator.clipboard.writeText(recordDisplayTitle(record));
       onNotify("记录标题已复制");
     } catch {
       onNotify("已生成记录标题（浏览器未授予剪贴板权限）");
@@ -604,6 +612,7 @@ function RecordList({
       <div className="records-list" ref={listRef}>
         {filtered.length ? filtered.map((record) => {
           const selected = record.id === selectedId;
+          const displayTitle = recordDisplayTitle(record);
           return (
             <AppCard
               key={record.id}
@@ -616,7 +625,7 @@ function RecordList({
             >
               <RecordIcon record={record} />
               <div className="record-copy">
-                <strong><HighlightedText text={record.title} query={search} /></strong>
+                <strong><HighlightedText text={displayTitle} query={search} /></strong>
                 <div className="tag-line">{record.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
                 <div className="record-source"><HighlightedText text={recordSourceLabel(record)} query={search} /></div>
               </div>
@@ -735,6 +744,10 @@ function DetailPanel({
   const [viewingVersion, setViewingVersion] = useState<RecordVersion | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
   const importedContent = useMemo(() => readImportedContent(record.sourceText), [record.sourceText]);
+  const displayTitle = useMemo(
+    () => resolveImportedTitle(record.title, record.sourceText),
+    [record.sourceText, record.title],
+  );
   const showSummary = useMemo(() => shouldDisplaySummary(record.summary), [record.summary]);
 
   useEffect(() => {
@@ -779,7 +792,7 @@ function DetailPanel({
     <article className="detail-panel elevated-card">
       <div className="detail-title-row">
         <div>
-          <h1>{record.title}</h1>
+          <h1>{displayTitle}</h1>
           <div className="detail-meta">
             <span className="status-pill">{statusLabel(record.status)}</span>
             <span>{formatRecordDateTime(record.updatedAt)} 更新</span>
@@ -935,7 +948,7 @@ function DetailPanel({
       {sourceOpen ? (
         <PrototypeDialog
           eyebrow={importedContent.isConversation ? "导入会话原文" : "记录原始内容"}
-          title={record.title}
+          title={displayTitle}
           onClose={() => setSourceOpen(false)}
           className="source-content-dialog"
         >
@@ -1581,7 +1594,7 @@ function TrashPage({
         {records.map((record) => (
           <AppCard className="trash-card" key={record.id}>
             <RecordIcon record={record} />
-            <div><strong>{record.title}</strong><span>删除于 {record.deletedAt ? formatRecordDateTime(record.deletedAt) : "未知时间"}</span></div>
+            <div><strong>{recordDisplayTitle(record)}</strong><span>删除于 {record.deletedAt ? formatRecordDateTime(record.deletedAt) : "未知时间"}</span></div>
             <button
               className="secondary-button"
               onClick={() => void onRestore(record.id)}

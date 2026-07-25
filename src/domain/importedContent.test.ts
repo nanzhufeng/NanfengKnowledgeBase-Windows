@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readImportedContent, shouldDisplaySummary } from "./importedContent";
+import {
+  readImportedContent,
+  resolveImportedTitle,
+  shouldDisplaySummary,
+} from "./importedContent";
 
 describe("readImportedContent", () => {
   it("converts archived conversation JSON into readable messages", () => {
@@ -58,5 +62,30 @@ describe("readImportedContent", () => {
       "这是一条中文摘要，其中包含 AI agent 和 ChatGPT 等必要英文术语。",
     )).toBe(true);
     expect(shouldDisplaySummary("")).toBe(false);
+  });
+
+  it("replaces a generic import title with the first user message", () => {
+    const source = JSON.stringify({
+      summary: "**Conversation Overview**",
+      chat_messages: [
+        { sender: "assistant", text: "先出现的助手内容不应成为标题" },
+        {
+          sender: "human",
+          text: "我的 MAC Air 是 8G 内存，Mac Pro 是 32G 内存，为什么占用差这么多？",
+        },
+      ],
+    });
+
+    expect(resolveImportedTitle("**Conversation Overview**", source)).toBe(
+      "我的 MAC Air 是 8G 内存，Mac Pro 是 32G 内存，为什么占用差这么多？",
+    );
+  });
+
+  it("keeps a meaningful original title unchanged", () => {
+    const source = JSON.stringify({
+      chat_messages: [{ sender: "human", text: "另一段正文" }],
+    });
+
+    expect(resolveImportedTitle("Mac 内存占用机制", source)).toBe("Mac 内存占用机制");
   });
 });

@@ -1472,8 +1472,8 @@ textarea:focus-visible,
   display: grid;
   padding: 28px;
   place-items: center;
-  background: rgba(4, 24, 52, 0.34);
-  backdrop-filter: blur(3px);
+  background: rgba(28, 30, 34, 0.38);
+  backdrop-filter: blur(3px) saturate(0.82);
   animation: backdrop-in 160ms ease-out;
 }
 

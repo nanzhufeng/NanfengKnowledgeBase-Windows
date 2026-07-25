@@ -338,28 +338,33 @@ fn parse_json_records(
         }
         let title = match string_value(object, &["title", "name"])
             .and_then(|value| title_from_text(&value))
+            .filter(|title| !is_generic_title(title))
         {
             Some(title) => title,
             None => {
-                let generated = [
-                    "summary",
-                    "description",
-                    "currentJudgment",
-                    "current_judgment",
-                    "judgment",
-                    "content",
-                    "text",
-                    "body",
-                    "notes",
-                ]
-                .iter()
-                .find_map(|key| {
-                    object
-                        .get(*key)
-                        .and_then(Value::as_str)
-                        .and_then(title_from_text)
-                })
-                .unwrap_or_else(|| format!("未命名导入记录 {item_number}"));
+                let generated = title_from_chat_messages(object)
+                    .or_else(|| {
+                        [
+                            "summary",
+                            "description",
+                            "currentJudgment",
+                            "current_judgment",
+                            "judgment",
+                            "content",
+                            "text",
+                            "body",
+                            "notes",
+                        ]
+                        .iter()
+                        .find_map(|key| {
+                            object
+                                .get(*key)
+                                .and_then(Value::as_str)
+                                .and_then(title_from_text)
+                                .filter(|title| !is_generic_title(title))
+                        })
+                    })
+                    .unwrap_or_else(|| format!("未命名导入记录 {item_number}"));
                 warnings.push(format!(
                     "JSON 第 {item_number} 项缺少 title，已生成标题“{generated}”"
                 ));
@@ -490,6 +495,67 @@ fn string_array(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Vec<S
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn title_from_chat_messages(object: &serde_json::Map<String, Value>) -> Option<String> {
+    object
+        .get("chat_messages")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_object)
+        .find_map(|message| {
+            let sender = message
+                .get("sender")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_ascii_lowercase();
+            if !matches!(sender.as_str(), "human" | "user") {
+                return None;
+            }
+
+            message
+                .get("text")
+                .and_then(Value::as_str)
+                .and_then(title_from_text)
+                .or_else(|| {
+                    let content = message.get("content")?.as_array()?;
+                    content
+                        .iter()
+                        .filter_map(Value::as_object)
+                        .find_map(|block| {
+                            block
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .and_then(title_from_text)
+                        })
+                })
+        })
+}
+
+fn is_generic_title(title: &str) -> bool {
+    let normalized = title
+        .trim()
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '#' | '>' | '*' | '_' | '`' | '~' | '-')
+        })
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+
+    matches!(
+        normalized.as_str(),
+        "conversation overview"
+            | "conversation summary"
+            | "untitled"
+            | "new chat"
+            | "new conversation"
+            | "无标题"
+            | "未命名"
+    ) || normalized
+        .strip_prefix("未命名导入记录")
+        .is_some_and(|suffix| suffix.trim().is_empty() || suffix.trim().parse::<usize>().is_ok())
 }
 
 fn title_from_text(text: &str) -> Option<String> {
@@ -650,6 +716,41 @@ mod tests {
                 .sum::<usize>()
                 < input.len() * 2
         );
+    }
+
+    #[test]
+    fn conversation_import_prefers_first_user_message_over_generic_title() {
+        let source = RecordSourceInput {
+            source_type: "import".to_string(),
+            title: "conversation.json".to_string(),
+            url: None,
+            local_path: Some("imports/raw/conversation.json".to_string()),
+            external_id: None,
+        };
+        let input = serde_json::json!({
+            "name": "**Conversation Overview**",
+            "summary": "**Conversation Overview**",
+            "chat_messages": [
+                {"sender": "assistant", "text": "先出现的助手内容"},
+                {
+                    "sender": "human",
+                    "text": "我的 MAC Air 是 8G 内存，Mac Pro 是 32G 内存，为什么占用差这么多？"
+                }
+            ]
+        })
+        .to_string();
+        let mut warnings = Vec::new();
+        let records = parse_json_records(&input, source, &mut warnings)
+            .expect("conversation JSON should parse");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].title,
+            "我的 MAC Air 是 8G 内存，Mac Pro 是 32G 内存，为什么占用差这么多？"
+        );
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("缺少 title")));
     }
 
     #[test]
