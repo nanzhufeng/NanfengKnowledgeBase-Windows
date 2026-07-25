@@ -8,9 +8,11 @@
 
 ## 当前阶段边界
 
-- 当前是阶段 1：React + TypeScript 假数据 UI 原型。
-- 允许修改：`src/`、项目文档、测试与截图。
-- 禁止：真实数据库、API、云同步、模型调用、真实文件写入和过度领域架构。
+- 阶段 1 视觉与交互契约已经用户确认并冻结；当前进入本地优先桌面 MVP 实施。
+- 桌面技术栈为 Tauri 2 + React/TypeScript + Rust + SQLite；`src/services/recordRepository.ts` 是前端唯一数据入口，`src-tauri/src/database.rs` 是数据库规则所有者。
+- 允许修改：`src/`、`src-tauri/`、项目文档、测试、构建与安装配置。
+- 不引入云同步、模型 API、遥测或未经确认的外部联网；导入先归档原文件再解析，恢复前必须先保护当前数据库。
+- 浏览器仓库只用于视觉与组件契约验证，不代表桌面生产数据真相。
 - `.openai/hosting.json`、`worker/index.js`、`scripts/prepare-sites-build.mjs`、`tests/sites-worker.test.mjs` 是原型运行时文件，除非交付链路变化，否则保持完整。
 
 ## 已确认视觉契约
@@ -26,6 +28,9 @@
 
 ```powershell
 npm run typecheck
+npm test
 npm run build
 npm run test:sites
+cargo test --manifest-path src-tauri/Cargo.toml
+npx tauri build
 ```

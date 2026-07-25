@@ -1,0 +1,37 @@
+[package]
+name = "nanfeng-intelligence"
+version = "0.1.0"
+description = "南枫情报台：本地研究档案与判断版本库"
+authors = ["南烛枫"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "nanfeng_intelligence_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3" }
+tauri-plugin-log = "2"
+ammonia = "4.1.4"
+chrono = { version = "0.4.45", features = ["serde"] }
+encoding_rs = "0.8.35"
+hex = "0.4.3"
+open = "5.4.0"
+rusqlite = { version = "0.40.1", features = ["backup", "bundled", "chrono", "serde_json"] }
+sha2 = "0.11.0"
+thiserror = "2.0.19"
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"

@@ -47,18 +47,21 @@ import {
   X,
 } from "lucide-react";
 import {
-  confirmedFacts,
-  defaultJudgment,
-  evidence,
-  nextActions,
-  openQuestions,
-  records,
   sampleJson,
-  versions,
-  type IntelligenceRecord,
 } from "./mockData";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
+import {
+  recordToUpdate,
+  type IntelligenceRecord,
+  type RecordStatus,
+  type RecordVersion,
+  type TagItem,
+} from "./domain/models";
+import {
+  getRecordRepository,
+  type RecordRepository,
+} from "./services/recordRepository";
 
 type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
 type ImportStep = "empty" | "preview" | "mapping";
@@ -81,7 +84,9 @@ type NavItem = {
   tone?: "danger";
 };
 
-const iconMap = {
+type RecordIconKey = "cloud" | "chip" | "document" | "building" | "radio";
+
+const iconMap: Record<RecordIconKey, React.ComponentType<{ size?: number }>> = {
   cloud: Cloud,
   chip: Cpu,
   document: FileText,
@@ -90,12 +95,56 @@ const iconMap = {
 };
 
 const navItems: NavItem[] = [
-  { id: "inbox", label: "收录箱", count: 12, icon: Inbox, disabled: true },
-  { id: "records", label: "全部记录", count: 236, icon: Files },
-  { id: "tracking", label: "持续跟踪", count: 28, icon: RadioTower },
-  { id: "updates", label: "判断更新", count: 14, icon: FileCheck2, tone: "danger" },
+  { id: "inbox", label: "收录箱", count: 0, icon: Inbox, disabled: true },
+  { id: "records", label: "全部记录", icon: Files },
+  { id: "tracking", label: "持续跟踪", icon: RadioTower },
+  { id: "updates", label: "判断更新", icon: FileCheck2, tone: "danger" },
   { id: "import", label: "导入中心", icon: Upload },
 ];
+
+function formatRecordDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(5, 10);
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date).replace("/", "-");
+}
+
+function formatRecordDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.replace("T", " ").slice(0, 16);
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function recordSourceLabel(record: IntelligenceRecord): string {
+  return record.sources[0]?.title || record.summary || "本地记录";
+}
+
+function recordIconKey(record: IntelligenceRecord): RecordIconKey {
+  const text = `${record.title} ${record.tags.join(" ")}`;
+  if (/云|算力|AI/i.test(text)) return "cloud";
+  if (/芯片|半导体|设备|GPU/i.test(text)) return "chip";
+  if (/运营商|网络|通信/i.test(text)) return "radio";
+  if (/公司|企业|产业链|厂商/i.test(text)) return "building";
+  return "document";
+}
+
+function statusLabel(status: RecordStatus): string {
+  return {
+    normal: "普通记录",
+    tracking: "持续跟踪",
+    verification: "待验证",
+    updated: "判断更新",
+  }[status];
+}
 
 function AppCard({
   children,
@@ -176,16 +225,31 @@ function PrototypeDialog({
 
 function Sidebar({
   page,
+  recordCount,
+  trackingCount,
+  updateCount,
+  trashCount,
+  tags,
   onNavigate,
   onNotify,
   onSelectTag,
 }: {
   page: Page;
+  recordCount: number;
+  trackingCount: number;
+  updateCount: number;
+  trashCount: number;
+  tags: TagItem[];
   onNavigate: (page: Page) => void;
   onNotify: (message: string) => void;
   onSelectTag: (tag: string) => void;
 }) {
   const [tagsOpen, setTagsOpen] = useState(false);
+  const counts: Partial<Record<NavItem["id"], number>> = {
+    records: recordCount,
+    tracking: trackingCount,
+    updates: updateCount,
+  };
 
   return (
     <aside className="sidebar">
@@ -214,7 +278,9 @@ function Sidebar({
             >
               <Icon size={20} />
               <span className="nav-label">{item.label}</span>
-              {item.count ? <span className="nav-count">{item.count}</span> : null}
+              {(counts[item.id] ?? item.count) !== undefined
+                ? <span className="nav-count">{counts[item.id] ?? item.count}</span>
+                : null}
             </button>
           );
         })}
@@ -230,17 +296,18 @@ function Sidebar({
         </button>
         {tagsOpen ? (
           <div className="sidebar-tag-menu">
-            {["资本开支", "云计算", "半导体"].map((tag) => (
+            {tags.slice(0, 8).map((tag) => (
               <button
-                key={tag}
+                key={tag.id}
                 onClick={() => {
-                  onSelectTag(tag);
+                  onSelectTag(tag.name);
                   setTagsOpen(false);
                 }}
               >
-                <span>{tag}</span><ChevronRight size={14} />
+                <span>{tag.name}</span><em>{tag.recordCount}</em><ChevronRight size={14} />
               </button>
             ))}
+            {!tags.length ? <span className="sidebar-empty">暂无标签</span> : null}
           </div>
         ) : null}
       </nav>
@@ -249,7 +316,7 @@ function Sidebar({
         <button className={`nav-item ${page === "trash" ? "active" : ""}`} onClick={() => onNavigate("trash")}>
           <Trash2 size={20} />
           <span className="nav-label">回收站</span>
-          <span className="nav-count">7</span>
+          <span className="nav-count">{trashCount}</span>
         </button>
         <button className={`nav-item ${page === "settings" ? "active" : ""}`} onClick={() => onNavigate("settings")}>
           <Settings size={20} />
@@ -257,8 +324,8 @@ function Sidebar({
         </button>
         <div className="storage">
           <div className="storage-title"><HardDrive size={16} /><span>本地存储</span></div>
-          <div className="storage-copy">已用 48.7 GB / 256 GB</div>
-          <div className="storage-track"><span /></div>
+          <div className="storage-copy">{recordCount} 条本地记录</div>
+          <div className="storage-track"><span style={{ width: `${Math.min(100, Math.max(8, recordCount))}%` }} /></div>
         </div>
       </div>
     </aside>
@@ -268,9 +335,13 @@ function Sidebar({
 function AppHeader({
   saveState,
   onNotify,
+  onCreateRecord,
+  onExportCurrent,
 }: {
   saveState: SaveState;
   onNotify: (message: string) => void;
+  onCreateRecord: () => void;
+  onExportCurrent: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -296,8 +367,8 @@ function AppHeader({
         </button>
         {menuOpen ? (
           <div className="action-menu header-action-menu">
-            <button onClick={() => runAction("已创建一条空白记录草稿（演示）")}><Plus size={16} />新建记录</button>
-            <button onClick={() => runAction("当前视图已准备导出（演示）")}><Save size={16} />导出当前视图</button>
+            <button onClick={() => { setMenuOpen(false); onCreateRecord(); }}><Plus size={16} />新建记录</button>
+            <button onClick={() => { setMenuOpen(false); onExportCurrent(); }}><Save size={16} />导出当前记录</button>
             <button onClick={() => runAction("快捷键：Ctrl/⌘ K 搜索，Ctrl/⌘ E 编辑，Ctrl/⌘ Shift I 导入")}><Keyboard size={16} />快捷键说明</button>
           </div>
         ) : null}
@@ -307,11 +378,13 @@ function AppHeader({
 }
 
 function RecordIcon({ record }: { record: IntelligenceRecord }) {
-  const Icon = iconMap[record.icon];
-  return <div className={`record-icon ${record.icon}`}><Icon size={23} /></div>;
+  const iconKey = recordIconKey(record);
+  const Icon = iconMap[iconKey];
+  return <div className={`record-icon ${iconKey}`}><Icon size={23} /></div>;
 }
 
 function RecordList({
+  records,
   scope,
   selectedId,
   onSelect,
@@ -319,19 +392,22 @@ function RecordList({
   setSearch,
   searchRef,
   onSelectedGeometryChange,
-  favoriteIds,
   onToggleFavorite,
+  onUpdateStatus,
+  onMoveToTrash,
   onNotify,
 }: {
+  records: IntelligenceRecord[];
   scope: "records" | "tracking" | "updates";
-  selectedId: number;
+  selectedId: number | null;
   onSelect: (id: number) => void;
   search: string;
   setSearch: (value: string) => void;
   searchRef: React.RefObject<HTMLInputElement | null>;
   onSelectedGeometryChange: (metrics: ConnectionMetrics | null) => void;
-  favoriteIds: Set<number>;
   onToggleFavorite: (id: number) => void;
+  onUpdateStatus: (id: number, status: RecordStatus) => void;
+  onMoveToTrash: (id: number) => void;
   onNotify: (message: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -342,20 +418,34 @@ function RecordList({
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    const scopedRecords = scope === "updates"
-      ? records.filter((record) => Number(record.date.slice(3)) >= 23)
-      : records;
+    const scopedRecords = scope === "tracking"
+      ? records.filter((record) => record.status === "tracking")
+      : scope === "updates"
+        ? records.filter((record) => record.status === "updated")
+        : records;
     const matches = scopedRecords
-      .filter((record) => !keyword || [record.title, record.summary, ...record.tags].join(" ").toLowerCase().includes(keyword))
-      .filter((record) => sourceFilter === "全部来源" || record.source === sourceFilter);
+      .filter((record) => !keyword || [
+        record.title,
+        record.summary,
+        record.currentJudgment,
+        ...record.tags,
+      ].join(" ").toLowerCase().includes(keyword))
+      .filter((record) => sourceFilter === "全部来源" || recordSourceLabel(record) === sourceFilter);
     if (sortMode === "default") return matches;
-    return [...matches].sort((a, b) => sortMode === "asc" ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
-  }, [scope, search, sortMode, sourceFilter]);
+    return [...matches].sort((a, b) => sortMode === "asc"
+      ? a.updatedAt.localeCompare(b.updatedAt)
+      : b.updatedAt.localeCompare(a.updatedAt));
+  }, [records, scope, search, sortMode, sourceFilter]);
 
   useEffect(() => {
     if (filtered.some((record) => record.id === selectedId)) return;
     if (filtered[0]) onSelect(filtered[0].id);
   }, [filtered, onSelect, selectedId]);
+
+  const sourceOptions = useMemo(() => [
+    "全部来源",
+    ...new Set(records.map(recordSourceLabel).filter(Boolean)),
+  ], [records]);
 
   const shareRecord = async (record: IntelligenceRecord) => {
     const shareText = `${record.title} · 南枫情报台本地记录`;
@@ -450,7 +540,7 @@ function RecordList({
           {filterOpen ? (
             <div className="filter-popover elevated-card">
               <strong>来源</strong>
-              {["全部来源", "财报与研究对话", "行业访谈记录", "内部研究笔记"].map((source) => (
+              {sourceOptions.map((source) => (
                 <button
                   className={sourceFilter === source ? "selected" : ""}
                   key={source}
@@ -491,17 +581,17 @@ function RecordList({
               <div className="record-copy">
                 <strong>{record.title}</strong>
                 <div className="tag-line">{record.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
-                <div className="record-source">{record.source}</div>
+                <div className="record-source">{recordSourceLabel(record)}</div>
               </div>
               <div className="record-side">
-                <span className="record-date">{record.date}</span>
+                <span className="record-date">{formatRecordDate(record.updatedAt)}</span>
                 <div className="quick-actions" onClick={(event) => event.stopPropagation()}>
                   <button
-                    className={favoriteIds.has(record.id) ? "active" : ""}
-                    aria-label={favoriteIds.has(record.id) ? "取消收藏" : "收藏"}
+                    className={record.isFavorite ? "active" : ""}
+                    aria-label={record.isFavorite ? "取消收藏" : "收藏"}
                     onClick={() => onToggleFavorite(record.id)}
                   >
-                    <Star size={17} fill={favoriteIds.has(record.id) ? "currentColor" : "none"} />
+                    <Star size={17} fill={record.isFavorite ? "currentColor" : "none"} />
                   </button>
                   <button aria-label="分享" onClick={() => void shareRecord(record)}><Share2 size={17} /></button>
                   <button
@@ -515,11 +605,20 @@ function RecordList({
                 {openMenuId === record.id ? (
                   <div className="action-menu record-action-menu" onClick={(event) => event.stopPropagation()}>
                     <button onClick={() => { onSelect(record.id); setOpenMenuId(null); }}>查看详情</button>
-                    <button onClick={() => { onNotify("已加入持续跟踪（演示）"); setOpenMenuId(null); }}>加入持续跟踪</button>
+                    <button onClick={() => {
+                      onUpdateStatus(record.id, record.status === "tracking" ? "normal" : "tracking");
+                      setOpenMenuId(null);
+                    }}>
+                      {record.status === "tracking" ? "停止持续跟踪" : "加入持续跟踪"}
+                    </button>
                     <button onClick={() => void copyRecordTitle(record)}>复制标题</button>
+                    <button className="danger" onClick={() => {
+                      onMoveToTrash(record.id);
+                      setOpenMenuId(null);
+                    }}>移至回收站</button>
                   </div>
                 ) : null}
-                <span className="status-dot"><i />持续跟踪</span>
+                <span className={`status-dot ${record.status}`}><i />{statusLabel(record.status)}</span>
               </div>
             </AppCard>
           );
@@ -569,24 +668,24 @@ function SemanticCard({
 
 function DetailPanel({
   record,
-  judgment,
-  setJudgment,
+  versions,
+  onJudgmentChange,
+  onAppendVersion,
+  onRestoreVersion,
   isEditing,
   setIsEditing,
   saveState,
-  setSaveState,
-  favorited,
   onToggleFavorite,
   onNotify,
 }: {
   record: IntelligenceRecord;
-  judgment: string;
-  setJudgment: (value: string) => void;
+  versions: RecordVersion[];
+  onJudgmentChange: (value: string) => void;
+  onAppendVersion: () => Promise<void>;
+  onRestoreVersion: (versionId: number) => Promise<void>;
   isEditing: boolean;
   setIsEditing: (value: boolean) => void;
   saveState: SaveState;
-  setSaveState: (value: SaveState) => void;
-  favorited: boolean;
   onToggleFavorite: () => void;
   onNotify: (message: string) => void;
 }) {
@@ -594,7 +693,7 @@ function DetailPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [versionAdded, setVersionAdded] = useState(false);
   const [expandedSection, setExpandedSection] = useState<"facts" | "evidence" | "questions" | "actions" | null>(null);
-  const [viewingVersion, setViewingVersion] = useState<(typeof versions)[number] | null>(null);
+  const [viewingVersion, setViewingVersion] = useState<RecordVersion | null>(null);
 
   const toggle = (id: string) => {
     setCollapsed((current) => {
@@ -606,22 +705,26 @@ function DetailPanel({
   };
 
   const updateJudgment = (value: string) => {
-    setJudgment(value);
-    setSaveState("saving");
+    onJudgmentChange(value);
   };
 
-  const addVersion = () => {
-    setVersionAdded(true);
-    setHistoryOpen(true);
-    onNotify("已创建 v4 正式版本快照（演示）");
-    window.setTimeout(() => setVersionAdded(false), 2200);
+  const addVersion = async () => {
+    try {
+      await onAppendVersion();
+      setVersionAdded(true);
+      setHistoryOpen(true);
+      onNotify("已创建新的正式版本快照");
+      window.setTimeout(() => setVersionAdded(false), 2200);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "创建版本失败");
+    }
   };
 
   const expandedContent = expandedSection ? {
-    facts: { eyebrow: "结构化详情", title: "全部已确认事实", items: confirmedFacts },
-    evidence: { eyebrow: "来源与证据", title: "全部关键证据", items: evidence.map((item) => `${item.title} · ${item.source}`) },
-    questions: { eyebrow: "后续验证", title: "全部待验证问题", items: openQuestions },
-    actions: { eyebrow: "执行清单", title: "全部下一步行动", items: nextActions },
+    facts: { eyebrow: "结构化详情", title: "全部已确认事实", items: record.confirmedFacts },
+    evidence: { eyebrow: "来源与证据", title: "全部关键证据", items: record.keyEvidence.map((item) => `${item.content} · ${item.source}`) },
+    questions: { eyebrow: "后续验证", title: "全部待验证问题", items: record.openQuestions },
+    actions: { eyebrow: "执行清单", title: "全部下一步行动", items: record.nextActions },
   }[expandedSection] : null;
 
   return (
@@ -630,18 +733,18 @@ function DetailPanel({
         <div>
           <h1>{record.title}</h1>
           <div className="detail-meta">
-            <span className="status-pill">持续跟踪</span>
-            <span>{record.date} 10:32 更新</span>
-            <span>{record.source}</span>
+            <span className="status-pill">{statusLabel(record.status)}</span>
+            <span>{formatRecordDateTime(record.updatedAt)} 更新</span>
+            <span>{recordSourceLabel(record)}</span>
             {record.tags.map((tag) => <span className="detail-tag" key={tag}>{tag}</span>)}
           </div>
         </div>
         <button
-          className={`favorite-button ${favorited ? "active" : ""}`}
-          aria-label={favorited ? "取消收藏" : "收藏"}
+          className={`favorite-button ${record.isFavorite ? "active" : ""}`}
+          aria-label={record.isFavorite ? "取消收藏" : "收藏"}
           onClick={onToggleFavorite}
         >
-          <Star size={20} fill={favorited ? "currentColor" : "none"} />
+          <Star size={20} fill={record.isFavorite ? "currentColor" : "none"} />
         </button>
       </div>
 
@@ -652,13 +755,13 @@ function DetailPanel({
           <div className="primary-actions">
             <button onClick={() => setIsEditing(!isEditing)}><Pencil size={18} />{isEditing ? "完成" : "编辑"}</button>
             <span />
-            <button onClick={addVersion}><Plus size={18} />追加版本</button>
+            <button onClick={() => void addVersion()}><Plus size={18} />追加版本</button>
           </div>
         </div>
         {isEditing ? (
           <div className="edit-area">
             <textarea
-              value={judgment}
+              value={record.currentJudgment}
               onChange={(event) => updateJudgment(event.target.value)}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -674,32 +777,32 @@ function DetailPanel({
               <span className={saveState}>{saveState === "saving" ? "正在保存草稿…" : "本地草稿已保存"}</span>
             </div>
           </div>
-        ) : <p className="judgment-text">{judgment}</p>}
+        ) : <p className="judgment-text">{record.currentJudgment || "尚未填写当前判断。"}</p>}
         <ul className="judgment-points">
-          <li>AI相关资本开支占比持续提升，主要投向算力基础设施与网络。</li>
-          <li>规模效应与单位算力成本下降将逐步改善自由现金流质量。</li>
-          <li>若需求增速放缓或资本开支效率下降，现金流拐点可能延后。</li>
+          {(record.confirmedFacts.length ? record.confirmedFacts : ["暂无结构化事实，可在记录编辑中补充。"])
+            .slice(0, 3)
+            .map((item) => <li key={item}>{item}</li>)}
         </ul>
-        <div className="judgment-footer"><span>置信度：中高</span><span>更新于 2026-07-25 10:32</span></div>
+        <div className="judgment-footer"><span>本地版本：v{record.versionCount}</span><span>更新于 {formatRecordDateTime(record.updatedAt)}</span></div>
       </AppCard>
 
       <div className="semantic-grid">
-        <SemanticCard id="facts" title="已确认事实" count={7} tone="green" icon={ShieldCheck} collapsed={collapsed.has("facts")} onToggle={toggle}>
-          <ul>{confirmedFacts.map((item) => <li key={item}>{item}</li>)}</ul>
+        <SemanticCard id="facts" title="已确认事实" count={record.confirmedFacts.length} tone="green" icon={ShieldCheck} collapsed={collapsed.has("facts")} onToggle={toggle}>
+          <ul>{record.confirmedFacts.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul>
           <button className="card-link" onClick={() => setExpandedSection("facts")}>查看全部事实 <ArrowRight size={15} /></button>
         </SemanticCard>
-        <SemanticCard id="evidence" title="关键证据" count={9} tone="blue" icon={Folder} collapsed={collapsed.has("evidence")} onToggle={toggle}>
-          <div className="evidence-list">{evidence.map((item) => (
-            <div key={item.title}><FileText size={16} /><span>{item.title}</span><em>{item.source}</em></div>
+        <SemanticCard id="evidence" title="关键证据" count={record.keyEvidence.length} tone="blue" icon={Folder} collapsed={collapsed.has("evidence")} onToggle={toggle}>
+          <div className="evidence-list">{record.keyEvidence.slice(0, 3).map((item) => (
+            <div key={`${item.content}-${item.source}`}><FileText size={16} /><span>{item.content}</span><em>{item.source}</em></div>
           ))}</div>
           <button className="card-link" onClick={() => setExpandedSection("evidence")}>查看全部证据 <ArrowRight size={15} /></button>
         </SemanticCard>
-        <SemanticCard id="questions" title="待验证问题" count={4} tone="orange" icon={CircleHelp} collapsed={collapsed.has("questions")} onToggle={toggle}>
-          <ul>{openQuestions.map((item) => <li key={item}>{item}</li>)}</ul>
+        <SemanticCard id="questions" title="待验证问题" count={record.openQuestions.length} tone="orange" icon={CircleHelp} collapsed={collapsed.has("questions")} onToggle={toggle}>
+          <ul>{record.openQuestions.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul>
           <button className="card-link" onClick={() => setExpandedSection("questions")}>查看全部问题 <ArrowRight size={15} /></button>
         </SemanticCard>
-        <SemanticCard id="actions" title="下一步行动" count={3} tone="indigo" icon={ArrowRight} collapsed={collapsed.has("actions")} onToggle={toggle}>
-          <div className="check-list">{nextActions.map((item) => <label key={item}><input type="checkbox" /><span>{item}</span></label>)}</div>
+        <SemanticCard id="actions" title="下一步行动" count={record.nextActions.length} tone="indigo" icon={ArrowRight} collapsed={collapsed.has("actions")} onToggle={toggle}>
+          <div className="check-list">{record.nextActions.slice(0, 3).map((item) => <label key={item}><input type="checkbox" /><span>{item}</span></label>)}</div>
           <button className="card-link" onClick={() => setExpandedSection("actions")}>查看全部行动 <ArrowRight size={15} /></button>
         </SemanticCard>
       </div>
@@ -710,12 +813,12 @@ function DetailPanel({
           <ChevronRight size={19} />
         </button>
         <div className="history-content">
-          {versionAdded ? <div className="version-success"><Check size={16} /> 已创建 v4 正式版本快照</div> : null}
+          {versionAdded ? <div className="version-success"><Check size={16} /> 已创建新的正式版本快照</div> : null}
           {versions.map((item) => (
-            <div className="version-row" key={item.version}>
-              <span className="version-badge">{item.version}</span>
-              <div><strong>{item.note}</strong><span>{item.date}</span></div>
-              {item.current ? <em>当前版本</em> : <button onClick={() => setViewingVersion(item)}>查看</button>}
+            <div className="version-row" key={item.id}>
+              <span className="version-badge">v{item.versionNumber}</span>
+              <div><strong>{item.versionTitle}</strong><span>{formatRecordDateTime(item.createdAt)}</span></div>
+              <button onClick={() => setViewingVersion(item)}>查看</button>
             </div>
           ))}
         </div>
@@ -725,15 +828,19 @@ function DetailPanel({
           <ul className="dialog-list">
             {expandedContent.items.map((item) => <li key={item}>{item}</li>)}
           </ul>
-          <div className="dialog-footnote">当前为阶段 1 假数据交互，正式数据将在本地数据层接入后完整呈现。</div>
+          <div className="dialog-footnote">内容来自当前本地记录，版本与修改均保存在本机数据库。</div>
         </PrototypeDialog>
       ) : null}
       {viewingVersion ? (
-        <PrototypeDialog eyebrow={`历史快照 · ${viewingVersion.version}`} title={viewingVersion.note} onClose={() => setViewingVersion(null)}>
+        <PrototypeDialog eyebrow={`历史快照 · v${viewingVersion.versionNumber}`} title={viewingVersion.versionTitle} onClose={() => setViewingVersion(null)}>
           <div className="version-preview">
-            <span>{viewingVersion.date}</span>
-            <p>{judgment}</p>
-            <em>只读版本预览，不会覆盖当前判断。</em>
+            <span>{formatRecordDateTime(viewingVersion.createdAt)}</span>
+            <p>{viewingVersion.snapshot.currentJudgment || "该版本没有当前判断。"}</p>
+            <em>{viewingVersion.changeNote || "只读版本预览，不会自动覆盖当前判断。"}</em>
+            <button className="secondary-button" onClick={async () => {
+              await onRestoreVersion(viewingVersion.id);
+              setViewingVersion(null);
+            }}><RotateCcw size={17} />恢复为新版本</button>
           </div>
         </PrototypeDialog>
       ) : null}
@@ -742,44 +849,45 @@ function DetailPanel({
 }
 
 function RecordsWorkspace({
+  records,
   scope,
+  selectedId,
+  setSelectedId,
   search,
   setSearch,
-  judgment,
-  setJudgment,
+  versions,
+  onJudgmentChange,
+  onToggleFavorite,
+  onUpdateStatus,
+  onMoveToTrash,
+  onAppendVersion,
+  onRestoreVersion,
   isEditing,
   setIsEditing,
   saveState,
-  setSaveState,
   onNotify,
 }: {
+  records: IntelligenceRecord[];
   scope: "records" | "tracking" | "updates";
+  selectedId: number | null;
+  setSelectedId: (value: number | null) => void;
   search: string;
   setSearch: (value: string) => void;
-  judgment: string;
-  setJudgment: (value: string) => void;
+  versions: RecordVersion[];
+  onJudgmentChange: (value: string) => void;
+  onToggleFavorite: (id: number) => void;
+  onUpdateStatus: (id: number, status: RecordStatus) => void;
+  onMoveToTrash: (id: number) => void;
+  onAppendVersion: () => Promise<void>;
+  onRestoreVersion: (versionId: number) => Promise<void>;
   isEditing: boolean;
   setIsEditing: (value: boolean) => void;
   saveState: SaveState;
-  setSaveState: (value: SaveState) => void;
   onNotify: (message: string) => void;
 }) {
-  const [selectedId, setSelectedId] = useState(3);
   const [connectionMetrics, setConnectionMetrics] = useState<ConnectionMetrics | null>(null);
-  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(new Set());
   const searchRef = useRef<HTMLInputElement>(null);
-  const selectedRecord = records.find((record) => record.id === selectedId) ?? records[2];
-
-  const toggleFavorite = (id: number) => {
-    const willFavorite = !favoriteIds.has(id);
-    setFavoriteIds((current) => {
-      const next = new Set(current);
-      if (willFavorite) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-    onNotify(willFavorite ? "已加入收藏" : "已取消收藏");
-  };
+  const selectedRecord = records.find((record) => record.id === selectedId) ?? null;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -806,6 +914,7 @@ function RecordsWorkspace({
       } as React.CSSProperties : undefined}
     >
       <RecordList
+        records={records}
         scope={scope}
         selectedId={selectedId}
         onSelect={setSelectedId}
@@ -813,8 +922,9 @@ function RecordsWorkspace({
         setSearch={setSearch}
         searchRef={searchRef}
         onSelectedGeometryChange={setConnectionMetrics}
-        favoriteIds={favoriteIds}
-        onToggleFavorite={toggleFavorite}
+        onToggleFavorite={onToggleFavorite}
+        onUpdateStatus={onUpdateStatus}
+        onMoveToTrash={onMoveToTrash}
         onNotify={onNotify}
       />
       {connectionMetrics && connectionMetrics.width > 0 ? (
@@ -823,18 +933,26 @@ function RecordsWorkspace({
           <span className="connector-dot end" />
         </div>
       ) : null}
-      <DetailPanel
-        record={selectedRecord}
-        judgment={judgment}
-        setJudgment={setJudgment}
-        isEditing={isEditing}
-        setIsEditing={setIsEditing}
-        saveState={saveState}
-        setSaveState={setSaveState}
-        favorited={favoriteIds.has(selectedId)}
-        onToggleFavorite={() => toggleFavorite(selectedId)}
-        onNotify={onNotify}
-      />
+      {selectedRecord ? (
+        <DetailPanel
+          record={selectedRecord}
+          versions={versions}
+          onJudgmentChange={onJudgmentChange}
+          onAppendVersion={onAppendVersion}
+          onRestoreVersion={onRestoreVersion}
+          isEditing={isEditing}
+          setIsEditing={setIsEditing}
+          saveState={saveState}
+          onToggleFavorite={() => onToggleFavorite(selectedRecord.id)}
+          onNotify={onNotify}
+        />
+      ) : (
+        <article className="detail-panel elevated-card empty-detail">
+          <FileText size={36} />
+          <strong>还没有可显示的记录</strong>
+          <span>新建一条记录，或调整左侧的筛选条件。</span>
+        </article>
+      )}
     </div>
   );
 }
@@ -980,34 +1098,164 @@ function JsonMapping({ onBack }: { onBack: () => void }) {
   );
 }
 
-function TrashPage() {
-  const [restored, setRestored] = useState<number[]>([]);
-  const trashRecords = records.slice(0, 3);
+function NewRecordDialog({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (input: {
+    title: string;
+    summary: string;
+    status: RecordStatus;
+    tags: string[];
+  }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+  const [status, setStatus] = useState<RecordStatus>("normal");
+  const [tags, setTags] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  return (
+    <PrototypeDialog eyebrow="本地记录" title="新建情报记录" onClose={onClose}>
+      <form
+        className="record-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!title.trim()) {
+            setError("请填写记录标题");
+            return;
+          }
+          setSubmitting(true);
+          setError("");
+          try {
+            await onCreate({
+              title: title.trim(),
+              summary: summary.trim(),
+              status,
+              tags: tags.split(/[,，/]/).map((item) => item.trim()).filter(Boolean),
+            });
+            onClose();
+          } catch (submitError) {
+            setError(submitError instanceof Error ? submitError.message : "新建记录失败");
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        <label>
+          <span>标题</span>
+          <input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus placeholder="例如：AI视频生成工具竞品跟踪" />
+        </label>
+        <label>
+          <span>摘要</span>
+          <textarea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="一句话说明这条记录关注什么" />
+        </label>
+        <div className="form-grid">
+          <label>
+            <span>状态</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value as RecordStatus)}>
+              <option value="normal">普通记录</option>
+              <option value="tracking">持续跟踪</option>
+              <option value="verification">待验证</option>
+              <option value="updated">判断更新</option>
+            </select>
+          </label>
+          <label>
+            <span>标签</span>
+            <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="用逗号分隔" />
+          </label>
+        </div>
+        {error ? <div className="form-error"><AlertCircle size={16} />{error}</div> : null}
+        <div className="dialog-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>取消</button>
+          <button type="submit" className="primary-button" disabled={submitting}>
+            <Plus size={17} />{submitting ? "正在创建…" : "创建记录"}
+          </button>
+        </div>
+      </form>
+    </PrototypeDialog>
+  );
+}
+
+function TrashPage({
+  records,
+  onRestore,
+  onPermanentDelete,
+}: {
+  records: IntelligenceRecord[];
+  onRestore: (id: number) => Promise<void>;
+  onPermanentDelete: (id: number, title: string) => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState<IntelligenceRecord | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+
   return (
     <main className="page-shell">
-      <PageTitle eyebrow="保留 30 天" title="回收站" description="删除的记录仍保留版本和附件关系；永久删除在后续数据阶段实现。" />
+      <PageTitle eyebrow="可恢复删除" title="回收站" description="移入回收站的记录仍保留版本关系；永久删除必须输入完整标题确认。" />
       <div className="trash-grid">
-        {trashRecords.map((record) => (
-          <AppCard className={`trash-card ${restored.includes(record.id) ? "restored" : ""}`} key={record.id}>
+        {records.map((record) => (
+          <AppCard className="trash-card" key={record.id}>
             <RecordIcon record={record} />
-            <div><strong>{record.title}</strong><span>删除于 2026-07-{18 + record.id}</span></div>
+            <div><strong>{record.title}</strong><span>删除于 {record.deletedAt ? formatRecordDateTime(record.deletedAt) : "未知时间"}</span></div>
             <button
               className="secondary-button"
-              disabled={restored.includes(record.id)}
-              onClick={() => setRestored((items) => [...items, record.id])}
+              onClick={() => void onRestore(record.id)}
             >
-              <RotateCcw size={17} />{restored.includes(record.id) ? "已恢复" : "恢复"}
+              <RotateCcw size={17} />恢复
             </button>
+            <button className="danger-button" onClick={() => {
+              setDeleting(record);
+              setConfirmation("");
+              setError("");
+            }}><Trash2 size={17} />永久删除</button>
           </AppCard>
         ))}
+        {!records.length ? (
+          <div className="empty-state wide"><Trash2 size={32} /><strong>回收站为空</strong><span>这里没有待恢复或永久删除的记录。</span></div>
+        ) : null}
       </div>
+      {deleting ? (
+        <PrototypeDialog eyebrow="不可恢复操作" title="永久删除记录" onClose={() => setDeleting(null)}>
+          <div className="delete-confirmation">
+            <div className="danger-callout"><AlertCircle size={19} /><span>此操作会删除记录及其历史版本，无法撤销。</span></div>
+            <p>请输入完整标题确认：<strong>{deleting.title}</strong></p>
+            <input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoFocus />
+            {error ? <div className="form-error"><AlertCircle size={16} />{error}</div> : null}
+            <div className="dialog-actions">
+              <button className="secondary-button" onClick={() => setDeleting(null)}>取消</button>
+              <button
+                className="danger-button"
+                disabled={confirmation !== deleting.title}
+                onClick={async () => {
+                  try {
+                    await onPermanentDelete(deleting.id, confirmation);
+                    setDeleting(null);
+                  } catch (deleteError) {
+                    setError(deleteError instanceof Error ? deleteError.message : "永久删除失败");
+                  }
+                }}
+              ><Trash2 size={17} />确认永久删除</button>
+            </div>
+          </div>
+        </PrototypeDialog>
+      ) : null}
     </main>
   );
 }
 
-function SettingsPage() {
+function SettingsPage({
+  repository,
+  onNotify,
+}: {
+  repository: RecordRepository;
+  onNotify: (message: string) => void;
+}) {
+  const [dataLocation, setDataLocation] = useState("正在读取…");
   const groups = [
-    { icon: Database, title: "数据与存储", copy: "数据目录、备份与索引维护", value: "本地数据目录" },
+    { icon: Database, title: "数据与存储", copy: "数据目录、完整性检查与索引维护", value: dataLocation },
     { icon: Palette, title: "外观", copy: "界面密度、字号与主题", value: "标准 · 浅色" },
     { icon: Bell, title: "提醒", copy: "跟踪记录与行动项提醒", value: "仅应用内" },
     { icon: Lock, title: "隐私与安全", copy: "离线策略与文件访问权限", value: "离线优先" },
@@ -1017,9 +1265,15 @@ function SettingsPage() {
   const activeSetting = groups.find((group) => group.title === selectedSetting);
   const ActiveSettingIcon = activeSetting?.icon;
 
+  useEffect(() => {
+    void repository.getDataLocation()
+      .then((location) => setDataLocation(location.root))
+      .catch((error) => setDataLocation(error instanceof Error ? error.message : "读取失败"));
+  }, [repository]);
+
   return (
     <main className="page-shell settings-page">
-      <PageTitle eyebrow="本地优先" title="设置" description="首轮仅展示设置结构，不修改系统或真实数据目录。" />
+      <PageTitle eyebrow="本地优先" title="设置" description="查看真实数据位置，并执行可恢复的数据库维护操作。" />
       <div className="settings-list">
         {groups.map((group) => {
           const Icon = group.icon;
@@ -1040,7 +1294,33 @@ function SettingsPage() {
             <div className="settings-icon"><ActiveSettingIcon size={22} /></div>
             <div><strong>{activeSetting.value}</strong><p>{activeSetting.copy}</p></div>
           </div>
-          <div className="dialog-footnote">当前为 UI 原型，只展示设置结构，不会修改系统、文件权限或真实数据目录。</div>
+          {activeSetting.title === "数据与存储" ? (
+            <div className="settings-actions">
+              <button className="secondary-button" onClick={async () => {
+                try {
+                  await repository.openDataDirectory();
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "打开数据目录失败");
+                }
+              }}><FolderOpen size={17} />打开数据目录</button>
+              <button className="secondary-button" onClick={async () => {
+                try {
+                  const result = await repository.runIntegrityCheck();
+                  onNotify(`数据库完整性检查：${result}`);
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "完整性检查失败");
+                }
+              }}><ShieldCheck size={17} />检查数据库</button>
+              <button className="secondary-button" onClick={async () => {
+                try {
+                  await repository.rebuildSearchIndex();
+                  onNotify("搜索索引已重建");
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "索引重建失败");
+                }
+              }}><Search size={17} />重建搜索索引</button>
+            </div>
+          ) : <div className="dialog-footnote">此设置项将在后续增量中继续完善。</div>}
         </PrototypeDialog>
       ) : null}
     </main>
@@ -1048,27 +1328,102 @@ function SettingsPage() {
 }
 
 export function App() {
+  const repository = useMemo(() => getRecordRepository(), []);
   const [page, setPage] = useState<Page>("records");
-  const [judgment, setJudgment] = useState(defaultJudgment);
+  const [allRecords, setAllRecords] = useState<IntelligenceRecord[]>([]);
+  const [visibleRecords, setVisibleRecords] = useState<IntelligenceRecord[]>([]);
+  const [trashRecords, setTrashRecords] = useState<IntelligenceRecord[]>([]);
+  const [tags, setTags] = useState<TagItem[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [recordVersions, setRecordVersions] = useState<RecordVersion[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [pendingSave, setPendingSave] = useState<{ id: number; value: string; sequence: number } | null>(null);
   const [importStep, setImportStep] = useState<ImportStep>("empty");
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [recordSearch, setRecordSearch] = useState("资本开支");
+  const [recordSearch, setRecordSearch] = useState("");
+  const [newRecordOpen, setNewRecordOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const notify = (message: string) => setNotice({ id: Date.now(), message });
 
+  const replaceRecord = (record: IntelligenceRecord) => {
+    setAllRecords((current) => current.map((item) => item.id === record.id ? record : item));
+    setVisibleRecords((current) => current.map((item) => item.id === record.id ? record : item));
+  };
+
+  const reloadCollections = async (preferredId?: number) => {
+    const [active, deleted, availableTags] = await Promise.all([
+      repository.listRecords(),
+      repository.listRecords({ deletedOnly: true }),
+      repository.listTags(),
+    ]);
+    setAllRecords(active);
+    setTrashRecords(deleted);
+    setTags(availableTags);
+    const searched = recordSearch.trim()
+      ? await repository.listRecords({ search: recordSearch.trim() })
+      : active;
+    setVisibleRecords(searched);
+    setSelectedId((current) => {
+      const nextId = preferredId ?? current;
+      return active.some((record) => record.id === nextId) ? nextId! : active[0]?.id ?? null;
+    });
+  };
+
   useEffect(() => {
-    if (saveState !== "saving") return;
-    const timer = window.setTimeout(() => setSaveState("saved"), 720);
+    void reloadCollections()
+      .catch((error) => notify(error instanceof Error ? error.message : "读取本地记录失败"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void repository.listRecords(recordSearch.trim() ? { search: recordSearch.trim() } : {})
+        .then((result) => setVisibleRecords(result))
+        .catch((error) => notify(error instanceof Error ? error.message : "搜索失败"));
+    }, 180);
     return () => window.clearTimeout(timer);
-  }, [judgment, saveState]);
+  }, [recordSearch, repository]);
+
+  useEffect(() => {
+    if (selectedId === null) {
+      setRecordVersions([]);
+      return;
+    }
+    void repository.listVersions(selectedId)
+      .then(setRecordVersions)
+      .catch((error) => notify(error instanceof Error ? error.message : "读取历史版本失败"));
+  }, [repository, selectedId]);
+
+  useEffect(() => {
+    if (!pendingSave) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const persisted = await repository.getRecord(pendingSave.id);
+        const updated = await repository.updateRecord(pendingSave.id, recordToUpdate({
+          ...persisted,
+          currentJudgment: pendingSave.value,
+        }));
+        replaceRecord(updated);
+        setSaveState("saved");
+      } catch (error) {
+        setSaveState("idle");
+        notify(error instanceof Error ? error.message : "自动保存失败");
+      }
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [pendingSave, repository]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "i") {
         event.preventDefault();
         setPage("import");
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        setNewRecordOpen(true);
       }
       if (event.key === "Escape") setIsEditing(false);
     };
@@ -1085,10 +1440,120 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  const selectedRecord = allRecords.find((record) => record.id === selectedId) ?? null;
+
+  const createRecord = async (input: {
+    title: string;
+    summary: string;
+    status: RecordStatus;
+    tags: string[];
+  }) => {
+    const created = await repository.createRecord(input);
+    setRecordSearch("");
+    setPage("records");
+    await reloadCollections(created.id);
+    notify("记录已创建并保存到本地数据库");
+  };
+
+  const toggleFavorite = async (recordId: number) => {
+    try {
+      const record = await repository.getRecord(recordId);
+      const updated = await repository.setFavorite(recordId, !record.isFavorite);
+      replaceRecord(updated);
+      notify(updated.isFavorite ? "已加入收藏" : "已取消收藏");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "收藏操作失败");
+    }
+  };
+
+  const updateStatus = async (recordId: number, status: RecordStatus) => {
+    try {
+      const record = await repository.getRecord(recordId);
+      const updated = await repository.updateRecord(recordId, recordToUpdate({ ...record, status }));
+      replaceRecord(updated);
+      notify(`记录状态已更新为“${statusLabel(status)}”`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "状态更新失败");
+    }
+  };
+
+  const moveToTrash = async (recordId: number) => {
+    try {
+      await repository.moveToTrash(recordId);
+      await reloadCollections();
+      notify("记录已移入回收站，可随时恢复");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "移入回收站失败");
+    }
+  };
+
+  const appendVersion = async () => {
+    if (selectedId === null) return;
+    await repository.appendVersion(selectedId, `版本 v${recordVersions.length + 1}`, "手动创建版本快照");
+    const [versions, record] = await Promise.all([
+      repository.listVersions(selectedId),
+      repository.getRecord(selectedId),
+    ]);
+    setRecordVersions(versions);
+    replaceRecord(record);
+  };
+
+  const restoreVersion = async (versionId: number) => {
+    if (selectedId === null) return;
+    await repository.restoreVersion(selectedId, versionId);
+    const [versions, record] = await Promise.all([
+      repository.listVersions(selectedId),
+      repository.getRecord(selectedId),
+    ]);
+    setRecordVersions(versions);
+    replaceRecord(record);
+    notify("旧版本已恢复为新的当前版本，历史记录未被覆盖");
+  };
+
+  const exportCurrent = () => {
+    if (!selectedRecord) {
+      notify("请先选择要导出的记录");
+      return;
+    }
+    const markdown = [
+      `# ${selectedRecord.title}`,
+      "",
+      selectedRecord.summary,
+      "",
+      "## 当前判断",
+      "",
+      selectedRecord.currentJudgment,
+      "",
+      "## 已确认事实",
+      "",
+      ...selectedRecord.confirmedFacts.map((item) => `- ${item}`),
+      "",
+      "## 待验证问题",
+      "",
+      ...selectedRecord.openQuestions.map((item) => `- ${item}`),
+      "",
+      "## 下一步行动",
+      "",
+      ...selectedRecord.nextActions.map((item) => `- ${item}`),
+    ].join("\n");
+    const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${selectedRecord.title.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify("当前记录已导出为 Markdown");
+  };
+
   return (
     <div className="app-shell">
       <Sidebar
         page={page}
+        recordCount={allRecords.length}
+        trackingCount={allRecords.filter((record) => record.status === "tracking").length}
+        updateCount={allRecords.filter((record) => record.status === "updated").length}
+        trashCount={trashRecords.length}
+        tags={tags}
         onNavigate={setPage}
         onNotify={notify}
         onSelectTag={(tag) => {
@@ -1098,26 +1563,63 @@ export function App() {
         }}
       />
       <div className="main-region">
-        <AppHeader saveState={saveState} onNotify={notify} />
+        <AppHeader
+          saveState={saveState}
+          onNotify={notify}
+          onCreateRecord={() => setNewRecordOpen(true)}
+          onExportCurrent={exportCurrent}
+        />
         {showRecords ? (
-          <RecordsWorkspace
-            scope={recordScope}
-            search={recordSearch}
-            setSearch={setRecordSearch}
-            judgment={judgment}
-            setJudgment={setJudgment}
-            isEditing={isEditing}
-            setIsEditing={setIsEditing}
-            saveState={saveState}
-            setSaveState={setSaveState}
-            onNotify={notify}
-          />
+          loading ? <div className="page-loading"><span className="save-spinner" />正在读取本地记录…</div> : (
+            <RecordsWorkspace
+              records={visibleRecords}
+              scope={recordScope}
+              selectedId={selectedId}
+              setSelectedId={setSelectedId}
+              search={recordSearch}
+              setSearch={setRecordSearch}
+              versions={recordVersions}
+              onJudgmentChange={(value) => {
+                if (selectedId === null) return;
+                setVisibleRecords((current) => current.map((record) =>
+                  record.id === selectedId ? { ...record, currentJudgment: value } : record));
+                setAllRecords((current) => current.map((record) =>
+                  record.id === selectedId ? { ...record, currentJudgment: value } : record));
+                setSaveState("saving");
+                setPendingSave({ id: selectedId, value, sequence: Date.now() });
+              }}
+              onToggleFavorite={(id) => void toggleFavorite(id)}
+              onUpdateStatus={(id, status) => void updateStatus(id, status)}
+              onMoveToTrash={(id) => void moveToTrash(id)}
+              onAppendVersion={appendVersion}
+              onRestoreVersion={restoreVersion}
+              isEditing={isEditing}
+              setIsEditing={setIsEditing}
+              saveState={saveState}
+              onNotify={notify}
+            />
+          )
         ) : null}
         {page === "import" ? <ImportCenter step={importStep} setStep={setImportStep} /> : null}
-        {page === "trash" ? <TrashPage /> : null}
-        {page === "settings" ? <SettingsPage /> : null}
+        {page === "trash" ? (
+          <TrashPage
+            records={trashRecords}
+            onRestore={async (id) => {
+              await repository.restoreRecord(id);
+              await reloadCollections(id);
+              notify("记录已恢复");
+            }}
+            onPermanentDelete={async (id, title) => {
+              await repository.permanentlyDeleteRecord(id, title);
+              await reloadCollections();
+              notify("记录及其历史版本已永久删除");
+            }}
+          />
+        ) : null}
+        {page === "settings" ? <SettingsPage repository={repository} onNotify={notify} /> : null}
       </div>
       <PrototypeNotice notice={notice} onClose={() => setNotice(null)} />
+      {newRecordOpen ? <NewRecordDialog onClose={() => setNewRecordOpen(false)} onCreate={createRecord} /> : null}
     </div>
   );
 }
