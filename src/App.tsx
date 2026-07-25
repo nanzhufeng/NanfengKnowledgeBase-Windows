@@ -62,6 +62,7 @@ import {
   getRecordRepository,
   type RecordRepository,
 } from "./services/recordRepository";
+import { readImportedContent } from "./domain/importedContent";
 
 type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
 type ImportStep = "empty" | "preview" | "mapping";
@@ -218,16 +219,18 @@ function PrototypeDialog({
   title,
   onClose,
   children,
+  className = "",
 }: {
   eyebrow: string;
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  className?: string;
 }) {
   return createPortal(
     <div className="prototype-dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        className="prototype-dialog elevated-card"
+        className={`prototype-dialog elevated-card ${className}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -458,6 +461,10 @@ function RecordList({
     if (filtered[0]) onSelect(filtered[0].id);
   }, [filtered, onSelect, selectedId]);
 
+  useEffect(() => {
+    setOpenMenuId(null);
+  }, [selectedId, scope, search, sourceFilter, sortMode]);
+
   const sourceOptions = useMemo(() => [
     "全部来源",
     ...new Set(records.map(recordSourceLabel).filter(Boolean)),
@@ -589,8 +596,11 @@ function RecordList({
           return (
             <AppCard
               key={record.id}
-              className={`record-card ${selected ? "selected" : ""}`}
-              onClick={() => onSelect(record.id)}
+              className={`record-card ${selected ? "selected" : ""} ${openMenuId === record.id ? "menu-open" : ""}`}
+              onClick={() => {
+                onSelect(record.id);
+                setOpenMenuId(null);
+              }}
               cardRef={selected ? selectedCardRef : undefined}
             >
               <RecordIcon record={record} />
@@ -712,6 +722,14 @@ function DetailPanel({
   const [versionAdded, setVersionAdded] = useState(false);
   const [expandedSection, setExpandedSection] = useState<"facts" | "evidence" | "questions" | "actions" | null>(null);
   const [viewingVersion, setViewingVersion] = useState<RecordVersion | null>(null);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const importedContent = useMemo(() => readImportedContent(record.sourceText), [record.sourceText]);
+
+  useEffect(() => {
+    setExpandedSection(null);
+    setViewingVersion(null);
+    setSourceOpen(false);
+  }, [record.id]);
 
   const toggle = (id: string) => {
     setCollapsed((current) => {
@@ -770,6 +788,39 @@ function DetailPanel({
           </button>
         </div>
       </div>
+
+      <AppCard className="record-content-card">
+        <div className="record-content-heading">
+          <span><FileText size={19} /><strong>记录内容</strong></span>
+          <em>
+            {importedContent.isConversation
+              ? `${importedContent.messageCount} 条对话消息`
+              : record.sourceText
+                ? "原始内容"
+                : "摘要"}
+          </em>
+        </div>
+        {record.summary ? (
+          <div className="record-summary-block">
+            <strong>内容摘要</strong>
+            <p>{record.summary}</p>
+          </div>
+        ) : null}
+        {importedContent.preview ? (
+          <div className="source-preview-block">
+            <strong>{importedContent.isConversation ? "对话原文" : "原始内容"}</strong>
+            <p>{importedContent.preview}</p>
+          </div>
+        ) : null}
+        {!record.summary && !importedContent.preview ? (
+          <p className="record-content-empty">这条记录尚未填写摘要或原始内容。</p>
+        ) : null}
+        {importedContent.fullText ? (
+          <button className="record-content-action" onClick={() => setSourceOpen(true)}>
+            查看完整内容 <ArrowRight size={15} />
+          </button>
+        ) : null}
+      </AppCard>
 
       <AppCard className={`judgment-card ${isEditing ? "editing" : ""}`}>
         <div className="judgment-accent" />
@@ -864,6 +915,34 @@ function DetailPanel({
               await onRestoreVersion(viewingVersion.id);
               setViewingVersion(null);
             }}><RotateCcw size={17} />恢复为新版本</button>
+          </div>
+        </PrototypeDialog>
+      ) : null}
+      {sourceOpen ? (
+        <PrototypeDialog
+          eyebrow={importedContent.isConversation ? "导入会话原文" : "记录原始内容"}
+          title={record.title}
+          onClose={() => setSourceOpen(false)}
+          className="source-content-dialog"
+        >
+          <div className="source-content-body">
+            {record.summary ? (
+              <section className="source-summary">
+                <strong>内容摘要</strong>
+                <p>{record.summary}</p>
+              </section>
+            ) : null}
+            {importedContent.messages.length ? importedContent.messages.map((message, index) => (
+              <section className={`source-message ${message.role === "用户" ? "human" : "assistant"}`} key={`${message.role}-${index}`}>
+                <div>
+                  <strong>{message.role}</strong>
+                  {message.createdAt ? <span>{formatRecordDateTime(message.createdAt)}</span> : null}
+                </div>
+                <pre>{message.text}</pre>
+              </section>
+            )) : (
+              <pre className="source-plain-text">{importedContent.fullText}</pre>
+            )}
           </div>
         </PrototypeDialog>
       ) : null}
