@@ -16,7 +16,8 @@ use crate::models::{
 };
 use crate::paths::AppPaths;
 
-const MAX_IMPORT_BYTES: u64 = 20 * 1024 * 1024;
+const LARGE_IMPORT_WARNING_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_IMPORT_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,11 +63,7 @@ pub fn prepare_import(
         return Err(AppError::NotFound("选择的导入文件不存在".to_string()));
     }
     let metadata = source_path.metadata()?;
-    if metadata.len() > MAX_IMPORT_BYTES {
-        return Err(AppError::Validation(
-            "单个导入文件不能超过 20 MB".to_string(),
-        ));
-    }
+    validate_import_size(metadata.len())?;
 
     let source_file_name = source_path
         .file_name()
@@ -104,6 +101,9 @@ pub fn prepare_import(
     )? != 0;
     let (decoded, used_gbk) = decode_text(&bytes);
     let mut warnings = Vec::new();
+    if metadata.len() > LARGE_IMPORT_WARNING_BYTES {
+        warnings.push("文件超过 50 MB，归档和解析可能需要更长时间".to_string());
+    }
     if used_gbk {
         warnings.push("文件不是 UTF-8，已按 GBK/GB18030 兼容方式解码".to_string());
     }
@@ -141,6 +141,15 @@ pub fn prepare_import(
         records,
         warnings,
     })
+}
+
+fn validate_import_size(size_bytes: u64) -> AppResult<()> {
+    if size_bytes > MAX_IMPORT_BYTES {
+        return Err(AppError::Validation(
+            "单个导入文件不能超过 200 MB".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn confirm_import(
@@ -497,6 +506,15 @@ mod tests {
     use super::*;
     use crate::database;
     use tempfile::tempdir;
+
+    #[test]
+    fn import_size_policy_allows_200_mb_and_rejects_larger_files() {
+        assert!(validate_import_size(MAX_IMPORT_BYTES).is_ok());
+        let error = validate_import_size(MAX_IMPORT_BYTES + 1)
+            .expect_err("files larger than 200 MB must be rejected");
+        assert!(matches!(error, AppError::Validation(message) if message.contains("200 MB")));
+        assert!(LARGE_IMPORT_WARNING_BYTES < MAX_IMPORT_BYTES);
+    }
 
     #[test]
     fn json_import_archives_previews_and_writes_records() {

@@ -122,6 +122,11 @@ function formatRecordDateTime(value: string): string {
   }).format(date);
 }
 
+function formatFileSize(sizeBytes: number): string {
+  if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(sizeBytes / 1024).toFixed(1)} KB`;
+}
+
 function recordSourceLabel(record: IntelligenceRecord): string {
   return record.sources[0]?.title || record.summary || "本地记录";
 }
@@ -1141,7 +1146,7 @@ function ImportCenter({
                 <>
                   <div className="drop-icon"><Upload size={26} /></div>
                   <strong>拖入 JSON、Markdown、TXT 或 HTML 文件</strong>
-                  <span>单文件不超过 20 MB；原文件和导入日志只保存在本机。</span>
+                  <span>单文件上限 200 MB；超过 50 MB 时会提示解析可能较慢。</span>
                   <button className="primary-button" disabled={loading} onClick={() => void chooseFile()}>
                     <FolderOpen size={18} />{loading ? "正在归档与解析…" : "选择文件"}
                   </button>
@@ -1151,7 +1156,7 @@ function ImportCenter({
                   <div className="file-type"><Braces size={24} /></div>
                   <div>
                     <strong>{preview.sourceFileName}</strong>
-                    <span>{(preview.sizeBytes / 1024).toFixed(1)} KB · {preview.fileKind.toUpperCase()} · SHA-256 {preview.sha256.slice(0, 12)}…</span>
+                    <span>{formatFileSize(preview.sizeBytes)} · {preview.fileKind.toUpperCase()} · SHA-256 {preview.sha256.slice(0, 12)}…</span>
                   </div>
                   <span className="recognized"><CheckCircle2 size={17} />识别完成</span>
                   <button className="icon-button" onClick={() => { setPreview(null); setStep("empty"); }}><X size={18} /></button>
