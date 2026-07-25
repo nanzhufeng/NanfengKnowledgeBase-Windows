@@ -697,6 +697,13 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
+.record-card mark {
+  padding: 0 1px;
+  color: inherit;
+  border-radius: 3px;
+  background: #ffe59c;
+}
+
 .tag-line {
   display: flex;
   gap: 5px;
@@ -885,6 +892,12 @@ textarea:focus-visible,
   border-radius: 10px;
   background: transparent;
   cursor: pointer;
+}
+
+.detail-title-actions {
+  display: flex;
+  align-self: flex-start;
+  gap: 3px;
 }
 
 .favorite-button:hover {
@@ -1175,7 +1188,7 @@ textarea:focus-visible,
   gap: 8px;
 }
 
-.check-list label {
+.check-list > div {
   display: grid;
   grid-template-columns: 15px minmax(0, 1fr);
   align-items: flex-start;
@@ -1185,19 +1198,15 @@ textarea:focus-visible,
   line-height: 1.4;
 }
 
-.check-list input {
-  appearance: none;
+.action-marker {
+  display: grid;
+  place-items: center;
   width: 14px;
   height: 14px;
-  margin: 0;
-  border: 1.5px solid #8c98ae;
-  border-radius: 3px;
-}
-
-.check-list input:checked {
-  border-color: #3153d5;
-  background: #3153d5;
-  box-shadow: inset 0 0 0 3px white;
+  margin-top: 1px;
+  color: #3153d5;
+  border-radius: 50%;
+  background: #eef1ff;
 }
 
 .history-card {
@@ -2124,6 +2133,94 @@ textarea:focus-visible,
   background: transparent;
   cursor: pointer;
   font-size: 11px;
+}
+
+.tag-manager {
+  display: grid;
+  padding-top: 16px;
+  gap: 13px;
+}
+
+.tag-manager > form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 9px;
+}
+
+.tag-manager input {
+  min-width: 0;
+  padding: 9px 11px;
+  color: #18345f;
+  border: 1px solid #d3dae6;
+  border-radius: 8px;
+  background: #fbfcfe;
+  outline: none;
+}
+
+.tag-manager-list {
+  display: grid;
+  max-height: 330px;
+  overflow: auto;
+  gap: 7px;
+}
+
+.tag-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 45px;
+  padding: 7px 9px 7px 12px;
+  gap: 9px;
+  border: 1px solid #e1e6ee;
+  border-radius: 8px;
+  background: #fafbfd;
+}
+
+.tag-manager-row > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #29415f;
+  font-size: 12px;
+}
+
+.tag-manager-row em {
+  color: #8a94a3;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.tag-manager-row > div {
+  display: flex;
+  gap: 5px;
+}
+
+.tag-manager-row button {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 8px;
+  gap: 4px;
+  color: #365277;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.tag-manager-row button:hover {
+  background: #edf2f8;
+}
+
+.tag-manager-row button.danger {
+  color: #b42318;
+}
+
+.tag-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3153d5;
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -5,12 +5,14 @@ use tauri::State;
 
 use crate::database;
 use crate::error::{AppError, AppResult, CommandError};
+use crate::importer::{ConfirmImportInput, ImportPreview, ImportResult};
 use crate::models::{
     AppendVersionInput, CreateRecordInput, CreateTagInput, DataLocation, IntelligenceRecord,
     PermanentDeleteInput, RecordQuery, RecordVersion, RenameTagInput, RestoreVersionInput, TagItem,
     UpdateRecordInput,
 };
 use crate::paths::AppPaths;
+use crate::transfer::{ExportResult, RestoreResult};
 
 pub struct AppState {
     connection: Mutex<Connection>,
@@ -190,4 +192,74 @@ pub fn rebuild_search_index(state: State<'_, AppState>) -> Result<(), CommandErr
 pub fn run_integrity_check(state: State<'_, AppState>) -> Result<String, CommandError> {
     let connection = command(state.connection())?;
     command(database::integrity_check(&connection))
+}
+
+#[tauri::command]
+pub fn prepare_import(
+    state: State<'_, AppState>,
+    source_path: String,
+) -> Result<ImportPreview, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::importer::prepare_import(
+        &connection,
+        &state.paths,
+        source_path,
+    ))
+}
+
+#[tauri::command]
+pub fn confirm_import(
+    state: State<'_, AppState>,
+    input: ConfirmImportInput,
+) -> Result<ImportResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::importer::confirm_import(&mut connection, &input))
+}
+
+#[tauri::command]
+pub fn export_record(
+    state: State<'_, AppState>,
+    record_id: i64,
+    format: String,
+) -> Result<ExportResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::transfer::export_record(
+        &connection,
+        &state.paths,
+        record_id,
+        &format,
+    ))
+}
+
+#[tauri::command]
+pub fn export_all_json(state: State<'_, AppState>) -> Result<ExportResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::transfer::export_all_json(&connection, &state.paths))
+}
+
+#[tauri::command]
+pub fn create_backup(state: State<'_, AppState>) -> Result<String, CommandError> {
+    let connection = command(state.connection())?;
+    command(
+        crate::transfer::create_backup(&connection, &state.paths, "手动备份")
+            .map(|path| path.to_string_lossy().into_owned()),
+    )
+}
+
+#[tauri::command]
+pub fn restore_backup(
+    state: State<'_, AppState>,
+    source_path: String,
+) -> Result<RestoreResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::transfer::restore_backup(
+        &mut connection,
+        &state.paths,
+        source_path,
+    ))
+}
+
+#[tauri::command]
+pub fn open_export_directory(state: State<'_, AppState>) -> Result<(), CommandError> {
+    command(crate::transfer::open_export_directory(&state.paths))
 }

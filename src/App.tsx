@@ -2,7 +2,6 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
-  Bell,
   Braces,
   Building2,
   Check,
@@ -21,13 +20,10 @@ import {
   FolderOpen,
   HardDrive,
   History,
-  Inbox,
   Keyboard,
   LayoutGrid,
-  Lock,
   MoreHorizontal,
   MoreVertical,
-  Palette,
   Pencil,
   Plus,
   RadioTower,
@@ -51,12 +47,16 @@ import {
 } from "./mockData";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { createPortal } from "react-dom";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   recordToUpdate,
   type IntelligenceRecord,
+  type ImportPreview,
   type RecordStatus,
   type RecordVersion,
   type TagItem,
+  type UpdateRecordInput,
 } from "./domain/models";
 import {
   getRecordRepository,
@@ -76,11 +76,10 @@ type ConnectionMetrics = {
   width: number;
 };
 type NavItem = {
-  id: "inbox" | "records" | "tracking" | "updates" | "import";
+  id: "records" | "tracking" | "updates" | "import";
   label: string;
   count?: number;
   icon: React.ComponentType<{ size?: number }>;
-  disabled?: boolean;
   tone?: "danger";
 };
 
@@ -95,7 +94,6 @@ const iconMap: Record<RecordIconKey, React.ComponentType<{ size?: number }>> = {
 };
 
 const navItems: NavItem[] = [
-  { id: "inbox", label: "收录箱", count: 0, icon: Inbox, disabled: true },
   { id: "records", label: "全部记录", icon: Files },
   { id: "tracking", label: "持续跟踪", icon: RadioTower },
   { id: "updates", label: "判断更新", icon: FileCheck2, tone: "danger" },
@@ -144,6 +142,24 @@ function statusLabel(status: RecordStatus): string {
     verification: "待验证",
     updated: "判断更新",
   }[status];
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const keyword = query.trim();
+  if (!keyword) return <>{text}</>;
+  const lowerText = text.toLocaleLowerCase();
+  const lowerKeyword = keyword.toLocaleLowerCase();
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  let matchIndex = lowerText.indexOf(lowerKeyword);
+  while (matchIndex >= 0) {
+    if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex));
+    parts.push(<mark key={`${matchIndex}-${keyword}`}>{text.slice(matchIndex, matchIndex + keyword.length)}</mark>);
+    cursor = matchIndex + keyword.length;
+    matchIndex = lowerText.indexOf(lowerKeyword, cursor);
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return <>{parts}</>;
 }
 
 function AppCard({
@@ -231,7 +247,6 @@ function Sidebar({
   trashCount,
   tags,
   onNavigate,
-  onNotify,
   onSelectTag,
 }: {
   page: Page;
@@ -241,7 +256,6 @@ function Sidebar({
   trashCount: number;
   tags: TagItem[];
   onNavigate: (page: Page) => void;
-  onNotify: (message: string) => void;
   onSelectTag: (tag: string) => void;
 }) {
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -269,12 +283,9 @@ function Sidebar({
             <button
               className={`nav-item ${isActive ? "active" : ""} ${item.tone ?? ""}`}
               key={item.id}
-              onClick={() => item.disabled
-                ? onNotify("收录箱将在真实文件入口接入后开放；当前不读取本机文件")
-                : onNavigate(item.id as Page)}
+              onClick={() => onNavigate(item.id as Page)}
               aria-current={isActive ? "page" : undefined}
-              aria-disabled={item.disabled}
-              title={item.disabled ? "首轮原型暂未开放" : item.label}
+              title={item.label}
             >
               <Icon size={20} />
               <span className="nav-label">{item.label}</span>
@@ -579,9 +590,9 @@ function RecordList({
             >
               <RecordIcon record={record} />
               <div className="record-copy">
-                <strong>{record.title}</strong>
+                <strong><HighlightedText text={record.title} query={search} /></strong>
                 <div className="tag-line">{record.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
-                <div className="record-source">{recordSourceLabel(record)}</div>
+                <div className="record-source"><HighlightedText text={recordSourceLabel(record)} query={search} /></div>
               </div>
               <div className="record-side">
                 <span className="record-date">{formatRecordDate(record.updatedAt)}</span>
@@ -672,6 +683,7 @@ function DetailPanel({
   onJudgmentChange,
   onAppendVersion,
   onRestoreVersion,
+  onEditRecord,
   isEditing,
   setIsEditing,
   saveState,
@@ -683,6 +695,7 @@ function DetailPanel({
   onJudgmentChange: (value: string) => void;
   onAppendVersion: () => Promise<void>;
   onRestoreVersion: (versionId: number) => Promise<void>;
+  onEditRecord: () => void;
   isEditing: boolean;
   setIsEditing: (value: boolean) => void;
   saveState: SaveState;
@@ -739,13 +752,18 @@ function DetailPanel({
             {record.tags.map((tag) => <span className="detail-tag" key={tag}>{tag}</span>)}
           </div>
         </div>
-        <button
-          className={`favorite-button ${record.isFavorite ? "active" : ""}`}
-          aria-label={record.isFavorite ? "取消收藏" : "收藏"}
-          onClick={onToggleFavorite}
-        >
-          <Star size={20} fill={record.isFavorite ? "currentColor" : "none"} />
-        </button>
+        <div className="detail-title-actions">
+          <button
+            className={`favorite-button ${record.isFavorite ? "active" : ""}`}
+            aria-label={record.isFavorite ? "取消收藏" : "收藏"}
+            onClick={onToggleFavorite}
+          >
+            <Star size={20} fill={record.isFavorite ? "currentColor" : "none"} />
+          </button>
+          <button className="favorite-button" aria-label="编辑记录" onClick={onEditRecord}>
+            <Pencil size={19} />
+          </button>
+        </div>
       </div>
 
       <AppCard className={`judgment-card ${isEditing ? "editing" : ""}`}>
@@ -802,7 +820,7 @@ function DetailPanel({
           <button className="card-link" onClick={() => setExpandedSection("questions")}>查看全部问题 <ArrowRight size={15} /></button>
         </SemanticCard>
         <SemanticCard id="actions" title="下一步行动" count={record.nextActions.length} tone="indigo" icon={ArrowRight} collapsed={collapsed.has("actions")} onToggle={toggle}>
-          <div className="check-list">{record.nextActions.slice(0, 3).map((item) => <label key={item}><input type="checkbox" /><span>{item}</span></label>)}</div>
+          <div className="check-list">{record.nextActions.slice(0, 3).map((item) => <div key={item}><span className="action-marker"><ArrowRight size={11} /></span><span>{item}</span></div>)}</div>
           <button className="card-link" onClick={() => setExpandedSection("actions")}>查看全部行动 <ArrowRight size={15} /></button>
         </SemanticCard>
       </div>
@@ -862,6 +880,7 @@ function RecordsWorkspace({
   onMoveToTrash,
   onAppendVersion,
   onRestoreVersion,
+  onEditRecord,
   isEditing,
   setIsEditing,
   saveState,
@@ -880,6 +899,7 @@ function RecordsWorkspace({
   onMoveToTrash: (id: number) => void;
   onAppendVersion: () => Promise<void>;
   onRestoreVersion: (versionId: number) => Promise<void>;
+  onEditRecord: (record: IntelligenceRecord) => void;
   isEditing: boolean;
   setIsEditing: (value: boolean) => void;
   saveState: SaveState;
@@ -940,6 +960,7 @@ function RecordsWorkspace({
           onJudgmentChange={onJudgmentChange}
           onAppendVersion={onAppendVersion}
           onRestoreVersion={onRestoreVersion}
+          onEditRecord={() => onEditRecord(selectedRecord)}
           isEditing={isEditing}
           setIsEditing={setIsEditing}
           saveState={saveState}
@@ -979,27 +1000,130 @@ function PageTitle({
 function ImportCenter({
   step,
   setStep,
+  repository,
+  onImported,
+  onNotify,
 }: {
   step: ImportStep;
   setStep: (step: ImportStep) => void;
+  repository: RecordRepository;
+  onImported: (recordId?: number) => Promise<void>;
+  onNotify: (message: string) => void;
 }) {
   const [dragActive, setDragActive] = useState(false);
-  const loadDemo = () => setStep("preview");
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setDragActive(false);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const previewPath = async (path: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await repository.prepareImport(path);
+      setPreview(result);
+      setStep("preview");
+      onNotify("原始文件已归档并完成解析预览");
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "读取导入文件失败");
+    } finally {
+      setLoading(false);
+      setDragActive(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setDragActive(true);
+      } else if (event.payload.type === "leave") {
+        setDragActive(false);
+      } else if (event.payload.type === "drop") {
+        setDragActive(false);
+        const path = event.payload.paths[0];
+        if (path) void previewPath(path);
+      }
+    }).then((dispose) => {
+      unlisten = dispose;
+    });
+    return () => unlisten?.();
+  }, [repository]);
+
+  const loadDemo = () => {
+    const demoRecord = {
+      title: "AI资本开支与自由现金流",
+      summary: "AI基础设施投入短期压制自由现金流",
+      status: "tracking" as const,
+      tags: ["资本开支", "自由现金流", "云计算"],
+      currentJudgment: "短期现金流承压，但长期回报取决于商业化效率。",
+      confirmedFacts: [],
+      keyEvidence: [],
+      openQuestions: [],
+      nextActions: [],
+      notes: "",
+      sourceText: sampleJson,
+      sources: [],
+      isFavorite: false,
+    };
+    setPreview({
+      jobId: "browser-demo",
+      sourceFileName: "ai-capex-research.json",
+      storedFilePath: "浏览器演示不写入文件",
+      sha256: "demo",
+      fileKind: "json",
+      sizeBytes: new Blob([sampleJson]).size,
+      duplicate: false,
+      rawPreview: sampleJson,
+      records: [demoRecord],
+      warnings: ["浏览器模式仅演示映射；Tauri 桌面版会先归档原文件"],
+    });
     setStep("preview");
   };
 
-  if (step === "mapping") return <JsonMapping onBack={() => setStep("preview")} />;
+  const chooseFile = async () => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      loadDemo();
+      return;
+    }
+    const selected = await openFileDialog({
+      multiple: false,
+      directory: false,
+      filters: [{
+        name: "研究资料",
+        extensions: ["json", "md", "markdown", "txt", "html", "htm"],
+      }],
+    });
+    if (typeof selected === "string") await previewPath(selected);
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    if (!("__TAURI_INTERNALS__" in window)) loadDemo();
+  };
+
+  if (step === "mapping" && preview) {
+    return (
+      <JsonMapping
+        preview={preview}
+        repository={repository}
+        onBack={() => setStep("preview")}
+        onImported={onImported}
+        onNotify={onNotify}
+      />
+    );
+  }
 
   return (
     <main className="page-shell">
       <PageTitle
         eyebrow="本地文件 · 安全预览"
         title="导入中心"
-        description="先保留原始文件，再进行结构识别、字段映射和重复检查。当前原型不会写入真实数据。"
-        action={<button className="secondary-button" onClick={loadDemo}><FileJson2 size={18} />载入 JSON 示例</button>}
+        description="文件先复制到受控原始目录并计算 SHA-256，再进行结构识别、字段映射和重复检查。"
+        action={!("__TAURI_INTERNALS__" in window)
+          ? <button className="secondary-button" onClick={loadDemo}><FileJson2 size={18} />载入浏览器示例</button>
+          : undefined}
       />
       <div className="import-layout">
         <div className="import-primary">
@@ -1013,39 +1137,46 @@ function ImportCenter({
               onDragOver={(event) => event.preventDefault()}
               onDrop={onDrop}
             >
-              {step === "empty" ? (
+              {!preview ? (
                 <>
                   <div className="drop-icon"><Upload size={26} /></div>
                   <strong>拖入 JSON、Markdown、TXT 或 HTML 文件</strong>
-                  <span>首轮演示优先使用标准 JSON；文件只在本机预览。</span>
-                  <button className="primary-button" onClick={loadDemo}><FolderOpen size={18} />选择文件</button>
+                  <span>单文件不超过 20 MB；原文件和导入日志只保存在本机。</span>
+                  <button className="primary-button" disabled={loading} onClick={() => void chooseFile()}>
+                    <FolderOpen size={18} />{loading ? "正在归档与解析…" : "选择文件"}
+                  </button>
                 </>
               ) : (
                 <div className="file-row">
                   <div className="file-type"><Braces size={24} /></div>
-                  <div><strong>ai-capex-research.json</strong><span>4.2 KB · UTF-8 · 标准 JSON</span></div>
+                  <div>
+                    <strong>{preview.sourceFileName}</strong>
+                    <span>{(preview.sizeBytes / 1024).toFixed(1)} KB · {preview.fileKind.toUpperCase()} · SHA-256 {preview.sha256.slice(0, 12)}…</span>
+                  </div>
                   <span className="recognized"><CheckCircle2 size={17} />识别完成</span>
-                  <button className="icon-button" onClick={() => setStep("empty")}><X size={18} /></button>
+                  <button className="icon-button" onClick={() => { setPreview(null); setStep("empty"); }}><X size={18} /></button>
                 </div>
               )}
             </div>
           </AppCard>
           <AppCard className="import-notice">
             <ShieldCheck size={21} />
-            <div><strong>原始文件保护</strong><span>正式版本将在解析前复制原始文件并计算 SHA-256；原型仅演示流程。</span></div>
+            <div><strong>原始文件保护</strong><span>{preview ? `已归档到：${preview.storedFilePath}` : "选择后先归档原文件，再解析内容；不会修改源文件。"}</span></div>
           </AppCard>
+          {error ? <div className="form-error import-error"><AlertCircle size={17} />{error}</div> : null}
+          {preview?.warnings.map((warning) => <div className="import-warning" key={warning}><AlertCircle size={16} />{warning}</div>)}
         </div>
 
         <AppCard className="preview-card">
-          <div className="preview-heading"><span><FileJson2 size={19} />原始内容预览</span><em>{step === "preview" ? "7 个可映射字段" : "等待文件"}</em></div>
-          {step === "preview" ? <pre>{sampleJson}</pre> : (
+          <div className="preview-heading"><span><FileJson2 size={19} />原始内容预览</span><em>{preview ? `${preview.records.length} 条可导入记录` : "等待文件"}</em></div>
+          {preview ? <pre>{preview.rawPreview}</pre> : (
             <div className="preview-empty"><FileText size={31} /><span>选择文件后在这里检查原始内容</span></div>
           )}
           <div className="import-summary">
-            <div><span>预计生成</span><strong>{step === "preview" ? "1" : "—"} 条记录</strong></div>
-            <div><span>重复风险</span><strong>{step === "preview" ? "低" : "—"}</strong></div>
+            <div><span>预计生成</span><strong>{preview ? preview.records.length : "—"} 条记录</strong></div>
+            <div><span>重复风险</span><strong>{preview ? (preview.duplicate ? "已检测到重复" : "未检测到") : "—"}</strong></div>
           </div>
-          <button className="primary-button full" disabled={step !== "preview"} onClick={() => setStep("mapping")}>
+          <button className="primary-button full" disabled={!preview} onClick={() => setStep("mapping")}>
             继续字段映射 <ArrowRight size={18} />
           </button>
         </AppCard>
@@ -1054,20 +1185,56 @@ function ImportCenter({
   );
 }
 
-function JsonMapping({ onBack }: { onBack: () => void }) {
+function JsonMapping({
+  preview,
+  repository,
+  onBack,
+  onImported,
+  onNotify,
+}: {
+  preview: ImportPreview;
+  repository: RecordRepository;
+  onBack: () => void;
+  onImported: (recordId?: number) => Promise<void>;
+  onNotify: (message: string) => void;
+}) {
+  const record = preview.records[0];
   const mappings = [
-    ["title", "标题", "AI资本开支与自由现金流"],
-    ["summary", "摘要", "AI基础设施投入短期压制自由现金流"],
-    ["status", "状态", "tracking → 持续跟踪"],
-    ["tags", "标签", "资本开支 / 自由现金流 / 云计算"],
-    ["current_judgment", "当前判断", "短期现金流承压，但长期回报…"],
-    ["created_at", "创建时间", "2026-07-25 10:00"],
+    ["title", "标题", record?.title ?? "—"],
+    ["summary", "摘要", record?.summary ?? "—"],
+    ["status", "状态", record?.status ? statusLabel(record.status) : "普通记录"],
+    ["tags", "标签", record?.tags?.join(" / ") || "—"],
+    ["current_judgment", "当前判断", record?.currentJudgment || "—"],
+    ["source_text", "原始文本", record?.sourceText ? `${record.sourceText.slice(0, 36)}…` : "—"],
   ];
   const [completed, setCompleted] = useState(false);
+  const [allowDuplicate, setAllowDuplicate] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const confirm = async () => {
+    if (preview.jobId === "browser-demo") {
+      setCompleted(true);
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await repository.confirmImport(preview.jobId, preview.records, allowDuplicate);
+      setCompleted(true);
+      await onImported(result.importedRecords[0]?.id);
+      onNotify(`已导入 ${result.importedRecords.length} 条记录`);
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "导入失败");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <main className="page-shell mapping-page">
       <button className="back-button" onClick={onBack}><ArrowLeft size={18} />返回导入预览</button>
-      <PageTitle eyebrow="导入中心 · 第 2 步" title="JSON 字段映射" description="确认源字段与情报记录结构的对应关系，导入前仍可返回修改。" />
+      <PageTitle eyebrow="导入中心 · 第 2 步" title="字段映射与写入确认" description={`确认 ${preview.sourceFileName} 的解析结果；导入前仍可返回检查原文。`} />
       <div className="mapping-layout">
         <AppCard className="mapping-card">
           <div className="mapping-header"><strong>源字段</strong><strong>映射到</strong><strong>预览值</strong></div>
@@ -1082,16 +1249,23 @@ function JsonMapping({ onBack }: { onBack: () => void }) {
         <div className="mapping-side">
           <AppCard className="mapping-result">
             <div className="result-title"><LayoutGrid size={20} /><strong>导入结果预览</strong></div>
-            <div className="result-metric"><strong>1</strong><span>预计新增记录</span></div>
-            <div className="result-check"><CheckCircle2 size={17} /><span>标准 Schema 1.0</span></div>
-            <div className="result-check"><CheckCircle2 size={17} /><span>未检测到文件哈希重复</span></div>
-            <label><input type="checkbox" defaultChecked />保留原始 JSON 文件</label>
-            <label><input type="checkbox" defaultChecked />创建结构化研究记录</label>
-            <button className="primary-button full" onClick={() => setCompleted(true)}>
-              <Check size={18} />确认导入演示
+            <div className="result-metric"><strong>{preview.records.length}</strong><span>预计新增记录</span></div>
+            <div className="result-check"><CheckCircle2 size={17} /><span>原始文件已归档并计算 SHA-256</span></div>
+            <div className={`result-check ${preview.duplicate ? "warning" : ""}`}>
+              {preview.duplicate ? <AlertCircle size={17} /> : <CheckCircle2 size={17} />}
+              <span>{preview.duplicate ? "检测到相同文件已完成导入" : "未检测到文件哈希重复"}</span>
+            </div>
+            <label><input type="checkbox" checked readOnly />保留原始文件与导入日志</label>
+            <label><input type="checkbox" checked readOnly />创建结构化研究记录</label>
+            {preview.duplicate ? (
+              <label><input type="checkbox" checked={allowDuplicate} onChange={(event) => setAllowDuplicate(event.target.checked)} />明确允许重复导入</label>
+            ) : null}
+            {error ? <div className="form-error"><AlertCircle size={16} />{error}</div> : null}
+            <button className="primary-button full" disabled={submitting || (preview.duplicate && !allowDuplicate)} onClick={() => void confirm()}>
+              <Check size={18} />{submitting ? "正在写入…" : "确认导入"}
             </button>
           </AppCard>
-          {completed ? <div className="success-banner"><CheckCircle2 size={19} /><span>演示完成：已生成 1 条预览记录，未写入数据库。</span></div> : null}
+          {completed ? <div className="success-banner"><CheckCircle2 size={19} /><span>{preview.jobId === "browser-demo" ? "浏览器映射演示完成；桌面版会写入本机数据库。" : "导入完成：记录与原始文件、哈希和导入日志已关联。"}</span></div> : null}
         </div>
       </div>
     </main>
@@ -1179,6 +1353,115 @@ function NewRecordDialog({
   );
 }
 
+function EditRecordDialog({
+  record,
+  onClose,
+  onSave,
+}: {
+  record: IntelligenceRecord;
+  onClose: () => void;
+  onSave: (input: UpdateRecordInput) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(() => recordToUpdate(record));
+  const [facts, setFacts] = useState(record.confirmedFacts.join("\n"));
+  const [evidenceText, setEvidenceText] = useState(record.keyEvidence
+    .map((item) => `${item.content} | ${item.source}`)
+    .join("\n"));
+  const [questions, setQuestions] = useState(record.openQuestions.join("\n"));
+  const [actions, setActions] = useState(record.nextActions.join("\n"));
+  const [tagsText, setTagsText] = useState(record.tags.join("，"));
+  const [sourceTitle, setSourceTitle] = useState(record.sources[0]?.title ?? "");
+  const [sourceUrl, setSourceUrl] = useState(record.sources[0]?.url ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const lines = (value: string) => value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+
+  return (
+    <PrototypeDialog eyebrow={`记录 #${record.id}`} title="编辑完整记录" onClose={onClose}>
+      <form
+        className="record-form edit-record-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!draft.title.trim()) {
+            setError("记录标题不能为空");
+            return;
+          }
+          setSubmitting(true);
+          setError("");
+          const firstSource = draft.sources[0] ?? {
+            sourceType: "manual",
+            title: "",
+            url: null,
+            localPath: null,
+            externalId: null,
+          };
+          try {
+            await onSave({
+              ...draft,
+              title: draft.title.trim(),
+              summary: draft.summary.trim(),
+              tags: tagsText.split(/[,，/]/).map((item) => item.trim()).filter(Boolean),
+              confirmedFacts: lines(facts),
+              keyEvidence: lines(evidenceText).map((line) => {
+                const separator = line.lastIndexOf("|");
+                return separator >= 0
+                  ? { content: line.slice(0, separator).trim(), source: line.slice(separator + 1).trim() }
+                  : { content: line, source: "" };
+              }),
+              openQuestions: lines(questions),
+              nextActions: lines(actions),
+              sources: sourceTitle.trim() || sourceUrl.trim() ? [{
+                ...firstSource,
+                title: sourceTitle.trim(),
+                url: sourceUrl.trim() || null,
+              }] : [],
+            });
+            onClose();
+          } catch (saveError) {
+            setError(saveError instanceof Error ? saveError.message : "保存记录失败");
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        <div className="form-grid">
+          <label><span>标题</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+          <label>
+            <span>状态</span>
+            <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as RecordStatus })}>
+              <option value="normal">普通记录</option>
+              <option value="tracking">持续跟踪</option>
+              <option value="verification">待验证</option>
+              <option value="updated">判断更新</option>
+            </select>
+          </label>
+        </div>
+        <label><span>摘要</span><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
+        <label><span>标签</span><input value={tagsText} onChange={(event) => setTagsText(event.target.value)} placeholder="资本开支，云计算" /></label>
+        <label><span>当前判断</span><textarea value={draft.currentJudgment} onChange={(event) => setDraft({ ...draft, currentJudgment: event.target.value })} /></label>
+        <div className="form-grid">
+          <label><span>已确认事实（每行一条）</span><textarea value={facts} onChange={(event) => setFacts(event.target.value)} /></label>
+          <label><span>关键证据（内容 | 来源）</span><textarea value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} /></label>
+          <label><span>待验证问题（每行一条）</span><textarea value={questions} onChange={(event) => setQuestions(event.target.value)} /></label>
+          <label><span>下一步行动（每行一条）</span><textarea value={actions} onChange={(event) => setActions(event.target.value)} /></label>
+        </div>
+        <div className="form-grid">
+          <label><span>来源标题</span><input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} /></label>
+          <label><span>来源链接</span><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://…" /></label>
+        </div>
+        <label><span>备注</span><textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label>
+        <label><span>原始文本</span><textarea value={draft.sourceText} onChange={(event) => setDraft({ ...draft, sourceText: event.target.value })} /></label>
+        {error ? <div className="form-error"><AlertCircle size={16} />{error}</div> : null}
+        <div className="dialog-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>取消</button>
+          <button type="submit" className="primary-button" disabled={submitting}><Save size={17} />{submitting ? "保存中…" : "保存完整记录"}</button>
+        </div>
+      </form>
+    </PrototypeDialog>
+  );
+}
+
 function TrashPage({
   records,
   onRestore,
@@ -1246,19 +1529,97 @@ function TrashPage({
   );
 }
 
+function TagManager({
+  tags,
+  onCreate,
+  onRename,
+  onDelete,
+}: {
+  tags: TagItem[];
+  onCreate: (name: string) => Promise<void>;
+  onRename: (id: number, name: string) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
+}) {
+  const [newName, setNewName] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
+
+  return (
+    <div className="tag-manager">
+      <form onSubmit={async (event) => {
+        event.preventDefault();
+        if (!newName.trim()) return;
+        await onCreate(newName.trim());
+        setNewName("");
+      }}>
+        <input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="新标签名称" />
+        <button className="primary-button" type="submit"><Plus size={16} />新建标签</button>
+      </form>
+      <div className="tag-manager-list">
+        {tags.map((tag) => (
+          <div className="tag-manager-row" key={tag.id}>
+            {editingId === tag.id ? (
+              <input value={editingName} onChange={(event) => setEditingName(event.target.value)} autoFocus />
+            ) : <span><i className={`tag-color ${tag.colorKey}`} />{tag.name}<em>{tag.recordCount} 条记录</em></span>}
+            <div>
+              {editingId === tag.id ? (
+                <>
+                  <button onClick={async () => {
+                    await onRename(tag.id, editingName);
+                    setEditingId(null);
+                  }}><Check size={15} />保存</button>
+                  <button onClick={() => setEditingId(null)}>取消</button>
+                </>
+              ) : pendingDelete === tag.id ? (
+                <>
+                  <button className="danger" onClick={async () => {
+                    await onDelete(tag.id);
+                    setPendingDelete(null);
+                  }}>确认删除</button>
+                  <button onClick={() => setPendingDelete(null)}>取消</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => {
+                    setEditingId(tag.id);
+                    setEditingName(tag.name);
+                  }}><Pencil size={15} />重命名</button>
+                  <button className="danger" onClick={() => setPendingDelete(tag.id)}><Trash2 size={15} />删除</button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+        {!tags.length ? <div className="empty-state"><Tags size={26} /><span>暂无标签</span></div> : null}
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({
   repository,
+  tags,
+  onCreateTag,
+  onRenameTag,
+  onDeleteTag,
+  onDataRestored,
   onNotify,
 }: {
   repository: RecordRepository;
+  tags: TagItem[];
+  onCreateTag: (name: string) => Promise<void>;
+  onRenameTag: (id: number, name: string) => Promise<void>;
+  onDeleteTag: (id: number) => Promise<void>;
+  onDataRestored: () => Promise<void>;
   onNotify: (message: string) => void;
 }) {
   const [dataLocation, setDataLocation] = useState("正在读取…");
+  const [restoreCandidate, setRestoreCandidate] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const groups = [
     { icon: Database, title: "数据与存储", copy: "数据目录、完整性检查与索引维护", value: dataLocation },
-    { icon: Palette, title: "外观", copy: "界面密度、字号与主题", value: "标准 · 浅色" },
-    { icon: Bell, title: "提醒", copy: "跟踪记录与行动项提醒", value: "仅应用内" },
-    { icon: Lock, title: "隐私与安全", copy: "离线策略与文件访问权限", value: "离线优先" },
+    { icon: Tags, title: "标签管理", copy: "新建、重命名或删除本地标签", value: `${tags.length} 个标签` },
     { icon: Keyboard, title: "快捷键", copy: "搜索、编辑和导入快捷方式", value: "查看全部" },
   ];
   const [selectedSetting, setSelectedSetting] = useState<string | null>(null);
@@ -1319,8 +1680,79 @@ function SettingsPage({
                   onNotify(error instanceof Error ? error.message : "索引重建失败");
                 }
               }}><Search size={17} />重建搜索索引</button>
+              <button className="secondary-button" onClick={async () => {
+                try {
+                  const result = await repository.exportAllJson();
+                  onNotify(`已导出 ${result.recordCount} 条记录：${result.filePath}`);
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "全量导出失败");
+                }
+              }}><FileJson2 size={17} />导出全部 JSON</button>
+              <button className="secondary-button" onClick={async () => {
+                try {
+                  const path = await repository.createBackup();
+                  onNotify(`数据库备份已创建：${path}`);
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "创建备份失败");
+                }
+              }}><Database size={17} />创建数据库备份</button>
+              <button className="secondary-button" onClick={async () => {
+                if (!("__TAURI_INTERNALS__" in window)) {
+                  onNotify("浏览器演示模式不能选择数据库备份");
+                  return;
+                }
+                const selected = await openFileDialog({
+                  multiple: false,
+                  directory: false,
+                  filters: [{ name: "南枫情报台数据库备份", extensions: ["db"] }],
+                });
+                if (typeof selected === "string") setRestoreCandidate(selected);
+              }}><RotateCcw size={17} />从备份恢复</button>
+              <button className="secondary-button" onClick={async () => {
+                try {
+                  await repository.openExportDirectory();
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "打开导出目录失败");
+                }
+              }}><FolderOpen size={17} />打开导出目录</button>
             </div>
-          ) : <div className="dialog-footnote">此设置项将在后续增量中继续完善。</div>}
+          ) : activeSetting.title === "标签管理" ? (
+            <TagManager tags={tags} onCreate={onCreateTag} onRename={onRenameTag} onDelete={onDeleteTag} />
+          ) : (
+            <div className="shortcut-list">
+              <div><kbd>Ctrl / ⌘ + K</kbd><span>聚焦记录搜索</span></div>
+              <div><kbd>Ctrl / ⌘ + N</kbd><span>新建情报记录</span></div>
+              <div><kbd>Ctrl / ⌘ + E</kbd><span>编辑当前记录</span></div>
+              <div><kbd>Ctrl / ⌘ + Shift + I</kbd><span>打开导入中心</span></div>
+            </div>
+          )}
+        </PrototypeDialog>
+      ) : null}
+      {restoreCandidate ? (
+        <PrototypeDialog eyebrow="安全恢复" title="确认替换当前数据库" onClose={() => setRestoreCandidate(null)}>
+          <div className="delete-confirmation">
+            <div className="danger-callout">
+              <AlertCircle size={19} />
+              <span>恢复会替换当前数据库。应用会先自动创建“恢复前安全备份”，并检查所选备份和恢复结果的完整性。</span>
+            </div>
+            <p>备份文件：<strong>{restoreCandidate}</strong></p>
+            <div className="dialog-actions">
+              <button className="secondary-button" onClick={() => setRestoreCandidate(null)}>取消</button>
+              <button className="danger-button" disabled={restoring} onClick={async () => {
+                setRestoring(true);
+                try {
+                  const result = await repository.restoreBackup(restoreCandidate);
+                  await onDataRestored();
+                  setRestoreCandidate(null);
+                  onNotify(`恢复完成；恢复前安全备份：${result.safetyBackup}`);
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "数据库恢复失败");
+                } finally {
+                  setRestoring(false);
+                }
+              }}><RotateCcw size={17} />{restoring ? "正在校验与恢复…" : "确认恢复"}</button>
+            </div>
+          </div>
         </PrototypeDialog>
       ) : null}
     </main>
@@ -1343,6 +1775,7 @@ export function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [recordSearch, setRecordSearch] = useState("");
   const [newRecordOpen, setNewRecordOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<IntelligenceRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
   const notify = (message: string) => setNotice({ id: Date.now(), message });
@@ -1510,9 +1943,18 @@ export function App() {
     notify("旧版本已恢复为新的当前版本，历史记录未被覆盖");
   };
 
-  const exportCurrent = () => {
+  const exportCurrent = async () => {
     if (!selectedRecord) {
       notify("请先选择要导出的记录");
+      return;
+    }
+    if ("__TAURI_INTERNALS__" in window) {
+      try {
+        const result = await repository.exportRecord(selectedRecord.id, "md");
+        notify(`当前记录已导出：${result.filePath}`);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "导出失败");
+      }
       return;
     }
     const markdown = [
@@ -1555,7 +1997,6 @@ export function App() {
         trashCount={trashRecords.length}
         tags={tags}
         onNavigate={setPage}
-        onNotify={notify}
         onSelectTag={(tag) => {
           setRecordSearch(tag);
           setPage("records");
@@ -1567,7 +2008,7 @@ export function App() {
           saveState={saveState}
           onNotify={notify}
           onCreateRecord={() => setNewRecordOpen(true)}
-          onExportCurrent={exportCurrent}
+          onExportCurrent={() => void exportCurrent()}
         />
         {showRecords ? (
           loading ? <div className="page-loading"><span className="save-spinner" />正在读取本地记录…</div> : (
@@ -1593,6 +2034,7 @@ export function App() {
               onMoveToTrash={(id) => void moveToTrash(id)}
               onAppendVersion={appendVersion}
               onRestoreVersion={restoreVersion}
+              onEditRecord={setEditingRecord}
               isEditing={isEditing}
               setIsEditing={setIsEditing}
               saveState={saveState}
@@ -1600,7 +2042,17 @@ export function App() {
             />
           )
         ) : null}
-        {page === "import" ? <ImportCenter step={importStep} setStep={setImportStep} /> : null}
+        {page === "import" ? (
+          <ImportCenter
+            step={importStep}
+            setStep={setImportStep}
+            repository={repository}
+            onImported={async (recordId) => {
+              await reloadCollections(recordId);
+            }}
+            onNotify={notify}
+          />
+        ) : null}
         {page === "trash" ? (
           <TrashPage
             records={trashRecords}
@@ -1616,10 +2068,47 @@ export function App() {
             }}
           />
         ) : null}
-        {page === "settings" ? <SettingsPage repository={repository} onNotify={notify} /> : null}
+        {page === "settings" ? (
+          <SettingsPage
+            repository={repository}
+            tags={tags}
+            onCreateTag={async (name) => {
+              await repository.createTag(name);
+              setTags(await repository.listTags());
+              notify("标签已创建");
+            }}
+            onRenameTag={async (id, name) => {
+              await repository.renameTag(id, name);
+              await reloadCollections(selectedId ?? undefined);
+              notify("标签已重命名，相关记录已同步");
+            }}
+            onDeleteTag={async (id) => {
+              await repository.deleteTag(id);
+              await reloadCollections(selectedId ?? undefined);
+              notify("标签已删除，记录内容仍保留");
+            }}
+            onDataRestored={async () => {
+              setRecordSearch("");
+              await reloadCollections();
+            }}
+            onNotify={notify}
+          />
+        ) : null}
       </div>
       <PrototypeNotice notice={notice} onClose={() => setNotice(null)} />
       {newRecordOpen ? <NewRecordDialog onClose={() => setNewRecordOpen(false)} onCreate={createRecord} /> : null}
+      {editingRecord ? (
+        <EditRecordDialog
+          record={editingRecord}
+          onClose={() => setEditingRecord(null)}
+          onSave={async (input) => {
+            const updated = await repository.updateRecord(editingRecord.id, input);
+            replaceRecord(updated);
+            setTags(await repository.listTags());
+            notify("完整记录已保存");
+          }}
+        />
+      ) : null}
     </div>
   );
 }

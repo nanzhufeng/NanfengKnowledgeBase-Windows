@@ -5,3 +5,4 @@ dist/
 /implementation-*.png
 /design-qa-*.png
 .DS_Store
+.runtime-qa/

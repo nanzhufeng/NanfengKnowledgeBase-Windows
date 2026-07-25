@@ -10,6 +10,10 @@ import {
 } from "../mockData";
 import {
   dataLocationSchema,
+  importPreviewSchema,
+  importResultSchema,
+  exportResultSchema,
+  restoreResultSchema,
   intelligenceRecordSchema,
   recordVersionSchema,
   tagItemSchema,
@@ -17,6 +21,10 @@ import {
   type CreateRecordInput,
   type DataLocation,
   type IntelligenceRecord,
+  type ImportPreview,
+  type ImportResult,
+  type ExportResult,
+  type RestoreResult,
   type RecordQuery,
   type RecordSourceInput,
   type RecordVersion,
@@ -44,6 +52,13 @@ export interface RecordRepository {
   openDataDirectory(): Promise<void>;
   rebuildSearchIndex(): Promise<void>;
   runIntegrityCheck(): Promise<string>;
+  prepareImport(sourcePath: string): Promise<ImportPreview>;
+  confirmImport(jobId: string, records: CreateRecordInput[], allowDuplicate?: boolean): Promise<ImportResult>;
+  exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult>;
+  exportAllJson(): Promise<ExportResult>;
+  createBackup(): Promise<string>;
+  restoreBackup(sourcePath: string): Promise<RestoreResult>;
+  openExportDirectory(): Promise<void>;
 }
 
 export class RepositoryError extends Error {
@@ -145,6 +160,40 @@ class TauriRecordRepository implements RecordRepository {
 
   async runIntegrityCheck(): Promise<string> {
     return invoke<string>("run_integrity_check");
+  }
+
+  async prepareImport(sourcePath: string): Promise<ImportPreview> {
+    return importPreviewSchema.parse(await invoke("prepare_import", { sourcePath }));
+  }
+
+  async confirmImport(
+    jobId: string,
+    records: CreateRecordInput[],
+    allowDuplicate = false,
+  ): Promise<ImportResult> {
+    return importResultSchema.parse(await invoke("confirm_import", {
+      input: { jobId, records, allowDuplicate },
+    }));
+  }
+
+  async exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult> {
+    return exportResultSchema.parse(await invoke("export_record", { recordId, format }));
+  }
+
+  async exportAllJson(): Promise<ExportResult> {
+    return exportResultSchema.parse(await invoke("export_all_json"));
+  }
+
+  async createBackup(): Promise<string> {
+    return invoke<string>("create_backup");
+  }
+
+  async restoreBackup(sourcePath: string): Promise<RestoreResult> {
+    return restoreResultSchema.parse(await invoke("restore_backup", { sourcePath }));
+  }
+
+  async openExportDirectory(): Promise<void> {
+    await invoke("open_export_directory");
   }
 }
 
@@ -406,6 +455,43 @@ export class BrowserRecordRepository implements RecordRepository {
     return "ok";
   }
 
+  async prepareImport(): Promise<ImportPreview> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能读取本机文件");
+  }
+
+  async confirmImport(): Promise<ImportResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能写入桌面导入任务");
+  }
+
+  async exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult> {
+    const record = await this.getRecord(recordId);
+    return {
+      format,
+      filePath: `浏览器下载：${record.title}.${format}`,
+      recordCount: 1,
+    };
+  }
+
+  async exportAllJson(): Promise<ExportResult> {
+    return {
+      format: "json",
+      filePath: "浏览器演示不写入导出目录",
+      recordCount: this.state.records.length,
+    };
+  }
+
+  async createBackup(): Promise<string> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能创建数据库备份");
+  }
+
+  async restoreBackup(): Promise<RestoreResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能恢复数据库备份");
+  }
+
+  async openExportDirectory(): Promise<void> {
+    throw new RepositoryError("unsupported", "浏览器演示模式没有导出目录");
+  }
+
   private createVersion(
     record: IntelligenceRecord,
     versionTitle: string,
@@ -497,6 +583,15 @@ class SafeTauriRepository implements RecordRepository {
   openDataDirectory = () => this.run(() => this.inner.openDataDirectory());
   rebuildSearchIndex = () => this.run(() => this.inner.rebuildSearchIndex());
   runIntegrityCheck = () => this.run(() => this.inner.runIntegrityCheck());
+  prepareImport = (sourcePath: string) => this.run(() => this.inner.prepareImport(sourcePath));
+  confirmImport = (jobId: string, records: CreateRecordInput[], allowDuplicate?: boolean) =>
+    this.run(() => this.inner.confirmImport(jobId, records, allowDuplicate));
+  exportRecord = (recordId: number, format: "md" | "json") =>
+    this.run(() => this.inner.exportRecord(recordId, format));
+  exportAllJson = () => this.run(() => this.inner.exportAllJson());
+  createBackup = () => this.run(() => this.inner.createBackup());
+  restoreBackup = (sourcePath: string) => this.run(() => this.inner.restoreBackup(sourcePath));
+  openExportDirectory = () => this.run(() => this.inner.openExportDirectory());
 }
 
 function isTauriRuntime(): boolean {

@@ -108,6 +108,22 @@ export type CreateRecordInput = {
   isFavorite?: boolean;
 };
 
+export const createRecordInputSchema = z.object({
+  title: z.string(),
+  summary: z.string().optional(),
+  status: recordStatusSchema.optional(),
+  tags: z.array(z.string()).optional(),
+  currentJudgment: z.string().optional(),
+  confirmedFacts: z.array(z.string()).optional(),
+  keyEvidence: z.array(evidenceItemSchema).optional(),
+  openQuestions: z.array(z.string()).optional(),
+  nextActions: z.array(z.string()).optional(),
+  notes: z.string().optional(),
+  sourceText: z.string().optional(),
+  sources: z.array(recordSourceInputSchema).optional(),
+  isFavorite: z.boolean().optional(),
+});
+
 export type UpdateRecordInput = {
   title: string;
   summary: string;
@@ -127,6 +143,43 @@ export type CommandError = {
   code: string;
   message: string;
 };
+
+export const importPreviewSchema = z.object({
+  jobId: z.string(),
+  sourceFileName: z.string(),
+  storedFilePath: z.string(),
+  sha256: z.string(),
+  fileKind: z.string(),
+  sizeBytes: z.number(),
+  duplicate: z.boolean(),
+  rawPreview: z.string(),
+  records: z.array(createRecordInputSchema),
+  warnings: z.array(z.string()),
+});
+export type ImportPreview = z.infer<typeof importPreviewSchema>;
+
+export const importResultSchema = z.object({
+  jobId: z.string(),
+  status: z.string(),
+  importedRecords: z.array(intelligenceRecordSchema),
+  skippedCount: z.number().int(),
+  errors: z.array(z.string()),
+});
+export type ImportResult = z.infer<typeof importResultSchema>;
+
+export const exportResultSchema = z.object({
+  format: z.string(),
+  filePath: z.string(),
+  recordCount: z.number().int(),
+});
+export type ExportResult = z.infer<typeof exportResultSchema>;
+
+export const restoreResultSchema = z.object({
+  restoredFrom: z.string(),
+  safetyBackup: z.string(),
+  integrityCheck: z.string(),
+});
+export type RestoreResult = z.infer<typeof restoreResultSchema>;
 
 export function sourceToInput(source: RecordSource): RecordSourceInput {
   return {

@@ -19,6 +19,9 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn from_app(app: &tauri::AppHandle) -> AppResult<Self> {
+        if let Some(override_root) = std::env::var_os("NANFENG_INTELLIGENCE_DATA_DIR") {
+            return Self::from_root(PathBuf::from(override_root));
+        }
         let root = app
             .path()
             .app_data_dir()

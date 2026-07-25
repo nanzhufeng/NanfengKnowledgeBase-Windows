@@ -1,8 +1,10 @@
 mod commands;
 mod database;
 mod error;
+mod importer;
 mod models;
 mod paths;
+mod transfer;
 
 use commands::AppState;
 use tauri::Manager;
@@ -10,6 +12,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -44,6 +47,13 @@ pub fn run() {
             commands::delete_tag,
             commands::rebuild_search_index,
             commands::run_integrity_check,
+            commands::prepare_import,
+            commands::confirm_import,
+            commands::export_record,
+            commands::export_all_json,
+            commands::create_backup,
+            commands::restore_backup,
+            commands::open_export_directory,
         ])
         .run(tauri::generate_context!())
         .expect("南枫情报台启动失败");
