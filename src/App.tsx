@@ -63,6 +63,7 @@ import {
   type RecordRepository,
 } from "./services/recordRepository";
 import { readImportedContent } from "./domain/importedContent";
+import { connectionOpacity } from "./connectionGeometry";
 
 type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
 type ImportStep = "empty" | "preview" | "mapping";
@@ -75,6 +76,7 @@ type ConnectionMetrics = {
   left: number;
   top: number;
   width: number;
+  opacity: number;
 };
 type NavItem = {
   id: "records" | "tracking" | "updates" | "import";
@@ -497,7 +499,8 @@ function RecordList({
       const card = selectedCardRef.current;
       const workspace = card?.closest<HTMLElement>(".records-workspace");
       const detailPanel = workspace?.querySelector<HTMLElement>(".detail-panel");
-      if (!card || !workspace || !detailPanel) {
+      const list = listRef.current;
+      if (!card || !workspace || !detailPanel || !list) {
         onSelectedGeometryChange(null);
         return;
       }
@@ -505,13 +508,21 @@ function RecordList({
       const cardRect = card.getBoundingClientRect();
       const workspaceRect = workspace.getBoundingClientRect();
       const detailRect = detailPanel.getBoundingClientRect();
+      const listRect = list.getBoundingClientRect();
+      const cardCenterY = cardRect.top + cardRect.height / 2;
+      const opacity = connectionOpacity(
+        cardCenterY,
+        listRect.top,
+        listRect.bottom,
+      );
       const left = cardRect.right - workspaceRect.left;
       const width = Math.max(0, detailRect.left - cardRect.right + 1);
 
       onSelectedGeometryChange({
         left,
-        top: cardRect.top - workspaceRect.top + cardRect.height / 2,
+        top: cardCenterY - workspaceRect.top,
         width,
+        opacity,
       });
     };
 
@@ -1015,6 +1026,7 @@ function RecordsWorkspace({
         "--connection-left": `${connectionMetrics.left}px`,
         "--connection-top": `${connectionMetrics.top}px`,
         "--connection-width": `${connectionMetrics.width}px`,
+        "--connection-opacity": connectionMetrics.opacity,
       } as React.CSSProperties : undefined}
     >
       <RecordList

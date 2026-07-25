@@ -657,8 +657,10 @@ textarea:focus-visible,
   top: var(--connection-top);
   width: var(--connection-width);
   height: 1px;
+  opacity: var(--connection-opacity, 1);
   transform: translateY(-50%);
   background: linear-gradient(90deg, rgba(35, 74, 202, 0.7), rgba(35, 74, 202, 0.42));
+  transition: opacity 140ms ease-out;
   pointer-events: none;
 }
 
