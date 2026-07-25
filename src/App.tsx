@@ -62,7 +62,7 @@ import {
   getRecordRepository,
   type RecordRepository,
 } from "./services/recordRepository";
-import { readImportedContent } from "./domain/importedContent";
+import { readImportedContent, shouldDisplaySummary } from "./domain/importedContent";
 import { connectionOpacity } from "./connectionGeometry";
 
 type Page = "records" | "tracking" | "updates" | "import" | "trash" | "settings";
@@ -735,6 +735,7 @@ function DetailPanel({
   const [viewingVersion, setViewingVersion] = useState<RecordVersion | null>(null);
   const [sourceOpen, setSourceOpen] = useState(false);
   const importedContent = useMemo(() => readImportedContent(record.sourceText), [record.sourceText]);
+  const showSummary = useMemo(() => shouldDisplaySummary(record.summary), [record.summary]);
 
   useEffect(() => {
     setExpandedSection(null);
@@ -808,10 +809,12 @@ function DetailPanel({
               ? `${importedContent.messageCount} 条对话消息`
               : record.sourceText
                 ? "原始内容"
-                : "摘要"}
+                : showSummary
+                  ? "摘要"
+                  : "暂无内容"}
           </em>
         </div>
-        {record.summary ? (
+        {showSummary ? (
           <div className="record-summary-block">
             <strong>内容摘要</strong>
             <p>{record.summary}</p>
@@ -823,7 +826,7 @@ function DetailPanel({
             <p>{importedContent.preview}</p>
           </div>
         ) : null}
-        {!record.summary && !importedContent.preview ? (
+        {!showSummary && !importedContent.preview ? (
           <p className="record-content-empty">这条记录尚未填写摘要或原始内容。</p>
         ) : null}
         {importedContent.fullText ? (
@@ -937,7 +940,7 @@ function DetailPanel({
           className="source-content-dialog"
         >
           <div className="source-content-body">
-            {record.summary ? (
+            {showSummary ? (
               <section className="source-summary">
                 <strong>内容摘要</strong>
                 <p>{record.summary}</p>

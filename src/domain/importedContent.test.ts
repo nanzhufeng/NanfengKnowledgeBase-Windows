@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readImportedContent } from "./importedContent";
+import { readImportedContent, shouldDisplaySummary } from "./importedContent";
 
 describe("readImportedContent", () => {
   it("converts archived conversation JSON into readable messages", () => {
@@ -48,5 +48,15 @@ describe("readImportedContent", () => {
     expect(result.isConversation).toBe(false);
     expect(result.fullText).toBe("普通导入正文");
     expect(result.preview).toBe("普通导入正文");
+  });
+
+  it("hides English-dominant summaries without hiding Chinese summaries", () => {
+    expect(shouldDisplaySummary(
+      "**Conversation Overview** The person asked for a structured comparison of several models.",
+    )).toBe(false);
+    expect(shouldDisplaySummary(
+      "这是一条中文摘要，其中包含 AI agent 和 ChatGPT 等必要英文术语。",
+    )).toBe(true);
+    expect(shouldDisplaySummary("")).toBe(false);
   });
 });

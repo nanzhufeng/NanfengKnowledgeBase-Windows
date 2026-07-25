@@ -48,6 +48,20 @@ function makePreview(value: string): string {
   return compact.length > 760 ? `${compact.slice(0, 760)}…` : compact;
 }
 
+export function shouldDisplaySummary(summary: string): boolean {
+  const trimmed = summary.trim();
+  if (!trimmed) return false;
+
+  const latinCount = trimmed.match(/[A-Za-z]/g)?.length ?? 0;
+  const chineseCount = trimmed.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  const languageCharacterCount = latinCount + chineseCount;
+  const isEnglishDominant = latinCount >= 12
+    && languageCharacterCount > 0
+    && latinCount / languageCharacterCount >= 0.7;
+
+  return !isEnglishDominant;
+}
+
 export function readImportedContent(sourceText: string): ReadableSourceContent {
   const trimmed = sourceText.trim();
   if (!trimmed) {
