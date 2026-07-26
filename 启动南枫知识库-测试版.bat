@@ -3,12 +3,12 @@ chcp 65001 >nul
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\mapping-import-build"
-set "APP_EXE=%TEST_TARGET_DIR%\release\nanfeng-intelligence.exe"
+set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\knowledge-base-build"
+set "APP_EXE=%TEST_TARGET_DIR%\release\nanfeng-knowledge-base.exe"
 set "LOG_DIR=%PROJECT_DIR%.runtime-qa\launcher"
 set "LAUNCH_LOG=%LOG_DIR%\latest.log"
 
-title 南枫情报台 - 测试版启动器
+title 南枫知识库 - 测试版启动器
 pushd "%PROJECT_DIR%" || (
   echo [失败] 无法进入项目目录：
   echo %PROJECT_DIR%
@@ -22,10 +22,14 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
 >> "%LAUNCH_LOG%" echo 程序路径：%APP_EXE%
 
 if /I "%~1"=="--rebuild" (
+  set "RUNNING_APP="
+  tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" 2>nul | find /I "nanfeng-knowledge-base.exe" >nul
+  if not errorlevel 1 set "RUNNING_APP=1"
   tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
-  if not errorlevel 1 (
+  if not errorlevel 1 set "RUNNING_APP=1"
+  if defined RUNNING_APP (
     >> "%LAUNCH_LOG%" echo 重新生成前检测到程序已在运行
-    echo [请先关闭] 南枫情报台仍在运行，无法覆盖正在使用的测试程序。
+    echo [请先关闭] 南枫知识库或旧版南枫情报台仍在运行，无法覆盖测试程序。
     echo 关闭现有窗口后，再运行本文件并带上 --rebuild。
     pause
     popd
@@ -70,22 +74,26 @@ if not exist "%APP_EXE%" (
   exit /b 1
 )
 
+set "RUNNING_APP="
+tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" 2>nul | find /I "nanfeng-knowledge-base.exe" >nul
+if not errorlevel 1 set "RUNNING_APP=1"
 tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
-if not errorlevel 1 (
+if not errorlevel 1 set "RUNNING_APP=1"
+if defined RUNNING_APP (
   >> "%LAUNCH_LOG%" echo 检测到程序已在运行
-  echo [请先关闭] 检测到南枫情报台仍在运行。
+  echo [请先关闭] 检测到南枫知识库或旧版南枫情报台仍在运行。
   echo 为避免旧版和测试版同时读写数据，请关闭现有窗口后再双击本文件。
   pause
   popd
   exit /b 2
 )
 
-echo [启动] 南枫情报台测试版
+echo [启动] 南枫知识库测试版
 >> "%LAUNCH_LOG%" echo 正在启动程序
 start "" /D "%PROJECT_DIR%" "%APP_EXE%"
 
 timeout /t 2 /nobreak >nul
-tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
+tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" 2>nul | find /I "nanfeng-knowledge-base.exe" >nul
 if errorlevel 1 (
   >> "%LAUNCH_LOG%" echo 程序启动后两秒内退出
   echo [失败] 程序启动后立即退出，未能打开主界面。

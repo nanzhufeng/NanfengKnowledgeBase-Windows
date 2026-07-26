@@ -25,7 +25,7 @@ pub fn run() {
             let instance_guard = match TcpListener::bind("127.0.0.1:47633") {
                 Ok(listener) => listener,
                 Err(error) => {
-                    eprintln!("南枫情报台已经在运行，本次重复启动已安全退出：{error}");
+                    eprintln!("南枫知识库已经在运行，本次重复启动已安全退出：{error}");
                     std::process::exit(0);
                 }
             };
@@ -38,7 +38,7 @@ pub fn run() {
                     .clear_targets()
                     .target(Target::new(TargetKind::Folder {
                         path: paths.logs.clone(),
-                        file_name: Some("nanfeng-intelligence".to_string()),
+                        file_name: Some("nanfeng-knowledge-base".to_string()),
                     }))
                     .level(log::LevelFilter::Info)
                     .build(),
@@ -98,7 +98,7 @@ pub fn run() {
             commands::remove_attachment,
         ])
         .run(tauri::generate_context!())
-        .expect("南枫情报台启动失败");
+        .expect("南枫知识库启动失败");
 }
 
 fn install_panic_log(log_directory: PathBuf) {

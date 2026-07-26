@@ -47,7 +47,7 @@
 ## Codex + Obsidian 工作流边界
 
 ```text
-南枫情报台 SQLite（唯一正式数据）
+南枫知识库 SQLite（唯一正式数据）
 → 按范围导出 Vault / Markdown
 → 在 Obsidian 阅读，或交给 Codex 二次整理
 → 人工审阅文件差异

@@ -86,12 +86,43 @@ import {
 } from "./domain/importedContent";
 import { composeRecordMarkdown, createRecordDocx } from "./domain/recordExport";
 import { mapImportedRecord, previewMappedValue } from "./domain/importMapping";
+import brandIcon from "../src-tauri/icons/128x128.png";
 import {
   createImportQueueItems,
   importReadyQueue,
   prepareImportQueue,
   type ImportQueueItem,
 } from "./domain/importQueue";
+
+const STORAGE_PREFIX = "nanfeng-knowledge-base";
+const LEGACY_STORAGE_PREFIX = "nanfeng-intelligence";
+
+function brandedStorageKey(suffix: string): string {
+  return `${STORAGE_PREFIX}:${suffix}`;
+}
+
+function migrateLegacyPreferences(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const legacyEntries: Array<[string, string]> = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(LEGACY_STORAGE_PREFIX)) continue;
+      const value = window.localStorage.getItem(key);
+      if (value !== null) legacyEntries.push([key, value]);
+    }
+    legacyEntries.forEach(([legacyKey, value]) => {
+      const nextKey = `${STORAGE_PREFIX}${legacyKey.slice(LEGACY_STORAGE_PREFIX.length)}`;
+      if (window.localStorage.getItem(nextKey) === null) {
+        window.localStorage.setItem(nextKey, value);
+      }
+    });
+  } catch {
+    // 浏览器存储不可用时继续启动，桌面端数据库仍是记录数据的唯一来源。
+  }
+}
+
+migrateLegacyPreferences();
 import { versionDifferences } from "./domain/versionDiff";
 import { connectionOpacity } from "./connectionGeometry";
 
@@ -216,7 +247,7 @@ function summaryFromRecord(record: IntelligenceRecord): RecordSummary {
 }
 
 function judgmentDraftKey(recordId: number): string {
-  return `nanfeng-intelligence:judgment-draft:${recordId}`;
+  return brandedStorageKey(`judgment-draft:${recordId}`);
 }
 
 function readJudgmentDraft(recordId: number): string | null {
@@ -248,7 +279,7 @@ function collectAppPreferences(): string {
   try {
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index);
-      if (!key?.startsWith("nanfeng-intelligence")) continue;
+      if (!key?.startsWith(STORAGE_PREFIX)) continue;
       const value = window.localStorage.getItem(key);
       if (value !== null) preferences[key] = value;
     }
@@ -262,11 +293,18 @@ function restoreAppPreferences(preferencesJson: string): void {
   const preferences = JSON.parse(preferencesJson) as Record<string, unknown>;
   for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
     const key = window.localStorage.key(index);
-    if (key?.startsWith("nanfeng-intelligence")) window.localStorage.removeItem(key);
+    if (key?.startsWith(STORAGE_PREFIX) || key?.startsWith(LEGACY_STORAGE_PREFIX)) {
+      window.localStorage.removeItem(key);
+    }
   }
   Object.entries(preferences).forEach(([key, value]) => {
-    if (key.startsWith("nanfeng-intelligence") && typeof value === "string") {
-      window.localStorage.setItem(key, value);
+    if (typeof value === "string") {
+      const restoredKey = key.startsWith(LEGACY_STORAGE_PREFIX)
+        ? `${STORAGE_PREFIX}${key.slice(LEGACY_STORAGE_PREFIX.length)}`
+        : key;
+      if (restoredKey.startsWith(STORAGE_PREFIX)) {
+        window.localStorage.setItem(restoredKey, value);
+      }
     }
   });
 }
@@ -423,7 +461,7 @@ function PrototypeDialog({
     const sizePreferenceKey = className.split(/\s+/).includes("share-record-dialog")
       ? "share-record-dialog-v2"
       : className || "default";
-    const storageKey = `nanfeng-intelligence:dialog-size:${sizePreferenceKey}`;
+    const storageKey = brandedStorageKey(`dialog-size:${sizePreferenceKey}`);
     try {
       const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "null") as {
         width?: number;
@@ -603,10 +641,12 @@ function Sidebar({
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark"><Sprout size={24} strokeWidth={2.2} /></div>
+        <div className="brand-mark">
+          <img src={brandIcon} alt="" aria-hidden="true" />
+        </div>
         <div>
-          <strong>南枫情报台</strong>
-          <span>本地研究档案与判断版本库</span>
+          <strong>南枫知识库</strong>
+          <span>本地知识档案与判断版本库</span>
         </div>
       </div>
 
@@ -797,7 +837,7 @@ function RecordList({
   const [searchFocused, setSearchFocused] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => {
     try {
-      return JSON.parse(localStorage.getItem("nanfeng-intelligence:recent-searches") ?? "[]");
+      return JSON.parse(localStorage.getItem(brandedStorageKey("recent-searches")) ?? "[]");
     } catch {
       return [];
     }
@@ -833,7 +873,7 @@ function RecordList({
     const timer = window.setTimeout(() => {
       setRecentSearches((current) => {
         const next = [keyword, ...current.filter((item) => item !== keyword)].slice(0, 8);
-        localStorage.setItem("nanfeng-intelligence:recent-searches", JSON.stringify(next));
+        localStorage.setItem(brandedStorageKey("recent-searches"), JSON.stringify(next));
         return next;
       });
     }, 600);
@@ -994,7 +1034,7 @@ function RecordList({
           <div className="recent-searches elevated-card">
             <div><strong>最近搜索</strong><button onMouseDown={(event) => event.preventDefault()} onClick={() => {
               setRecentSearches([]);
-              localStorage.removeItem("nanfeng-intelligence:recent-searches");
+              localStorage.removeItem(brandedStorageKey("recent-searches"));
             }}>清空</button></div>
             {recentSearches.map((item) => (
               <button key={item} onMouseDown={(event) => event.preventDefault()} onClick={() => setSearch(item)}>
@@ -2517,7 +2557,7 @@ function JsonMapping({
   const [templateName, setTemplateName] = useState("");
   const [templates, setTemplates] = useState<Record<string, Record<string, string>>>(() => {
     try {
-      return JSON.parse(localStorage.getItem("nanfeng-intelligence:import-mappings") ?? "{}");
+      return JSON.parse(localStorage.getItem(brandedStorageKey("import-mappings")) ?? "{}");
     } catch {
       return {};
     }
@@ -2600,7 +2640,7 @@ function JsonMapping({
                 if (!name) return;
                 const next = { ...templates, [name]: mapping };
                 setTemplates(next);
-                localStorage.setItem("nanfeng-intelligence:import-mappings", JSON.stringify(next));
+                localStorage.setItem(brandedStorageKey("import-mappings"), JSON.stringify(next));
                 setTemplateName("");
                 onNotify(`映射模板“${name}”已保存在本机`);
               }}><Save size={15} />保存模板</button>
@@ -3230,7 +3270,7 @@ function SettingsPage({
                 const selected = await openFileDialog({
                   multiple: false,
                   directory: false,
-                  filters: [{ name: "南枫情报台数据库备份", extensions: ["db"] }],
+                  filters: [{ name: "南枫知识库数据库备份", extensions: ["db"] }],
                 });
                 if (typeof selected === "string") {
                   setRestoreCandidate(selected);
@@ -3251,7 +3291,7 @@ function SettingsPage({
                 const selected = await openFileDialog({
                   multiple: false,
                   directory: true,
-                  title: "选择南枫情报台完整迁移备份文件夹",
+                  title: "选择南枫知识库完整迁移备份文件夹",
                 });
                 if (typeof selected === "string") {
                   setPortableRestoreCandidate(selected);

@@ -1,8 +1,8 @@
-# 南枫情报台（Nanfeng Intelligence）
+# 南枫知识库（Nanfeng Knowledge Base）
 
-本地优先的 Windows 研究档案与判断版本库。桌面端使用 Tauri 2、React/TypeScript、Rust、SQLite/FTS5；核心记录、来源、原始文件、版本与备份均保存在本机。
+本地优先的 Windows 知识档案与判断版本库。桌面端使用 Tauri 2、React/TypeScript、Rust、SQLite/FTS5；核心记录、来源、原始文件、版本与备份均保存在本机。
 
-![南枫情报台 Windows 主界面](docs/screenshots/nanfeng-intelligence-windows.png)
+![南枫知识库 Windows 主界面](docs/screenshots/nanfeng-intelligence-windows.png)
 
 ## 已实现
 
@@ -19,20 +19,20 @@
 
 ## 数据位置
 
-- Windows 默认数据根目录：`D:\南枫情报台`。
-- 首次使用新版且目标目录为空时，会把旧版 AppData 数据完整复制到 D 盘；旧目录保留，不做删除。
-- 数据库位于 `D:\南枫情报台\data\app.db`，原始导入文件、附件、导出、备份和日志分别位于同级受控子目录。
+- Windows 默认数据根目录：`D:\南枫知识库`。
+- 首次使用新版且目标目录为空时，会优先把旧版 `D:\南枫情报台` 或 AppData 数据完整复制到新目录；旧目录保留，不做删除。
+- 数据库位于 `D:\南枫知识库\data\app.db`，原始导入文件、附件、导出、备份和日志分别位于同级受控子目录。
 - 如果 D 盘不可用，程序会继续使用原 AppData 目录，避免因迁移失败阻断启动。
 
 ## BAT 测试入口
 
-先双击根目录的 `启动南枫情报台-测试版.bat`。它会直接启动本地测试程序，不安装系统组件，也不会生成安装包。
+先双击根目录的 `启动南枫知识库-测试版.bat`。它会直接启动本地测试程序，不安装系统组件，也不会生成安装包。
 若检测到旧版仍在运行，BAT 会要求先关闭旧窗口，避免两个进程同时读写数据库。
 
 当测试程序不存在或需要强制更新时，可在项目目录运行：
 
 ```powershell
-.\启动南枫情报台-测试版.bat --rebuild
+.\启动南枫知识库-测试版.bat --rebuild
 ```
 
 `--rebuild` 只执行 Tauri `--no-bundle` 构建，不生成安装器。

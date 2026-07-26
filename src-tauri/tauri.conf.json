@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "南枫情报台",
-  "version": "0.1.0",
+  "productName": "南枫知识库",
+  "version": "0.2.0",
   "identifier": "com.nanzhufeng.nanfengintelligence",
   "build": {
     "frontendDist": "../dist/client",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "南枫情报台",
+        "title": "南枫知识库",
         "width": 1702,
         "height": 1066,
         "minWidth": 1100,

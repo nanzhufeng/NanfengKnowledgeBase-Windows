@@ -1,7 +1,7 @@
 [package]
-name = "nanfeng-intelligence"
-version = "0.1.0"
-description = "南枫情报台：本地研究档案与判断版本库"
+name = "nanfeng-knowledge-base"
+version = "0.2.0"
+description = "南枫知识库：本地知识档案与判断版本库"
 authors = ["南烛枫"]
 license = ""
 repository = ""
@@ -11,7 +11,7 @@ rust-version = "1.77.2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "nanfeng_intelligence_lib"
+name = "nanfeng_knowledge_base_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -11,7 +11,7 @@ function preview(fileName: string): ImportPreview {
   return {
     jobId: `job-${fileName}`,
     sourceFileName: fileName,
-    storedFilePath: `D:\\南枫情报台\\imports\\raw\\${fileName}`,
+    storedFilePath: `D:\\南枫知识库\\imports\\raw\\${fileName}`,
     sha256: "a".repeat(64),
     fileKind: "md",
     sizeBytes: 128,

@@ -398,7 +398,7 @@ pub fn create_portable_backup(
         &connection,
         &state.paths,
         &preferences_json,
-        "南枫情报台_完整迁移备份",
+        "南枫知识库_完整迁移备份",
     ))
 }
 

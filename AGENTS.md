@@ -1,4 +1,4 @@
-# 南枫情报台项目规则
+# 南枫知识库项目规则
 
 - 默认使用简体中文，称呼用户“南烛枫”，结论在前。
 - 项目根目录：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`。

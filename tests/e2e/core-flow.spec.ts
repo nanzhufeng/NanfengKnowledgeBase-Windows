@@ -4,7 +4,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await expect(page.getByText("南枫情报台", { exact: true })).toBeVisible();
+  await expect(page.getByText("南枫知识库", { exact: true })).toBeVisible();
 });
 
 test("搜索、选择、收藏和长详情按需展示保持可操作", async ({ page }) => {
@@ -193,7 +193,7 @@ test("100%、150%、200% DPI 与常见桌面尺寸保持布局边界", async ({ 
     });
     const page = await context.newPage();
     await page.goto("/");
-    await expect(page.getByText("南枫情报台", { exact: true })).toBeVisible();
+    await expect(page.getByText("南枫知识库", { exact: true })).toBeVisible();
     const overflow = await page.evaluate(() => ({
       body: document.body.scrollWidth - document.body.clientWidth,
       root: document.documentElement.scrollWidth - document.documentElement.clientWidth,

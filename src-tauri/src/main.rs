@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    nanfeng_intelligence_lib::run();
+    nanfeng_knowledge_base_lib::run();
 }

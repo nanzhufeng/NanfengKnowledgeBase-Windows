@@ -23,28 +23,41 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn from_app(app: &tauri::AppHandle) -> AppResult<Self> {
+        if let Some(override_root) = std::env::var_os("NANFENG_KNOWLEDGE_BASE_DATA_DIR") {
+            return Self::from_root(PathBuf::from(override_root));
+        }
+        // 兼容旧版自动化与测试环境，暂不移除原环境变量。
         if let Some(override_root) = std::env::var_os("NANFENG_INTELLIGENCE_DATA_DIR") {
             return Self::from_root(PathBuf::from(override_root));
         }
-        let legacy_root = app
+        let app_data_root = app
             .path()
             .app_data_dir()
             .map_err(|error| AppError::Io(std::io::Error::other(error.to_string())))?;
         #[cfg(target_os = "windows")]
         {
-            return Self::from_preferred_or_legacy(PathBuf::from(r"D:\南枫情报台"), legacy_root);
+            return Self::from_preferred_with_legacy_roots(
+                PathBuf::from(r"D:\南枫知识库"),
+                &[PathBuf::from(r"D:\南枫情报台"), app_data_root],
+            );
         }
         #[cfg(not(target_os = "windows"))]
-        Self::from_root(legacy_root)
+        Self::from_root(app_data_root)
     }
 
-    fn from_preferred_or_legacy(preferred_root: PathBuf, legacy_root: PathBuf) -> AppResult<Self> {
-        if legacy_root.join("data").join("app.db").is_file()
-            && directory_is_missing_or_empty(&preferred_root)?
-        {
-            if let Err(error) = migrate_legacy_data(&legacy_root, &preferred_root) {
-                eprintln!("迁移到默认数据目录失败，将继续使用原目录：{}", error);
-                return Self::from_root(legacy_root);
+    fn from_preferred_with_legacy_roots(
+        preferred_root: PathBuf,
+        legacy_roots: &[PathBuf],
+    ) -> AppResult<Self> {
+        let migration_source = legacy_roots
+            .iter()
+            .find(|root| root.join("data").join("app.db").is_file());
+        if let Some(source) = migration_source {
+            if directory_is_missing_or_empty(&preferred_root)? {
+                if let Err(error) = migrate_legacy_data(source, &preferred_root) {
+                    eprintln!("迁移到默认数据目录失败，将继续使用原目录：{}", error);
+                    return Self::from_root(source);
+                }
             }
         }
 
@@ -52,7 +65,10 @@ impl AppPaths {
             Ok(paths) => Ok(paths),
             Err(error) => {
                 eprintln!("默认数据目录不可用，将继续使用原目录：{}", error);
-                Self::from_root(legacy_root)
+                let fallback_root = migration_source
+                    .or_else(|| legacy_roots.last())
+                    .ok_or_else(|| AppError::Validation("缺少可用的数据目录".to_string()))?;
+                Self::from_root(fallback_root)
             }
         }
     }
@@ -188,7 +204,7 @@ fn migrate_legacy_data(source: &Path, target: &Path) -> AppResult<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let stage = parent.join(format!(".南枫情报台-迁移中-{}-{nonce}", std::process::id()));
+    let stage = parent.join(format!(".南枫知识库-迁移中-{}-{nonce}", std::process::id()));
     let source_database = source.join("data").join("app.db");
     let target_database = stage.join("data").join("app.db");
     copy_directory_without_database(source, &stage, &source_database)?;
@@ -272,8 +288,9 @@ mod tests {
             .expect("legacy fixture");
         drop(connection);
 
-        let paths = AppPaths::from_preferred_or_legacy(preferred.clone(), legacy.clone())
-            .expect("select preferred");
+        let paths =
+            AppPaths::from_preferred_with_legacy_roots(preferred.clone(), &[legacy.clone()])
+                .expect("select preferred");
 
         assert_eq!(paths.root, preferred);
         assert_eq!(
@@ -297,7 +314,7 @@ mod tests {
         fs::write(legacy.join("data").join("app.db"), b"legacy").expect("legacy db");
         fs::write(preferred.join("keep.txt"), b"keep").expect("preferred marker");
 
-        let paths = AppPaths::from_preferred_or_legacy(preferred.clone(), legacy)
+        let paths = AppPaths::from_preferred_with_legacy_roots(preferred.clone(), &[legacy])
             .expect("select existing preferred");
 
         assert_eq!(paths.root, preferred);
@@ -305,5 +322,39 @@ mod tests {
             fs::read(paths.root.join("keep.txt")).expect("marker"),
             b"keep"
         );
+    }
+
+    #[test]
+    fn first_legacy_root_with_database_has_migration_priority() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let preferred = directory.path().join("preferred");
+        let branded_legacy = directory.path().join("old-brand");
+        let app_data_legacy = directory.path().join("app-data");
+        for (root, marker) in [
+            (&branded_legacy, "old-brand"),
+            (&app_data_legacy, "app-data"),
+        ] {
+            fs::create_dir_all(root.join("data")).expect("legacy data dir");
+            let connection = Connection::open(root.join("data").join("app.db")).expect("db");
+            connection
+                .execute_batch(&format!(
+                    "CREATE TABLE marker(value TEXT NOT NULL);
+                     INSERT INTO marker(value) VALUES ('{marker}');"
+                ))
+                .expect("fixture");
+        }
+
+        let paths = AppPaths::from_preferred_with_legacy_roots(
+            preferred,
+            &[branded_legacy.clone(), app_data_legacy],
+        )
+        .expect("migrate");
+        let marker: String = Connection::open(paths.database)
+            .expect("migrated db")
+            .query_row("SELECT value FROM marker", [], |row| row.get(0))
+            .expect("marker");
+
+        assert_eq!(marker, "old-brand");
+        assert!(branded_legacy.join("data").join("app.db").is_file());
     }
 }

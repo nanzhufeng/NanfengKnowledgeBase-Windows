@@ -4,7 +4,7 @@
 
 - 正式验收平台：Windows 10/11 x64。
 - 当前交付顺序：源码与自动化验证 → BAT 测试版 → 用户明确确认 → Windows 安装包。
-- 默认数据目录为 `D:\南枫情报台`；可通过 `NANFENG_INTELLIGENCE_DATA_DIR` 指向隔离目录。
+- 默认数据目录为 `D:\南枫知识库`；可通过 `NANFENG_KNOWLEDGE_BASE_DATA_DIR` 指向隔离目录。旧环境变量 `NANFENG_INTELLIGENCE_DATA_DIR` 仅为兼容历史自动化而保留。
 - 安装、升级和重装不得清空受控数据目录。
 
 ## 跨平台状态
@@ -25,9 +25,9 @@
 ## 当前安装器实现
 
 - 当前仓库使用 Tauri 2 官方 NSIS x64 目标，配置位于 `src-tauri/tauri.conf.json`。
-- 发布资产统一使用 `Nanfeng-Intelligence-Windows-v<版本>-Setup.exe`，GitHub Release 只保留这一份公开安装资产。
+- 发布资产统一使用 `Nanfeng-Knowledge-Base-Windows-v<版本>-Setup.exe`，GitHub Release 只保留这一份公开安装资产。
 - 构建机未安装 Inno Setup 7；本版沿用已经过项目配置和 Tauri 构建验证的 NSIS 链路，不创建伪 PyInstaller spec，也不临时安装额外系统级打包工具。
-- 安装程序只部署应用文件；正式数据库、附件、导入原件和完整迁移备份均在独立受控数据目录，升级与卸载不应清空 `D:\南枫情报台`。
+- 安装程序只部署应用文件；正式数据库、附件、导入原件和完整迁移备份均在独立受控数据目录，升级与卸载不应清空 `D:\南枫知识库` 或旧版 `D:\南枫情报台`。
 
 ## macOS 后续发布门槛
 

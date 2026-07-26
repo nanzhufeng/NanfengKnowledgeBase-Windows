@@ -12,6 +12,9 @@ use crate::error::{AppError, AppResult};
 use crate::models::{IntelligenceRecord, RecordQuery};
 use crate::paths::AppPaths;
 
+const PORTABLE_BACKUP_FORMAT: &str = "nanfeng-knowledge-base-portable-backup";
+const LEGACY_PORTABLE_BACKUP_FORMAT: &str = "nanfeng-intelligence-portable-backup";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportResult {
@@ -147,7 +150,7 @@ pub fn write_docx_export(
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or("南枫情报台_完整笔记");
+        .unwrap_or("南枫知识库_完整笔记");
     let destination = paths.exports.join(format!(
         "{}_{}.docx",
         sanitize_file_name(stem),
@@ -176,7 +179,7 @@ pub fn write_markdown_export(
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or("南枫情报台_完整笔记");
+        .unwrap_or("南枫知识库_完整笔记");
     let destination = paths.exports.join(format!(
         "{}_{}.md",
         sanitize_file_name(stem),
@@ -199,7 +202,7 @@ pub fn export_all_json(connection: &Connection, paths: &AppPaths) -> AppResult<E
         },
     )?;
     let destination = paths.exports.join(format!(
-        "南枫情报台_全部记录_{}.json",
+        "南枫知识库_全部记录_{}.json",
         Utc::now().format("%Y%m%d-%H%M%S")
     ));
     atomic_write(
@@ -237,7 +240,7 @@ pub fn export_records(
     if format == "json" {
         let destination = paths
             .exports
-            .join(format!("南枫情报台_筛选记录_{timestamp}.json"));
+            .join(format!("南枫知识库_筛选记录_{timestamp}.json"));
         atomic_write(
             &destination,
             serde_json::to_string_pretty(&records)?.as_bytes(),
@@ -256,9 +259,9 @@ pub fn export_records(
     }
     let is_vault = format == "vault";
     let export_root = paths.exports.join(if is_vault {
-        format!("南枫情报台_Vault_{timestamp}")
+        format!("南枫知识库_Vault_{timestamp}")
     } else {
-        format!("南枫情报台_Markdown_{timestamp}")
+        format!("南枫知识库_Markdown_{timestamp}")
     });
     let records_dir = if is_vault {
         export_root.join("records")
@@ -274,10 +277,10 @@ pub fn export_records(
         )?;
         atomic_write(
             &export_root.join("README.md"),
-            "# 南枫情报台 Codex / Obsidian 工作区\n\n\
+            "# 南枫知识库 Codex / Obsidian 工作区\n\n\
              - `records/`：一条记录一个 Markdown，带稳定 ID 与 YAML 元数据。\n\
              - `attachments/`：选择包含附件时复制到这里，笔记使用相对链接。\n\
-             - 建议让 Codex 在副本或 Git 分支中整理，再通过南枫情报台导入为新版本。\n\
+             - 建议让 Codex 在副本或 Git 分支中整理，再通过南枫知识库导入为新版本。\n\
              - SQLite 仍是应用内检索与状态数据的唯一写入入口。\n"
                 .as_bytes(),
         )?;
@@ -375,7 +378,7 @@ pub fn create_portable_backup(
             row.get::<_, i64>(0)
         })?;
         let manifest = serde_json::json!({
-            "format": "nanfeng-intelligence-portable-backup",
+            "format": PORTABLE_BACKUP_FORMAT,
             "formatVersion": 1,
             "appVersion": env!("CARGO_PKG_VERSION"),
             "createdAt": created_at,
@@ -419,15 +422,17 @@ pub fn inspect_portable_backup(source_path: impl AsRef<Path>) -> AppResult<Porta
     }
     let manifest_path = source_path.join("manifest.json");
     let manifest = serde_json::from_slice::<serde_json::Value>(&fs::read(&manifest_path)?)?;
-    if manifest.get("format").and_then(serde_json::Value::as_str)
-        != Some("nanfeng-intelligence-portable-backup")
-        || manifest
-            .get("formatVersion")
-            .and_then(serde_json::Value::as_i64)
-            != Some(1)
+    let format = manifest.get("format").and_then(serde_json::Value::as_str);
+    if !matches!(
+        format,
+        Some(PORTABLE_BACKUP_FORMAT) | Some(LEGACY_PORTABLE_BACKUP_FORMAT)
+    ) || manifest
+        .get("formatVersion")
+        .and_then(serde_json::Value::as_i64)
+        != Some(1)
     {
         return Err(AppError::Validation(
-            "所选文件夹不是受支持的南枫情报台完整迁移备份".to_string(),
+            "所选文件夹不是受支持的南枫知识库完整迁移备份".to_string(),
         ));
     }
     let database_path = source_path.join("data").join("app.db");
@@ -743,7 +748,7 @@ fn validate_database_file(path: &Path) -> AppResult<String> {
     )?;
     if has_records == 0 {
         return Err(AppError::Validation(
-            "选择的文件不是南枫情报台数据库备份".to_string(),
+            "选择的文件不是南枫知识库数据库备份".to_string(),
         ));
     }
     Ok(result)
@@ -1035,7 +1040,7 @@ mod tests {
         .expect("create record");
         fs::write(paths.imports_raw.join("原始记录.md"), "原始正文").expect("write import");
         fs::write(paths.attachments.join("证据.txt"), "证据内容").expect("write attachment");
-        let preferences = r#"{"nanfeng-intelligence:recent-searches":"[\"迁移\"]","nanfeng-intelligence:dialog-size:test":"{\"width\":900}"}"#;
+        let preferences = r#"{"nanfeng-knowledge-base:recent-searches":"[\"迁移\"]","nanfeng-knowledge-base:dialog-size:test":"{\"width\":900}"}"#;
 
         let backup = create_portable_backup(&connection, &paths, preferences, "完整迁移备份")
             .expect("backup");
@@ -1049,6 +1054,23 @@ mod tests {
         assert!(Path::new(&backup.folder_path)
             .join("attachments/证据.txt")
             .is_file());
+        let manifest_path = Path::new(&backup.folder_path).join("manifest.json");
+        let mut legacy_manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest"))
+                .expect("manifest json");
+        legacy_manifest["format"] =
+            serde_json::Value::String(LEGACY_PORTABLE_BACKUP_FORMAT.to_string());
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&legacy_manifest).expect("legacy manifest"),
+        )
+        .expect("write legacy manifest");
+        assert_eq!(
+            inspect_portable_backup(&backup.folder_path)
+                .expect("legacy backup remains readable")
+                .record_count,
+            1
+        );
 
         database::move_to_trash(&connection, record.id).expect("mutate database");
         fs::write(paths.imports_raw.join("原始记录.md"), "已修改").expect("mutate import");
@@ -1057,7 +1079,7 @@ mod tests {
             &mut connection,
             &paths,
             &backup.folder_path,
-            r#"{"nanfeng-intelligence:recent-searches":"[]"}"#,
+            r#"{"nanfeng-knowledge-base:recent-searches":"[]"}"#,
         )
         .expect("restore");
 

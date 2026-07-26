@@ -359,7 +359,8 @@ type DemoState = {
   nextVersionId: number;
 };
 
-const DEMO_STORAGE_KEY = "nanfeng-intelligence-demo-v2";
+const DEMO_STORAGE_KEY = "nanfeng-knowledge-base-demo-v2";
+const LEGACY_DEMO_STORAGE_KEY = "nanfeng-intelligence-demo-v2";
 
 export class BrowserRecordRepository implements RecordRepository {
   private state: DemoState;
@@ -829,7 +830,8 @@ export class BrowserRecordRepository implements RecordRepository {
 
   private loadState(): DemoState {
     if (this.persist && typeof localStorage !== "undefined") {
-      const saved = localStorage.getItem(DEMO_STORAGE_KEY);
+      const saved = localStorage.getItem(DEMO_STORAGE_KEY)
+        ?? localStorage.getItem(LEGACY_DEMO_STORAGE_KEY);
       if (saved) {
         try {
           return JSON.parse(saved) as DemoState;
