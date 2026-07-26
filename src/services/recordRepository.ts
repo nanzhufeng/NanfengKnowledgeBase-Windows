@@ -10,24 +10,44 @@ import {
 } from "../mockData";
 import {
   dataLocationSchema,
+  backupPreviewSchema,
+  attachmentItemSchema,
   favoriteUpdateSchema,
   importPreviewSchema,
   importResultSchema,
+  importJobSummarySchema,
   exportResultSchema,
+  portableBackupPreviewSchema,
+  portableBackupResultSchema,
+  portableRestoreResultSchema,
   restoreResultSchema,
   intelligenceRecordSchema,
+  recordMutationSchema,
+  recordSummarySchema,
+  storageStatsSchema,
   recordVersionSchema,
   tagItemSchema,
   type CommandError,
+  type BackupPreview,
+  type AttachmentItem,
   type CreateRecordInput,
   type DataLocation,
   type FavoriteUpdate,
   type IntelligenceRecord,
   type ImportPreview,
   type ImportResult,
+  type ImportJobSummary,
   type ExportResult,
+  type ExportRecordsInput,
+  type PortableBackupPreview,
+  type PortableBackupResult,
+  type PortableRestoreResult,
   type RestoreResult,
   type RecordQuery,
+  type RecordMutation,
+  type PatchRecordInput,
+  type RecordSummary,
+  type StorageStats,
   type RecordSourceInput,
   type RecordVersion,
   type TagItem,
@@ -36,32 +56,66 @@ import {
 
 export interface RecordRepository {
   listRecords(query?: RecordQuery): Promise<IntelligenceRecord[]>;
+  listRecordSummaries(query?: RecordQuery): Promise<RecordSummary[]>;
   getRecord(recordId: number): Promise<IntelligenceRecord>;
   createRecord(input: CreateRecordInput): Promise<IntelligenceRecord>;
   updateRecord(recordId: number, input: UpdateRecordInput): Promise<IntelligenceRecord>;
+  patchRecord(recordId: number, input: PatchRecordInput): Promise<RecordMutation>;
   setFavorite(recordId: number, isFavorite: boolean): Promise<FavoriteUpdate>;
+  updateCurrentJudgment(recordId: number, currentJudgment: string): Promise<RecordMutation>;
+  updateStatus(recordId: number, status: IntelligenceRecord["status"]): Promise<RecordMutation>;
   moveToTrash(recordId: number): Promise<IntelligenceRecord>;
   restoreRecord(recordId: number): Promise<IntelligenceRecord>;
-  permanentlyDeleteRecord(recordId: number, confirmationTitle: string): Promise<void>;
+  permanentlyDeleteRecord(recordId: number): Promise<void>;
   appendVersion(recordId: number, versionTitle: string, changeNote: string): Promise<RecordVersion>;
   listVersions(recordId: number): Promise<RecordVersion[]>;
+  deleteVersion(recordId: number, versionId: number): Promise<void>;
   restoreVersion(recordId: number, versionId: number): Promise<RecordVersion>;
   listTags(): Promise<TagItem[]>;
   createTag(name: string, colorKey?: string): Promise<TagItem>;
   renameTag(tagId: number, name: string): Promise<TagItem>;
   deleteTag(tagId: number): Promise<void>;
   getDataLocation(): Promise<DataLocation>;
+  getStorageStats(): Promise<StorageStats>;
   openDataDirectory(): Promise<void>;
   rebuildSearchIndex(): Promise<void>;
   runIntegrityCheck(): Promise<string>;
   prepareImport(sourcePath: string): Promise<ImportPreview>;
-  confirmImport(jobId: string, records: CreateRecordInput[], allowDuplicate?: boolean): Promise<ImportResult>;
+  confirmImport(
+    jobId: string,
+    records: CreateRecordInput[],
+    options?: ConfirmImportOptions,
+  ): Promise<ImportResult>;
+  cancelImport(jobId: string): Promise<void>;
+  listImportJobs(): Promise<ImportJobSummary[]>;
+  listAttachments(recordId: number): Promise<AttachmentItem[]>;
+  addAttachment(recordId: number, sourcePath: string): Promise<AttachmentItem>;
+  openAttachment(attachmentId: number): Promise<void>;
+  removeAttachment(attachmentId: number): Promise<void>;
   exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult>;
+  writeDocxExport(fileName: string, bytes: number[]): Promise<ExportResult>;
+  writeMarkdownExport(fileName: string, content: string): Promise<ExportResult>;
   exportAllJson(): Promise<ExportResult>;
+  exportRecords(input: ExportRecordsInput): Promise<ExportResult>;
   createBackup(): Promise<string>;
   restoreBackup(sourcePath: string): Promise<RestoreResult>;
+  inspectBackup(sourcePath: string): Promise<BackupPreview>;
+  createPortableBackup(preferencesJson: string): Promise<PortableBackupResult>;
+  inspectPortableBackup(sourcePath: string): Promise<PortableBackupPreview>;
+  restorePortableBackup(
+    sourcePath: string,
+    currentPreferencesJson: string,
+  ): Promise<PortableRestoreResult>;
   openExportDirectory(): Promise<void>;
 }
+
+export type ImportDuplicateStrategy = "skip" | "copy" | "version" | "manual";
+
+export type ConfirmImportOptions = {
+  duplicateStrategy?: ImportDuplicateStrategy;
+  itemStrategies?: Array<Exclude<ImportDuplicateStrategy, "manual">>;
+  mapping?: Record<string, string>;
+};
 
 export class RepositoryError extends Error {
   readonly code: string;
@@ -78,6 +132,10 @@ class TauriRecordRepository implements RecordRepository {
     return intelligenceRecordSchema.array().parse(await invoke("list_records", { query }));
   }
 
+  async listRecordSummaries(query: RecordQuery = {}): Promise<RecordSummary[]> {
+    return recordSummarySchema.array().parse(await invoke("list_record_summaries", { query }));
+  }
+
   async getRecord(recordId: number): Promise<IntelligenceRecord> {
     return intelligenceRecordSchema.parse(await invoke("get_record", { recordId }));
   }
@@ -90,8 +148,27 @@ class TauriRecordRepository implements RecordRepository {
     return intelligenceRecordSchema.parse(await invoke("update_record", { recordId, input }));
   }
 
+  async patchRecord(recordId: number, input: PatchRecordInput): Promise<RecordMutation> {
+    return recordMutationSchema.parse(await invoke("patch_record", { recordId, input }));
+  }
+
   async setFavorite(recordId: number, isFavorite: boolean): Promise<FavoriteUpdate> {
     return favoriteUpdateSchema.parse(await invoke("set_favorite", { recordId, isFavorite }));
+  }
+
+  async updateCurrentJudgment(recordId: number, currentJudgment: string): Promise<RecordMutation> {
+    return recordMutationSchema.parse(await invoke("update_current_judgment", {
+      input: { recordId, currentJudgment },
+    }));
+  }
+
+  async updateStatus(
+    recordId: number,
+    status: IntelligenceRecord["status"],
+  ): Promise<RecordMutation> {
+    return recordMutationSchema.parse(await invoke("update_status", {
+      input: { recordId, status },
+    }));
   }
 
   async moveToTrash(recordId: number): Promise<IntelligenceRecord> {
@@ -102,9 +179,9 @@ class TauriRecordRepository implements RecordRepository {
     return intelligenceRecordSchema.parse(await invoke("restore_record", { recordId }));
   }
 
-  async permanentlyDeleteRecord(recordId: number, confirmationTitle: string): Promise<void> {
+  async permanentlyDeleteRecord(recordId: number): Promise<void> {
     await invoke("permanently_delete_record", {
-      input: { recordId, confirmationTitle },
+      input: { recordId },
     });
   }
 
@@ -120,6 +197,10 @@ class TauriRecordRepository implements RecordRepository {
 
   async listVersions(recordId: number): Promise<RecordVersion[]> {
     return recordVersionSchema.array().parse(await invoke("list_versions", { recordId }));
+  }
+
+  async deleteVersion(recordId: number, versionId: number): Promise<void> {
+    await invoke("delete_version", { input: { recordId, versionId } });
   }
 
   async restoreVersion(recordId: number, versionId: number): Promise<RecordVersion> {
@@ -152,6 +233,10 @@ class TauriRecordRepository implements RecordRepository {
     return dataLocationSchema.parse(await invoke("get_data_location"));
   }
 
+  async getStorageStats(): Promise<StorageStats> {
+    return storageStatsSchema.parse(await invoke("get_storage_stats"));
+  }
+
   async openDataDirectory(): Promise<void> {
     await invoke("open_data_directory");
   }
@@ -170,20 +255,62 @@ class TauriRecordRepository implements RecordRepository {
 
   async confirmImport(
     jobId: string,
-    records: CreateRecordInput[],
-    allowDuplicate = false,
+    _records: CreateRecordInput[],
+    options: ConfirmImportOptions = {},
   ): Promise<ImportResult> {
     return importResultSchema.parse(await invoke("confirm_import", {
-      input: { jobId, records, allowDuplicate },
+      input: {
+        jobId,
+        allowDuplicate: false,
+        duplicateStrategy: options.duplicateStrategy ?? "skip",
+        itemStrategies: options.itemStrategies ?? [],
+        mapping: options.mapping ?? {},
+      },
     }));
+  }
+
+  async cancelImport(jobId: string): Promise<void> {
+    await invoke("cancel_import", { jobId });
+  }
+
+  async listImportJobs(): Promise<ImportJobSummary[]> {
+    return importJobSummarySchema.array().parse(await invoke("list_import_jobs"));
+  }
+
+  async listAttachments(recordId: number): Promise<AttachmentItem[]> {
+    return attachmentItemSchema.array().parse(await invoke("list_attachments", { recordId }));
+  }
+
+  async addAttachment(recordId: number, sourcePath: string): Promise<AttachmentItem> {
+    return attachmentItemSchema.parse(await invoke("add_attachment", { recordId, sourcePath }));
+  }
+
+  async openAttachment(attachmentId: number): Promise<void> {
+    await invoke("open_attachment", { attachmentId });
+  }
+
+  async removeAttachment(attachmentId: number): Promise<void> {
+    await invoke("remove_attachment", { attachmentId });
   }
 
   async exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult> {
     return exportResultSchema.parse(await invoke("export_record", { recordId, format }));
   }
 
+  async writeDocxExport(fileName: string, bytes: number[]): Promise<ExportResult> {
+    return exportResultSchema.parse(await invoke("write_docx_export", { fileName, bytes }));
+  }
+
+  async writeMarkdownExport(fileName: string, content: string): Promise<ExportResult> {
+    return exportResultSchema.parse(await invoke("write_markdown_export", { fileName, content }));
+  }
+
   async exportAllJson(): Promise<ExportResult> {
     return exportResultSchema.parse(await invoke("export_all_json"));
+  }
+
+  async exportRecords(input: ExportRecordsInput): Promise<ExportResult> {
+    return exportResultSchema.parse(await invoke("export_records", { input }));
   }
 
   async createBackup(): Promise<string> {
@@ -192,6 +319,32 @@ class TauriRecordRepository implements RecordRepository {
 
   async restoreBackup(sourcePath: string): Promise<RestoreResult> {
     return restoreResultSchema.parse(await invoke("restore_backup", { sourcePath }));
+  }
+
+  async inspectBackup(sourcePath: string): Promise<BackupPreview> {
+    return backupPreviewSchema.parse(await invoke("inspect_backup", { sourcePath }));
+  }
+
+  async createPortableBackup(preferencesJson: string): Promise<PortableBackupResult> {
+    return portableBackupResultSchema.parse(await invoke("create_portable_backup", {
+      preferencesJson,
+    }));
+  }
+
+  async inspectPortableBackup(sourcePath: string): Promise<PortableBackupPreview> {
+    return portableBackupPreviewSchema.parse(await invoke("inspect_portable_backup", {
+      sourcePath,
+    }));
+  }
+
+  async restorePortableBackup(
+    sourcePath: string,
+    currentPreferencesJson: string,
+  ): Promise<PortableRestoreResult> {
+    return portableRestoreResultSchema.parse(await invoke("restore_portable_backup", {
+      sourcePath,
+      currentPreferencesJson,
+    }));
   }
 
   async openExportDirectory(): Promise<void> {
@@ -226,14 +379,34 @@ export class BrowserRecordRepository implements RecordRepository {
       .filter((record) => !query.source || record.sources.some((source) =>
         source.title.includes(query.source!) || source.sourceType === query.source))
       .filter((record) => !query.favoritesOnly || record.isFavorite)
-      .filter((record) => !query.dateFrom || record.updatedAt >= query.dateFrom)
-      .filter((record) => !query.dateTo || record.updatedAt <= query.dateTo)
+      .filter((record) => !query.dateFrom || (record.originalAt ?? record.updatedAt) >= query.dateFrom)
+      .filter((record) => !query.dateTo || (record.originalAt ?? record.updatedAt) <= query.dateTo)
       .filter((record) => {
         if (!search) return true;
         return searchableText(record).toLocaleLowerCase().includes(search);
       })
       .sort((a, b) => compareRecords(a, b, query.sort))
       .map(clone);
+  }
+
+  async listRecordSummaries(query: RecordQuery = {}): Promise<RecordSummary[]> {
+    return (await this.listRecords(query)).map((record) => ({
+      id: record.id,
+      title: record.title,
+      displayTitle: record.title,
+      summary: record.summary,
+      status: record.status,
+      tags: record.tags,
+      sourceTitle: record.sources[0]?.title ?? "",
+      searchSnippet: record.summary,
+      isFavorite: record.isFavorite,
+      isDeleted: record.isDeleted,
+      originalAt: record.originalAt ?? null,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      deletedAt: record.deletedAt,
+      versionCount: record.versionCount,
+    }));
   }
 
   async getRecord(recordId: number): Promise<IntelligenceRecord> {
@@ -265,6 +438,7 @@ export class BrowserRecordRepository implements RecordRepository {
       })),
       isFavorite: input.isFavorite ?? false,
       isDeleted: false,
+      originalAt: input.originalAt ?? null,
       createdAt: timestamp,
       updatedAt: timestamp,
       deletedAt: null,
@@ -297,6 +471,22 @@ export class BrowserRecordRepository implements RecordRepository {
     return clone(record);
   }
 
+  async patchRecord(recordId: number, input: PatchRecordInput): Promise<RecordMutation> {
+    const record = this.requireRecord(recordId);
+    Object.assign(record, input, { updatedAt: new Date().toISOString() });
+    if (input.tags) record.tags = normalizedTags(input.tags);
+    if (input.sources) {
+      record.sources = input.sources.map((source, index) => ({
+        ...source,
+        id: record.sources[index]?.id ?? Date.now() + index,
+        recordId,
+        createdAt: record.sources[index]?.createdAt ?? record.updatedAt,
+      }));
+    }
+    this.save();
+    return { recordId, updatedAt: record.updatedAt };
+  }
+
   async setFavorite(recordId: number, isFavorite: boolean): Promise<FavoriteUpdate> {
     const record = this.requireRecord(recordId);
     record.isFavorite = isFavorite;
@@ -307,6 +497,28 @@ export class BrowserRecordRepository implements RecordRepository {
       isFavorite,
       updatedAt: record.updatedAt,
     };
+  }
+
+  async updateCurrentJudgment(
+    recordId: number,
+    currentJudgment: string,
+  ): Promise<RecordMutation> {
+    const record = this.requireRecord(recordId);
+    record.currentJudgment = currentJudgment;
+    record.updatedAt = new Date().toISOString();
+    this.save();
+    return { recordId, updatedAt: record.updatedAt };
+  }
+
+  async updateStatus(
+    recordId: number,
+    status: IntelligenceRecord["status"],
+  ): Promise<RecordMutation> {
+    const record = this.requireRecord(recordId);
+    record.status = status;
+    record.updatedAt = new Date().toISOString();
+    this.save();
+    return { recordId, updatedAt: record.updatedAt };
   }
 
   async moveToTrash(recordId: number): Promise<IntelligenceRecord> {
@@ -327,13 +539,10 @@ export class BrowserRecordRepository implements RecordRepository {
     return clone(record);
   }
 
-  async permanentlyDeleteRecord(recordId: number, confirmationTitle: string): Promise<void> {
+  async permanentlyDeleteRecord(recordId: number): Promise<void> {
     const record = this.requireRecord(recordId);
     if (!record.isDeleted) {
       throw new RepositoryError("conflict", "记录必须先进入回收站，才能永久删除");
-    }
-    if (confirmationTitle !== record.title) {
-      throw new RepositoryError("validation_error", "确认文字必须与记录标题完全一致");
     }
     this.state.records = this.state.records.filter((item) => item.id !== recordId);
     this.state.versions = this.state.versions.filter((item) => item.recordId !== recordId);
@@ -363,6 +572,23 @@ export class BrowserRecordRepository implements RecordRepository {
       .filter((version) => version.recordId === recordId)
       .sort((a, b) => b.versionNumber - a.versionNumber)
       .map(clone);
+  }
+
+  async deleteVersion(recordId: number, versionId: number): Promise<void> {
+    const record = this.requireRecord(recordId);
+    const versions = this.state.versions.filter((item) => item.recordId === recordId);
+    if (versions.length <= 1) {
+      throw new RepositoryError("conflict", "至少保留一个历史版本，不能删除最后一个版本");
+    }
+    const before = this.state.versions.length;
+    this.state.versions = this.state.versions.filter(
+      (item) => item.id !== versionId || item.recordId !== recordId,
+    );
+    if (before === this.state.versions.length) {
+      throw new RepositoryError("not_found", "历史版本不存在");
+    }
+    record.versionCount = Math.max(1, record.versionCount - 1);
+    this.save();
   }
 
   async restoreVersion(recordId: number, versionId: number): Promise<RecordVersion> {
@@ -449,6 +675,20 @@ export class BrowserRecordRepository implements RecordRepository {
     };
   }
 
+  async getStorageStats(): Promise<StorageStats> {
+    const records = this.state.records.filter((record) => !record.isDeleted);
+    const totalBytes = new Blob([JSON.stringify(this.state)]).size;
+    return {
+      recordCount: records.length,
+      databaseBytes: totalBytes,
+      importsBytes: 0,
+      attachmentsBytes: 0,
+      backupsBytes: 0,
+      totalBytes,
+      lastBackupAt: null,
+    };
+  }
+
   async openDataDirectory(): Promise<void> {
     throw new RepositoryError("unsupported", "浏览器演示模式没有本地数据目录");
   }
@@ -469,11 +709,49 @@ export class BrowserRecordRepository implements RecordRepository {
     throw new RepositoryError("unsupported", "浏览器演示模式不能写入桌面导入任务");
   }
 
+  async cancelImport(): Promise<void> {}
+
+  async listImportJobs(): Promise<ImportJobSummary[]> {
+    return [];
+  }
+
+  async listAttachments(): Promise<AttachmentItem[]> {
+    return [];
+  }
+
+  async addAttachment(): Promise<AttachmentItem> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能添加附件");
+  }
+
+  async openAttachment(): Promise<void> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能打开附件");
+  }
+
+  async removeAttachment(): Promise<void> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能删除附件");
+  }
+
   async exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult> {
     const record = await this.getRecord(recordId);
     return {
       format,
       filePath: `浏览器下载：${record.title}.${format}`,
+      recordCount: 1,
+    };
+  }
+
+  async writeDocxExport(fileName: string): Promise<ExportResult> {
+    return {
+      format: "docx",
+      filePath: `浏览器下载：${fileName.replace(/\.docx$/i, "")}.docx`,
+      recordCount: 1,
+    };
+  }
+
+  async writeMarkdownExport(fileName: string): Promise<ExportResult> {
+    return {
+      format: "md",
+      filePath: `浏览器下载/${fileName}`,
       recordCount: 1,
     };
   }
@@ -486,12 +764,40 @@ export class BrowserRecordRepository implements RecordRepository {
     };
   }
 
+  async exportRecords(input: ExportRecordsInput): Promise<ExportResult> {
+    const records = input.recordIds?.length
+      ? this.state.records.filter((record) => input.recordIds?.includes(record.id))
+      : await this.listRecords(input.query ?? {});
+    if (!records.length) throw new RepositoryError("validation_error", "当前条件下没有可导出的记录");
+    return {
+      format: input.format,
+      filePath: "浏览器演示模式不写入磁盘",
+      recordCount: records.length,
+    };
+  }
+
   async createBackup(): Promise<string> {
     throw new RepositoryError("unsupported", "浏览器演示模式不能创建数据库备份");
   }
 
   async restoreBackup(): Promise<RestoreResult> {
     throw new RepositoryError("unsupported", "浏览器演示模式不能恢复数据库备份");
+  }
+
+  async inspectBackup(): Promise<BackupPreview> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能检查数据库备份");
+  }
+
+  async createPortableBackup(): Promise<PortableBackupResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能创建完整迁移备份");
+  }
+
+  async inspectPortableBackup(): Promise<PortableBackupPreview> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能检查完整迁移备份");
+  }
+
+  async restorePortableBackup(): Promise<PortableRestoreResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能恢复完整迁移备份");
   }
 
   async openExportDirectory(): Promise<void> {
@@ -565,19 +871,29 @@ class SafeTauriRepository implements RecordRepository {
   }
 
   listRecords = (query?: RecordQuery) => this.run(() => this.inner.listRecords(query));
+  listRecordSummaries = (query?: RecordQuery) =>
+    this.run(() => this.inner.listRecordSummaries(query));
   getRecord = (recordId: number) => this.run(() => this.inner.getRecord(recordId));
   createRecord = (input: CreateRecordInput) => this.run(() => this.inner.createRecord(input));
   updateRecord = (recordId: number, input: UpdateRecordInput) =>
     this.run(() => this.inner.updateRecord(recordId, input));
+  patchRecord = (recordId: number, input: PatchRecordInput) =>
+    this.run(() => this.inner.patchRecord(recordId, input));
   setFavorite = (recordId: number, isFavorite: boolean) =>
     this.run(() => this.inner.setFavorite(recordId, isFavorite));
+  updateCurrentJudgment = (recordId: number, currentJudgment: string) =>
+    this.run(() => this.inner.updateCurrentJudgment(recordId, currentJudgment));
+  updateStatus = (recordId: number, status: IntelligenceRecord["status"]) =>
+    this.run(() => this.inner.updateStatus(recordId, status));
   moveToTrash = (recordId: number) => this.run(() => this.inner.moveToTrash(recordId));
   restoreRecord = (recordId: number) => this.run(() => this.inner.restoreRecord(recordId));
-  permanentlyDeleteRecord = (recordId: number, confirmationTitle: string) =>
-    this.run(() => this.inner.permanentlyDeleteRecord(recordId, confirmationTitle));
+  permanentlyDeleteRecord = (recordId: number) =>
+    this.run(() => this.inner.permanentlyDeleteRecord(recordId));
   appendVersion = (recordId: number, versionTitle: string, changeNote: string) =>
     this.run(() => this.inner.appendVersion(recordId, versionTitle, changeNote));
   listVersions = (recordId: number) => this.run(() => this.inner.listVersions(recordId));
+  deleteVersion = (recordId: number, versionId: number) =>
+    this.run(() => this.inner.deleteVersion(recordId, versionId));
   restoreVersion = (recordId: number, versionId: number) =>
     this.run(() => this.inner.restoreVersion(recordId, versionId));
   listTags = () => this.run(() => this.inner.listTags());
@@ -586,17 +902,39 @@ class SafeTauriRepository implements RecordRepository {
   renameTag = (tagId: number, name: string) => this.run(() => this.inner.renameTag(tagId, name));
   deleteTag = (tagId: number) => this.run(() => this.inner.deleteTag(tagId));
   getDataLocation = () => this.run(() => this.inner.getDataLocation());
+  getStorageStats = () => this.run(() => this.inner.getStorageStats());
   openDataDirectory = () => this.run(() => this.inner.openDataDirectory());
   rebuildSearchIndex = () => this.run(() => this.inner.rebuildSearchIndex());
   runIntegrityCheck = () => this.run(() => this.inner.runIntegrityCheck());
   prepareImport = (sourcePath: string) => this.run(() => this.inner.prepareImport(sourcePath));
-  confirmImport = (jobId: string, records: CreateRecordInput[], allowDuplicate?: boolean) =>
-    this.run(() => this.inner.confirmImport(jobId, records, allowDuplicate));
+  confirmImport = (jobId: string, records: CreateRecordInput[], options?: ConfirmImportOptions) =>
+    this.run(() => this.inner.confirmImport(jobId, records, options));
+  cancelImport = (jobId: string) => this.run(() => this.inner.cancelImport(jobId));
+  listImportJobs = () => this.run(() => this.inner.listImportJobs());
+  listAttachments = (recordId: number) => this.run(() => this.inner.listAttachments(recordId));
+  addAttachment = (recordId: number, sourcePath: string) =>
+    this.run(() => this.inner.addAttachment(recordId, sourcePath));
+  openAttachment = (attachmentId: number) =>
+    this.run(() => this.inner.openAttachment(attachmentId));
+  removeAttachment = (attachmentId: number) =>
+    this.run(() => this.inner.removeAttachment(attachmentId));
   exportRecord = (recordId: number, format: "md" | "json") =>
     this.run(() => this.inner.exportRecord(recordId, format));
+  writeDocxExport = (fileName: string, bytes: number[]) =>
+    this.run(() => this.inner.writeDocxExport(fileName, bytes));
+  writeMarkdownExport = (fileName: string, content: string) =>
+    this.run(() => this.inner.writeMarkdownExport(fileName, content));
   exportAllJson = () => this.run(() => this.inner.exportAllJson());
+  exportRecords = (input: ExportRecordsInput) => this.run(() => this.inner.exportRecords(input));
   createBackup = () => this.run(() => this.inner.createBackup());
   restoreBackup = (sourcePath: string) => this.run(() => this.inner.restoreBackup(sourcePath));
+  inspectBackup = (sourcePath: string) => this.run(() => this.inner.inspectBackup(sourcePath));
+  createPortableBackup = (preferencesJson: string) =>
+    this.run(() => this.inner.createPortableBackup(preferencesJson));
+  inspectPortableBackup = (sourcePath: string) =>
+    this.run(() => this.inner.inspectPortableBackup(sourcePath));
+  restorePortableBackup = (sourcePath: string, currentPreferencesJson: string) =>
+    this.run(() => this.inner.restorePortableBackup(sourcePath, currentPreferencesJson));
   openExportDirectory = () => this.run(() => this.inner.openExportDirectory());
 }
 
@@ -618,9 +956,13 @@ function compareRecords(
   b: IntelligenceRecord,
   sort: RecordQuery["sort"],
 ): number {
-  if (sort === "oldest") return a.updatedAt.localeCompare(b.updatedAt) || a.id - b.id;
+  if (sort === "oldest") {
+    return (a.originalAt ?? a.updatedAt).localeCompare(b.originalAt ?? b.updatedAt) || a.id - b.id;
+  }
   if (sort === "title") return a.title.localeCompare(b.title, "zh-CN") || a.id - b.id;
-  if (sort === "created_desc") return b.createdAt.localeCompare(a.createdAt) || b.id - a.id;
+  if (sort === "created_desc") {
+    return (b.originalAt ?? b.createdAt).localeCompare(a.originalAt ?? a.createdAt) || b.id - a.id;
+  }
   return b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id;
 }
 
@@ -660,6 +1002,38 @@ function emptyDemoState(): DemoState {
 
 function seededDemoState(): DemoState {
   const timestampBase = "2026-07-25T10:32:00+08:00";
+  const demoConversationSource = JSON.stringify({
+    chat_messages: [
+      {
+        sender: "human",
+        created_at: "2026-07-25T09:00:00+08:00",
+        content: [{ type: "text", text: "请整理这份资本开支研究，并保留 Markdown 层级。" }],
+      },
+      {
+        sender: "assistant",
+        created_at: timestampBase,
+        content: [{
+          type: "text",
+          text: [
+            "## 核心结论",
+            "",
+            "头部云厂商仍在提高 AI 资本开支，但需要同时观察自由现金流。",
+            "",
+            "### 跟踪重点",
+            "",
+            "- GPU 与网络设备交付周期",
+            "- 单位算力成本",
+            "- 长期采购协议",
+            "",
+            "| 指标 | 当前判断 |",
+            "| --- | --- |",
+            "| 资本开支 | 高位运行 |",
+            "| 自由现金流 | 压力可控 |",
+          ].join("\n"),
+        }],
+      },
+    ],
+  });
   const records = demoCards.map<IntelligenceRecord>((record) => {
     const sourceInput: RecordSourceInput = {
       sourceType: "research",
@@ -682,7 +1056,7 @@ function seededDemoState(): DemoState {
       openQuestions: record.id === 3 ? openQuestions : [],
       nextActions: record.id === 3 ? nextActions : [],
       notes: "",
-      sourceText: record.summary,
+      sourceText: record.id === 3 ? demoConversationSource : record.summary,
       sources: [{
         ...sourceInput,
         id: record.id,
@@ -691,6 +1065,7 @@ function seededDemoState(): DemoState {
       }],
       isFavorite: false,
       isDeleted: false,
+      originalAt: `2026-${record.date}T09:00:00+08:00`,
       createdAt: `2026-${record.date}T09:00:00+08:00`,
       updatedAt: record.id === 3 ? timestampBase : `2026-${record.date}T10:00:00+08:00`,
       deletedAt: null,

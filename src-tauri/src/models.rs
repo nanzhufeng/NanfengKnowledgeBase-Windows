@@ -75,6 +75,20 @@ pub struct RecordSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AttachmentItem {
+    pub id: i64,
+    pub record_id: i64,
+    pub file_name: String,
+    pub stored_path: String,
+    pub original_path: Option<String>,
+    pub mime_type: Option<String>,
+    pub size_bytes: i64,
+    pub sha256: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct IntelligenceRecord {
     pub id: i64,
     pub title: String,
@@ -91,6 +105,28 @@ pub struct IntelligenceRecord {
     pub sources: Vec<RecordSource>,
     pub is_favorite: bool,
     pub is_deleted: bool,
+    #[serde(default)]
+    pub original_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+    pub version_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordSummary {
+    pub id: i64,
+    pub title: String,
+    pub display_title: String,
+    pub summary: String,
+    pub status: RecordStatus,
+    pub tags: Vec<String>,
+    pub source_title: String,
+    pub search_snippet: String,
+    pub is_favorite: bool,
+    pub is_deleted: bool,
+    pub original_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -105,10 +141,33 @@ pub struct FavoriteUpdate {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordMutation {
+    pub record_id: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateJudgmentInput {
+    pub record_id: i64,
+    pub current_judgment: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStatusInput {
+    pub record_id: i64,
+    pub status: RecordStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateRecordInput {
     pub title: String,
+    #[serde(default)]
+    pub original_at: Option<String>,
     #[serde(default)]
     pub summary: String,
     #[serde(default)]
@@ -150,6 +209,23 @@ pub struct UpdateRecordInput {
     pub notes: String,
     pub source_text: String,
     pub sources: Vec<RecordSourceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchRecordInput {
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub status: Option<RecordStatus>,
+    pub tags: Option<Vec<String>>,
+    pub current_judgment: Option<String>,
+    pub confirmed_facts: Option<Vec<String>>,
+    pub key_evidence: Option<Vec<EvidenceItem>>,
+    pub open_questions: Option<Vec<String>>,
+    pub next_actions: Option<Vec<String>>,
+    pub notes: Option<String>,
+    pub source_text: Option<String>,
+    pub sources: Option<Vec<RecordSourceInput>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -203,7 +279,13 @@ pub struct RestoreVersionInput {
 #[serde(rename_all = "camelCase")]
 pub struct PermanentDeleteInput {
     pub record_id: i64,
-    pub confirmation_title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteVersionInput {
+    pub record_id: i64,
+    pub version_id: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,4 +327,16 @@ pub struct DataLocation {
     pub exports: String,
     pub backups: String,
     pub logs: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageStats {
+    pub record_count: i64,
+    pub database_bytes: u64,
+    pub imports_bytes: u64,
+    pub attachments_bytes: u64,
+    pub backups_bytes: u64,
+    pub total_bytes: u64,
+    pub last_backup_at: Option<String>,
 }

@@ -25,6 +25,19 @@ export const recordSourceSchema = recordSourceInputSchema.extend({
 });
 export type RecordSource = z.infer<typeof recordSourceSchema>;
 
+export const attachmentItemSchema = z.object({
+  id: z.number().int(),
+  recordId: z.number().int(),
+  fileName: z.string(),
+  storedPath: z.string(),
+  originalPath: z.string().nullable(),
+  mimeType: z.string().nullable(),
+  sizeBytes: z.number().int(),
+  sha256: z.string(),
+  createdAt: z.string(),
+});
+export type AttachmentItem = z.infer<typeof attachmentItemSchema>;
+
 export const intelligenceRecordSchema = z.object({
   id: z.number().int(),
   title: z.string(),
@@ -41,6 +54,7 @@ export const intelligenceRecordSchema = z.object({
   sources: z.array(recordSourceSchema),
   isFavorite: z.boolean(),
   isDeleted: z.boolean(),
+  originalAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
@@ -48,12 +62,37 @@ export const intelligenceRecordSchema = z.object({
 });
 export type IntelligenceRecord = z.infer<typeof intelligenceRecordSchema>;
 
+export const recordSummarySchema = z.object({
+  id: z.number().int(),
+  title: z.string(),
+  displayTitle: z.string(),
+  summary: z.string(),
+  status: recordStatusSchema,
+  tags: z.array(z.string()),
+  sourceTitle: z.string(),
+  searchSnippet: z.string(),
+  isFavorite: z.boolean(),
+  isDeleted: z.boolean(),
+  originalAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  deletedAt: z.string().nullable(),
+  versionCount: z.number().int(),
+});
+export type RecordSummary = z.infer<typeof recordSummarySchema>;
+
 export const favoriteUpdateSchema = z.object({
   recordId: z.number().int(),
   isFavorite: z.boolean(),
   updatedAt: z.string(),
 });
 export type FavoriteUpdate = z.infer<typeof favoriteUpdateSchema>;
+
+export const recordMutationSchema = z.object({
+  recordId: z.number().int(),
+  updatedAt: z.string(),
+});
+export type RecordMutation = z.infer<typeof recordMutationSchema>;
 
 export const recordVersionSchema = z.object({
   id: z.number().int(),
@@ -86,6 +125,49 @@ export const dataLocationSchema = z.object({
 });
 export type DataLocation = z.infer<typeof dataLocationSchema>;
 
+export const storageStatsSchema = z.object({
+  recordCount: z.number().int(),
+  databaseBytes: z.number(),
+  importsBytes: z.number(),
+  attachmentsBytes: z.number(),
+  backupsBytes: z.number(),
+  totalBytes: z.number(),
+  lastBackupAt: z.string().nullable(),
+});
+export type StorageStats = z.infer<typeof storageStatsSchema>;
+
+export const portableBackupResultSchema = z.object({
+  folderPath: z.string(),
+  createdAt: z.string(),
+  recordCount: z.number().int(),
+  fileCount: z.number(),
+  totalBytes: z.number(),
+});
+export type PortableBackupResult = z.infer<typeof portableBackupResultSchema>;
+
+export const portableBackupPreviewSchema = z.object({
+  folderPath: z.string(),
+  createdAt: z.string(),
+  appVersion: z.string(),
+  integrityCheck: z.string(),
+  recordCount: z.number().int(),
+  deletedCount: z.number().int(),
+  versionCount: z.number().int(),
+  preferenceCount: z.number().int(),
+  fileCount: z.number(),
+  totalBytes: z.number(),
+});
+export type PortableBackupPreview = z.infer<typeof portableBackupPreviewSchema>;
+
+export const portableRestoreResultSchema = z.object({
+  restoredFrom: z.string(),
+  safetyBackup: z.string(),
+  integrityCheck: z.string(),
+  preferencesJson: z.string(),
+  logPath: z.string(),
+});
+export type PortableRestoreResult = z.infer<typeof portableRestoreResultSchema>;
+
 export type RecordQuery = {
   search?: string;
   status?: RecordStatus;
@@ -99,8 +181,18 @@ export type RecordQuery = {
   sort?: "updated_desc" | "oldest" | "title" | "created_desc";
 };
 
+export type ExportRecordsInput = {
+  recordIds?: number[];
+  query?: RecordQuery;
+  format: "json" | "md" | "vault";
+  includeAttachments?: boolean;
+  includeVersions?: boolean;
+  includeOriginalFiles?: boolean;
+};
+
 export type CreateRecordInput = {
   title: string;
+  originalAt?: string | null;
   summary?: string;
   status?: RecordStatus;
   tags?: string[];
@@ -117,6 +209,7 @@ export type CreateRecordInput = {
 
 export const createRecordInputSchema = z.object({
   title: z.string(),
+  originalAt: z.string().nullable().optional(),
   summary: z.string().optional(),
   status: recordStatusSchema.optional(),
   tags: z.array(z.string()).optional(),
@@ -146,6 +239,8 @@ export type UpdateRecordInput = {
   sources: RecordSourceInput[];
 };
 
+export type PatchRecordInput = Partial<UpdateRecordInput>;
+
 export type CommandError = {
   code: string;
   message: string;
@@ -160,7 +255,19 @@ export const importPreviewSchema = z.object({
   sizeBytes: z.number(),
   duplicate: z.boolean(),
   rawPreview: z.string(),
+  recordCount: z.number().int(),
   records: z.array(createRecordInputSchema),
+  boundaryOptions: z.array(z.object({
+    field: z.string(),
+    recordCount: z.number().int(),
+  })),
+  duplicateCandidates: z.array(z.object({
+    itemIndex: z.number().int(),
+    recordId: z.number().int(),
+    title: z.string(),
+    reason: z.string(),
+    score: z.number(),
+  })),
   warnings: z.array(z.string()),
 });
 export type ImportPreview = z.infer<typeof importPreviewSchema>;
@@ -168,11 +275,27 @@ export type ImportPreview = z.infer<typeof importPreviewSchema>;
 export const importResultSchema = z.object({
   jobId: z.string(),
   status: z.string(),
-  importedRecords: z.array(intelligenceRecordSchema),
+  importedCount: z.number().int(),
+  firstImportedRecord: z.object({
+    id: z.number().int(),
+    title: z.string(),
+  }).nullable(),
   skippedCount: z.number().int(),
   errors: z.array(z.string()),
 });
 export type ImportResult = z.infer<typeof importResultSchema>;
+
+export const importJobSummarySchema = z.object({
+  id: z.string(),
+  sourceFileName: z.string(),
+  status: z.string(),
+  successCount: z.number().int(),
+  skipCount: z.number().int(),
+  failureCount: z.number().int(),
+  createdAt: z.string(),
+  completedAt: z.string().nullable(),
+});
+export type ImportJobSummary = z.infer<typeof importJobSummarySchema>;
 
 export const exportResultSchema = z.object({
   format: z.string(),
@@ -185,8 +308,20 @@ export const restoreResultSchema = z.object({
   restoredFrom: z.string(),
   safetyBackup: z.string(),
   integrityCheck: z.string(),
+  logPath: z.string(),
 });
 export type RestoreResult = z.infer<typeof restoreResultSchema>;
+
+export const backupPreviewSchema = z.object({
+  filePath: z.string(),
+  fileSizeBytes: z.number(),
+  modifiedAt: z.string(),
+  integrityCheck: z.string(),
+  recordCount: z.number().int(),
+  deletedCount: z.number().int(),
+  versionCount: z.number().int(),
+});
+export type BackupPreview = z.infer<typeof backupPreviewSchema>;
 
 export function sourceToInput(source: RecordSource): RecordSourceInput {
   return {
@@ -212,5 +347,25 @@ export function recordToUpdate(record: IntelligenceRecord): UpdateRecordInput {
     notes: record.notes,
     sourceText: record.sourceText,
     sources: record.sources.map(sourceToInput),
+  };
+}
+
+export function recordToSummary(record: IntelligenceRecord): RecordSummary {
+  return {
+    id: record.id,
+    title: record.title,
+    displayTitle: record.title,
+    summary: record.summary,
+    status: record.status,
+    tags: record.tags,
+    sourceTitle: record.sources[0]?.title ?? "",
+    searchSnippet: record.summary,
+    isFavorite: record.isFavorite,
+    isDeleted: record.isDeleted,
+    originalAt: record.originalAt,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    deletedAt: record.deletedAt,
+    versionCount: record.versionCount,
   };
 }

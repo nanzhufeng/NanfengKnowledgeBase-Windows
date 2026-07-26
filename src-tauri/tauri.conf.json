@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "南枫情报台",
-        "width": 1440,
-        "height": 900,
+        "width": 1702,
+        "height": 1066,
         "minWidth": 1100,
         "minHeight": 720,
         "center": true,
@@ -23,7 +23,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
     }
   },
   "bundle": {

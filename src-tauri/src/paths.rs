@@ -1,11 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::Manager;
 
 use crate::error::{AppError, AppResult};
-use crate::models::DataLocation;
+use crate::models::{DataLocation, StorageStats};
+use rusqlite::backup::Backup;
+use rusqlite::Connection;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
@@ -98,6 +101,71 @@ impl AppPaths {
             logs: self.logs.to_string_lossy().into_owned(),
         }
     }
+
+    pub fn storage_stats(&self, connection: &Connection) -> AppResult<StorageStats> {
+        let database_bytes = file_size(&self.database)?;
+        let imports_bytes = directory_size(&self.imports_raw)?;
+        let attachments_bytes = directory_size(&self.attachments)?;
+        let backups_bytes = directory_size(&self.backups)?;
+        let record_count = connection.query_row(
+            "SELECT COUNT(*) FROM records WHERE is_deleted = 0",
+            [],
+            |row| row.get(0),
+        )?;
+        let last_backup_at = newest_file_modified_at(&self.backups)?;
+        Ok(StorageStats {
+            record_count,
+            database_bytes,
+            imports_bytes,
+            attachments_bytes,
+            backups_bytes,
+            total_bytes: database_bytes + imports_bytes + attachments_bytes + backups_bytes,
+            last_backup_at,
+        })
+    }
+}
+
+fn file_size(path: &Path) -> AppResult<u64> {
+    Ok(if path.is_file() {
+        path.metadata()?.len()
+    } else {
+        0
+    })
+}
+
+fn directory_size(path: &Path) -> AppResult<u64> {
+    if !path.is_dir() {
+        return Ok(0);
+    }
+    let mut total = 0_u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        total = total.saturating_add(if entry.file_type()?.is_dir() {
+            directory_size(&entry_path)?
+        } else {
+            entry.metadata()?.len()
+        });
+    }
+    Ok(total)
+}
+
+fn newest_file_modified_at(path: &Path) -> AppResult<Option<String>> {
+    if !path.is_dir() {
+        return Ok(None);
+    }
+    let mut newest = None;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let modified = entry.metadata()?.modified()?;
+        if newest.is_none_or(|current| modified > current) {
+            newest = Some(modified);
+        }
+    }
+    Ok(newest.map(|time| chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339()))
 }
 
 fn directory_is_missing_or_empty(path: &Path) -> AppResult<bool> {
@@ -121,7 +189,15 @@ fn migrate_legacy_data(source: &Path, target: &Path) -> AppResult<()> {
         .unwrap_or_default()
         .as_nanos();
     let stage = parent.join(format!(".南枫情报台-迁移中-{}-{nonce}", std::process::id()));
-    copy_directory(source, &stage)?;
+    let source_database = source.join("data").join("app.db");
+    let target_database = stage.join("data").join("app.db");
+    copy_directory_without_database(source, &stage, &source_database)?;
+    if source_database.is_file() {
+        if let Some(parent) = target_database.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        backup_database(&source_database, &target_database)?;
+    }
 
     if target.exists() {
         if !directory_is_missing_or_empty(target)? {
@@ -135,17 +211,43 @@ fn migrate_legacy_data(source: &Path, target: &Path) -> AppResult<()> {
     Ok(())
 }
 
-fn copy_directory(source: &Path, target: &Path) -> AppResult<()> {
+fn copy_directory_without_database(
+    source: &Path,
+    target: &Path,
+    source_database: &Path,
+) -> AppResult<()> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source_path = entry.path();
         let target_path = target.join(entry.file_name());
+        if source_path == source_database
+            || source_path == source_database.with_extension("db-wal")
+            || source_path == source_database.with_extension("db-shm")
+        {
+            continue;
+        }
         if entry.file_type()?.is_dir() {
-            copy_directory(&source_path, &target_path)?;
+            copy_directory_without_database(&source_path, &target_path, source_database)?;
         } else {
             fs::copy(source_path, target_path)?;
         }
+    }
+    Ok(())
+}
+
+fn backup_database(source_path: &Path, target_path: &Path) -> AppResult<()> {
+    let source =
+        Connection::open_with_flags(source_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut target = Connection::open(target_path)?;
+    let backup = Backup::new(&source, &mut target)?;
+    backup.run_to_completion(16, Duration::from_millis(20), None)?;
+    drop(backup);
+    let integrity: String = target.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        return Err(AppError::Conflict(format!(
+            "旧数据迁移后的数据库完整性检查失败：{integrity}"
+        )));
     }
     Ok(())
 }
@@ -160,17 +262,27 @@ mod tests {
         let legacy = directory.path().join("legacy");
         let preferred = directory.path().join("preferred");
         fs::create_dir_all(legacy.join("data")).expect("legacy data dir");
-        fs::write(legacy.join("data").join("app.db"), b"database").expect("legacy db");
-        fs::write(legacy.join("data").join("app.db-wal"), b"wal").expect("legacy wal");
+        let legacy_database = legacy.join("data").join("app.db");
+        let connection = Connection::open(&legacy_database).expect("legacy db");
+        connection
+            .execute_batch(
+                "CREATE TABLE marker(value TEXT NOT NULL);
+                 INSERT INTO marker(value) VALUES ('database');",
+            )
+            .expect("legacy fixture");
+        drop(connection);
 
         let paths = AppPaths::from_preferred_or_legacy(preferred.clone(), legacy.clone())
             .expect("select preferred");
 
         assert_eq!(paths.root, preferred);
-        assert_eq!(fs::read(&paths.database).expect("migrated db"), b"database");
         assert_eq!(
-            fs::read(paths.database.with_file_name("app.db-wal")).expect("migrated wal"),
-            b"wal"
+            Connection::open(&paths.database)
+                .expect("migrated db")
+                .query_row("SELECT value FROM marker", [], |row| row
+                    .get::<_, String>(0))
+                .expect("migrated marker"),
+            "database"
         );
         assert!(legacy.join("data").join("app.db").is_file());
     }

@@ -3,8 +3,10 @@ chcp 65001 >nul
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\test-build"
+set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\mapping-import-build"
 set "APP_EXE=%TEST_TARGET_DIR%\release\nanfeng-intelligence.exe"
+set "LOG_DIR=%PROJECT_DIR%.runtime-qa\launcher"
+set "LAUNCH_LOG=%LOG_DIR%\latest.log"
 
 title 南枫情报台 - 测试版启动器
 pushd "%PROJECT_DIR%" || (
@@ -14,7 +16,23 @@ pushd "%PROJECT_DIR%" || (
   exit /b 1
 )
 
-if /I "%~1"=="--rebuild" goto rebuild
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
+> "%LAUNCH_LOG%" echo [%date% %time%] 启动测试版
+>> "%LAUNCH_LOG%" echo 项目目录：%PROJECT_DIR%
+>> "%LAUNCH_LOG%" echo 程序路径：%APP_EXE%
+
+if /I "%~1"=="--rebuild" (
+  tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
+  if not errorlevel 1 (
+    >> "%LAUNCH_LOG%" echo 重新生成前检测到程序已在运行
+    echo [请先关闭] 南枫情报台仍在运行，无法覆盖正在使用的测试程序。
+    echo 关闭现有窗口后，再运行本文件并带上 --rebuild。
+    pause
+    popd
+    exit /b 2
+  )
+  goto rebuild
+)
 if exist "%APP_EXE%" goto launch
 
 :rebuild
@@ -28,11 +46,14 @@ if errorlevel 1 (
 )
 
 echo [准备] 正在生成本地测试程序，不会创建或安装安装包……
+>> "%LAUNCH_LOG%" echo 开始重新生成测试程序
 set "CARGO_TARGET_DIR=%TEST_TARGET_DIR%"
 call npm run tauri:build -- --no-bundle
 if errorlevel 1 (
+  >> "%LAUNCH_LOG%" echo 测试程序生成失败
   echo.
   echo [失败] 测试程序生成失败，请保留本窗口中的错误信息。
+  echo 启动日志：%LAUNCH_LOG%
   pause
   popd
   exit /b 1
@@ -40,8 +61,10 @@ if errorlevel 1 (
 
 :launch
 if not exist "%APP_EXE%" (
+  >> "%LAUNCH_LOG%" echo 未找到测试程序
   echo [失败] 未找到测试程序：
   echo %APP_EXE%
+  echo 启动日志：%LAUNCH_LOG%
   pause
   popd
   exit /b 1
@@ -49,6 +72,7 @@ if not exist "%APP_EXE%" (
 
 tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
 if not errorlevel 1 (
+  >> "%LAUNCH_LOG%" echo 检测到程序已在运行
   echo [请先关闭] 检测到南枫情报台仍在运行。
   echo 为避免旧版和测试版同时读写数据，请关闭现有窗口后再双击本文件。
   pause
@@ -57,13 +81,21 @@ if not errorlevel 1 (
 )
 
 echo [启动] 南枫情报台测试版
-start "" "%APP_EXE%"
+>> "%LAUNCH_LOG%" echo 正在启动程序
+start "" /D "%PROJECT_DIR%" "%APP_EXE%"
+
+timeout /t 2 /nobreak >nul
+tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
 if errorlevel 1 (
-  echo [失败] 程序启动失败。
+  >> "%LAUNCH_LOG%" echo 程序启动后两秒内退出
+  echo [失败] 程序启动后立即退出，未能打开主界面。
+  echo 请把下面的日志文件发给 Codex：
+  echo %LAUNCH_LOG%
   pause
   popd
   exit /b 1
 )
 
+>> "%LAUNCH_LOG%" echo 程序已成功启动
 popd
 exit /b 0

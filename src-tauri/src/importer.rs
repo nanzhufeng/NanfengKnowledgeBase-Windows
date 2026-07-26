@@ -18,6 +18,9 @@ use crate::paths::AppPaths;
 
 const LARGE_IMPORT_WARNING_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_IMPORT_BYTES: u64 = 200 * 1024 * 1024;
+const MAX_PREVIEW_RECORDS: usize = 32;
+const MAX_PREVIEW_SOURCE_CHARS: usize = 32_000;
+const MAX_DUPLICATE_CANDIDATES: usize = 200;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,17 +33,49 @@ pub struct ImportPreview {
     pub size_bytes: u64,
     pub duplicate: bool,
     pub raw_preview: String,
+    pub record_count: usize,
     pub records: Vec<CreateRecordInput>,
+    pub boundary_options: Vec<ImportBoundaryOption>,
+    pub duplicate_candidates: Vec<DuplicateCandidate>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateCandidate {
+    pub item_index: usize,
+    pub record_id: i64,
+    pub title: String,
+    pub reason: String,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBoundaryOption {
+    pub field: String,
+    pub record_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmImportInput {
     pub job_id: String,
+    #[allow(dead_code)]
+    #[serde(default)]
     pub records: Vec<CreateRecordInput>,
     #[serde(default)]
     pub allow_duplicate: bool,
+    #[serde(default = "default_duplicate_strategy")]
+    pub duplicate_strategy: String,
+    #[serde(default)]
+    pub item_strategies: Vec<String>,
+    #[serde(default)]
+    pub mapping: serde_json::Value,
+}
+
+fn default_duplicate_strategy() -> String {
+    "skip".to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,9 +83,53 @@ pub struct ConfirmImportInput {
 pub struct ImportResult {
     pub job_id: String,
     pub status: String,
-    pub imported_records: Vec<IntelligenceRecord>,
+    pub imported_count: usize,
+    pub first_imported_record: Option<ImportedRecordRef>,
     pub skipped_count: usize,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedRecordRef {
+    pub id: i64,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportJobSummary {
+    pub id: String,
+    pub source_file_name: String,
+    pub status: String,
+    pub success_count: i64,
+    pub skip_count: i64,
+    pub failure_count: i64,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
+pub fn list_import_jobs(connection: &Connection) -> AppResult<Vec<ImportJobSummary>> {
+    let mut statement = connection.prepare(
+        "SELECT id, source_file_name, status, success_count, skip_count,
+                failure_count, created_at, completed_at
+         FROM import_jobs
+         ORDER BY created_at DESC
+         LIMIT 50",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(ImportJobSummary {
+            id: row.get(0)?,
+            source_file_name: row.get(1)?,
+            status: row.get(2)?,
+            success_count: row.get(3)?,
+            skip_count: row.get(4)?,
+            failure_count: row.get(5)?,
+            created_at: row.get(6)?,
+            completed_at: row.get(7)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn prepare_import(
@@ -94,12 +173,13 @@ pub fn prepare_import(
         fs::copy(source_path, &stored_path)?;
     }
 
-    let duplicate = connection.query_row(
+    let hash_duplicate = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM import_jobs WHERE sha256 = ?1 AND status = 'completed')",
         params![sha256],
         |row| row.get::<_, i64>(0),
     )? != 0;
     let (decoded, used_gbk) = decode_text(&bytes);
+    drop(bytes);
     let mut warnings = Vec::new();
     if metadata.len() > LARGE_IMPORT_WARNING_BYTES {
         warnings.push("文件超过 50 MB，归档和解析可能需要更长时间".to_string());
@@ -107,18 +187,46 @@ pub fn prepare_import(
     if used_gbk {
         warnings.push("文件不是 UTF-8，已按 GBK/GB18030 兼容方式解码".to_string());
     }
-    if duplicate {
+    if hash_duplicate {
         warnings.push("检测到相同 SHA-256 的已完成导入；默认阻止重复写入".to_string());
     }
 
     let archived = stored_path.to_string_lossy().into_owned();
-    let records = parse_records(
+    let full_records = parse_records(
         &decoded,
         &file_kind,
         &source_file_name,
         &archived,
         &mut warnings,
     )?;
+    let mut duplicate_candidates = detect_duplicate_candidates(connection, &full_records)?;
+    if !duplicate_candidates.is_empty() {
+        warnings.push(format!(
+            "发现 {} 个记录级重复候选；请在写入前选择跳过、副本、追加版本或逐条处理",
+            duplicate_candidates.len()
+        ));
+    }
+    if duplicate_candidates.len() > MAX_DUPLICATE_CANDIDATES {
+        warnings.push(format!(
+            "重复候选较多，界面仅展示前 {MAX_DUPLICATE_CANDIDATES} 项；完整导入仍按所选全局策略执行"
+        ));
+        duplicate_candidates.truncate(MAX_DUPLICATE_CANDIDATES);
+    }
+    let duplicate = hash_duplicate || !duplicate_candidates.is_empty();
+    let record_count = full_records.len();
+    let boundary_options = detect_boundary_options(&decoded, &file_kind);
+    let records = full_records
+        .iter()
+        .take(MAX_PREVIEW_RECORDS)
+        .cloned()
+        .map(preview_record)
+        .collect::<Vec<_>>();
+    if record_count > records.len() {
+        warnings.push(format!(
+            "文件共识别到 {record_count} 条记录；界面仅展示前 {} 条样本，确认后仍会从归档原文件完整导入",
+            records.len()
+        ));
+    }
     let job_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     connection.execute(
@@ -138,9 +246,153 @@ pub fn prepare_import(
         size_bytes: metadata.len(),
         duplicate,
         raw_preview: decoded.chars().take(16_000).collect(),
+        record_count,
         records,
+        boundary_options,
+        duplicate_candidates,
         warnings,
     })
+}
+
+fn detect_boundary_options(text: &str, file_kind: &str) -> Vec<ImportBoundaryOption> {
+    if file_kind != "json" {
+        return Vec::new();
+    }
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|root| root.as_object().cloned())
+        .map(|object| {
+            object
+                .into_iter()
+                .filter_map(|(field, value)| {
+                    let items = value.as_array()?;
+                    if items
+                        .iter()
+                        .any(|item| item.as_object().is_some_and(|map| !map.is_empty()))
+                    {
+                        Some(ImportBoundaryOption {
+                            field,
+                            record_count: items.len(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn detect_duplicate_candidates(
+    connection: &Connection,
+    records: &[CreateRecordInput],
+) -> AppResult<Vec<DuplicateCandidate>> {
+    let mut statement = connection.prepare(
+        "SELECT r.id, r.title, r.created_at, r.updated_at,
+                COALESCE((SELECT s.external_id FROM sources s
+                          WHERE s.record_id = r.id AND s.external_id IS NOT NULL
+                          ORDER BY s.id LIMIT 1), '')
+         FROM records r
+         WHERE r.is_deleted = 0",
+    )?;
+    let existing = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut candidates = Vec::new();
+    for (item_index, record) in records.iter().enumerate() {
+        let external_id = record
+            .sources
+            .iter()
+            .find_map(|source| source.external_id.as_deref())
+            .filter(|value| !value.trim().is_empty());
+        let source_date = record
+            .original_at
+            .as_deref()
+            .map(|value| value.get(..10).unwrap_or(value).to_string())
+            .or_else(|| import_source_date(&record.source_text));
+        let normalized_title = normalize_title(&record.title);
+        let mut seen = std::collections::HashSet::new();
+        for (record_id, title, created_at, updated_at, existing_external_id) in &existing {
+            let existing_title = normalize_title(title);
+            let similarity = title_similarity(&normalized_title, &existing_title);
+            let (reason, score) = if external_id.is_some_and(|value| value == existing_external_id)
+            {
+                ("来源 ID 相同", 1.0)
+            } else if normalized_title == existing_title
+                && source_date.as_deref().is_some_and(|date| {
+                    created_at.starts_with(date) || updated_at.starts_with(date)
+                })
+            {
+                ("标题与日期相同", 1.0)
+            } else if normalized_title == existing_title {
+                ("标题相同", 0.98)
+            } else if similarity >= 0.86 {
+                ("标题高度相似", similarity)
+            } else {
+                continue;
+            };
+            if seen.insert(*record_id) {
+                candidates.push(DuplicateCandidate {
+                    item_index,
+                    record_id: *record_id,
+                    title: title.clone(),
+                    reason: reason.to_string(),
+                    score,
+                });
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn import_source_date(source_text: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(source_text).ok()?;
+    let object = value.as_object()?;
+    ["updatedAt", "updated_at", "createdAt", "created_at", "date"]
+        .iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))
+        .map(|value| value.get(..10).unwrap_or(value).to_string())
+}
+
+fn normalize_title(title: &str) -> String {
+    title
+        .chars()
+        .filter(|character| !character.is_whitespace() && !character.is_ascii_punctuation())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn title_similarity(left: &str, right: &str) -> f64 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    if left == right {
+        return 1.0;
+    }
+    fn bigrams(value: &str) -> std::collections::HashSet<String> {
+        let chars = value.chars().collect::<Vec<_>>();
+        if chars.len() < 2 {
+            return [value.to_string()].into_iter().collect();
+        }
+        chars.windows(2).map(|pair| pair.iter().collect()).collect()
+    }
+    let left = bigrams(left);
+    let right = bigrams(right);
+    let intersection = left.intersection(&right).count() as f64;
+    let union = left.union(&right).count() as f64;
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
 }
 
 fn validate_import_size(size_bytes: u64) -> AppResult<()> {
@@ -156,18 +408,17 @@ pub fn confirm_import(
     connection: &mut Connection,
     input: &ConfirmImportInput,
 ) -> AppResult<ImportResult> {
-    if input.records.is_empty() {
-        return Err(AppError::Validation("没有可导入的记录".to_string()));
-    }
     let job = connection
         .query_row(
-            "SELECT sha256, stored_file_path, status FROM import_jobs WHERE id = ?1",
+            "SELECT sha256, stored_file_path, status, source_file_name
+             FROM import_jobs WHERE id = ?1",
             params![input.job_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             },
         )
@@ -178,6 +429,33 @@ pub fn confirm_import(
             "该导入任务已经处理，不能重复提交".to_string(),
         ));
     }
+    let archived_path = Path::new(&job.1);
+    if !archived_path.is_file() {
+        return Err(AppError::NotFound(
+            "归档原文件不存在，已停止导入以避免不完整数据".to_string(),
+        ));
+    }
+    let archived_bytes = fs::read(archived_path)?;
+    validate_import_size(archived_bytes.len() as u64)?;
+    let (decoded, _) = decode_text(&archived_bytes);
+    drop(archived_bytes);
+    let file_kind = Path::new(&job.3)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let mut parse_warnings = Vec::new();
+    let mut records = parse_records_for_confirmation(
+        &decoded,
+        &file_kind,
+        &job.3,
+        &job.1,
+        &input.mapping,
+        &mut parse_warnings,
+    )?;
+    if records.is_empty() {
+        return Err(AppError::Validation("没有可导入的记录".to_string()));
+    }
     let duplicate = connection.query_row(
         "SELECT EXISTS(
               SELECT 1 FROM import_jobs
@@ -186,20 +464,44 @@ pub fn confirm_import(
         params![job.0, input.job_id],
         |row| row.get::<_, i64>(0),
     )? != 0;
-    if duplicate && !input.allow_duplicate {
+    let default_strategy = if input.allow_duplicate {
+        "copy"
+    } else {
+        input.duplicate_strategy.as_str()
+    };
+    if !matches!(default_strategy, "skip" | "copy" | "version" | "manual") {
+        return Err(AppError::Validation("未知的重复导入策略".to_string()));
+    }
+    if duplicate && default_strategy == "skip" {
         connection.execute(
             "UPDATE import_jobs SET status = 'cancelled', skip_count = ?2, completed_at = ?3 WHERE id = ?1",
-            params![input.job_id, input.records.len() as i64, Utc::now().to_rfc3339()],
+            params![input.job_id, records.len() as i64, Utc::now().to_rfc3339()],
         )?;
-        return Err(AppError::Conflict(
-            "相同文件已经导入；如确需重复导入，请明确勾选允许重复".to_string(),
-        ));
+        return Ok(ImportResult {
+            job_id: input.job_id.clone(),
+            status: "cancelled".to_string(),
+            imported_count: 0,
+            first_imported_record: None,
+            skipped_count: records.len(),
+            errors: Vec::new(),
+        });
     }
+    let duplicate_item_indices = if default_strategy == "skip" {
+        detect_duplicate_candidates(connection, &records)?
+            .into_iter()
+            .map(|candidate| candidate.item_index)
+            .collect::<std::collections::HashSet<_>>()
+    } else {
+        std::collections::HashSet::new()
+    };
 
-    let mut imported_records = Vec::new();
+    let mut imported_count = 0usize;
+    let mut first_imported_record = None;
+    let mut imported_title_samples = Vec::new();
     let mut errors = Vec::new();
-    for (index, original) in input.records.iter().enumerate() {
-        let mut record_input = original.clone();
+    let mut skipped_count = 0usize;
+    for (index, original) in records.drain(..).enumerate() {
+        let mut record_input = original;
         if record_input.sources.is_empty() {
             record_input.sources.push(RecordSourceInput {
                 source_type: "import".to_string(),
@@ -213,7 +515,46 @@ pub fn confirm_import(
                 external_id: Some(job.0.clone()),
             });
         }
-        match database::create_record(connection, &record_input) {
+        let strategy = if default_strategy == "manual" {
+            input
+                .item_strategies
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("skip")
+        } else if default_strategy == "skip" {
+            if duplicate_item_indices.contains(&index) {
+                "skip"
+            } else {
+                "copy"
+            }
+        } else {
+            default_strategy
+        };
+        if strategy == "skip" {
+            connection.execute(
+                "INSERT INTO import_job_items(
+                  import_job_id, item_index, status, reason_code, message, raw_json
+                ) VALUES (?1, ?2, 'skipped', 'user_skipped', '按导入策略跳过', ?3)",
+                params![
+                    input.job_id,
+                    index as i64,
+                    import_item_audit_json(&record_input)?
+                ],
+            )?;
+            skipped_count += 1;
+            continue;
+        }
+        let write_result = if strategy == "version" {
+            import_as_version(connection, &record_input)
+        } else if strategy == "copy" {
+            database::create_record(connection, &record_input)
+        } else {
+            Err(AppError::Validation(format!(
+                "第 {} 条记录使用了未知导入策略",
+                index + 1
+            )))
+        };
+        match write_result {
             Ok(record) => {
                 connection.execute(
                     "INSERT INTO import_job_items(
@@ -223,10 +564,19 @@ pub fn confirm_import(
                         input.job_id,
                         index as i64,
                         record.id,
-                        serde_json::to_string(original)?
+                        import_item_audit_json(&record_input)?
                     ],
                 )?;
-                imported_records.push(record);
+                if first_imported_record.is_none() {
+                    first_imported_record = Some(ImportedRecordRef {
+                        id: record.id,
+                        title: record.title.clone(),
+                    });
+                }
+                imported_count += 1;
+                if imported_title_samples.len() < 100 {
+                    imported_title_samples.push(record.title);
+                }
             }
             Err(error) => {
                 let message = error.to_string();
@@ -238,7 +588,7 @@ pub fn confirm_import(
                         input.job_id,
                         index as i64,
                         message,
-                        serde_json::to_string(original)?
+                        import_item_audit_json(&record_input)?
                     ],
                 )?;
                 errors.push(message);
@@ -248,21 +598,29 @@ pub fn confirm_import(
 
     let status = if errors.is_empty() {
         "completed"
-    } else if imported_records.is_empty() {
+    } else if imported_count == 0 {
         "failed"
     } else {
         "partial"
     };
     connection.execute(
         "UPDATE import_jobs SET
-          mapping_json = ?2, status = ?3, success_count = ?4, failure_count = ?5,
-          error_log_json = ?6, completed_at = ?7
+          mapping_json = ?2, status = ?3, success_count = ?4, skip_count = ?5,
+          failure_count = ?6, error_log_json = ?7, completed_at = ?8
         WHERE id = ?1",
         params![
             input.job_id,
-            serde_json::to_string(&input.records)?,
+            serde_json::to_string(&serde_json::json!({
+                "mapping": input.mapping,
+                "duplicateStrategy": default_strategy,
+                "itemStrategies": input.item_strategies,
+                "recordTitleSamples": imported_title_samples,
+                "recordTitleSamplesTruncated": imported_count > 100,
+                "parseWarnings": parse_warnings,
+            }))?,
             status,
-            imported_records.len() as i64,
+            imported_count as i64,
+            skipped_count as i64,
             errors.len() as i64,
             serde_json::to_string(&errors)?,
             Utc::now().to_rfc3339()
@@ -272,10 +630,317 @@ pub fn confirm_import(
     Ok(ImportResult {
         job_id: input.job_id.clone(),
         status: status.to_string(),
-        imported_records,
-        skipped_count: 0,
+        imported_count,
+        first_imported_record,
+        skipped_count,
         errors,
     })
+}
+
+fn import_item_audit_json(record: &CreateRecordInput) -> AppResult<String> {
+    Ok(serde_json::to_string(&serde_json::json!({
+        "title": record.title,
+        "status": record.status,
+        "tags": record.tags,
+        "sourceCount": record.sources.len(),
+        "sourceTextBytes": record.source_text.len(),
+        "sourceTextSha256": hex::encode(Sha256::digest(record.source_text.as_bytes())),
+    }))?)
+}
+
+pub fn cancel_import(connection: &Connection, job_id: &str) -> AppResult<()> {
+    let changed = connection.execute(
+        "UPDATE import_jobs
+         SET status = 'cancelled', completed_at = ?2
+         WHERE id = ?1 AND status = 'preview'",
+        params![job_id, Utc::now().to_rfc3339()],
+    )?;
+    if changed == 0 {
+        return Err(AppError::Conflict(
+            "导入任务不存在或已经结束，不能再次取消".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn import_as_version(
+    connection: &mut Connection,
+    input: &CreateRecordInput,
+) -> AppResult<IntelligenceRecord> {
+    let existing_id = connection
+        .query_row(
+            "SELECT id FROM records
+             WHERE is_deleted = 0 AND lower(trim(title)) = lower(trim(?1))
+             ORDER BY updated_at DESC LIMIT 1",
+            params![input.title],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(record_id) = existing_id else {
+        return database::create_record(connection, input);
+    };
+    let update = crate::models::UpdateRecordInput {
+        title: input.title.clone(),
+        summary: input.summary.clone(),
+        status: input.status.clone(),
+        tags: input.tags.clone(),
+        current_judgment: input.current_judgment.clone(),
+        confirmed_facts: input.confirmed_facts.clone(),
+        key_evidence: input.key_evidence.clone(),
+        open_questions: input.open_questions.clone(),
+        next_actions: input.next_actions.clone(),
+        notes: input.notes.clone(),
+        source_text: input.source_text.clone(),
+        sources: input.sources.clone(),
+    };
+    database::update_record(connection, record_id, &update)?;
+    database::append_version(
+        connection,
+        &crate::models::AppendVersionInput {
+            record_id,
+            version_title: "导入版本".to_string(),
+            change_note: "由重复导入追加，保留原历史版本".to_string(),
+        },
+    )?;
+    database::get_record(connection, record_id)
+}
+
+fn preview_record(mut record: CreateRecordInput) -> CreateRecordInput {
+    if record.source_text.chars().count() <= MAX_PREVIEW_SOURCE_CHARS {
+        return record;
+    }
+    record.source_text = serde_json::from_str::<Value>(&record.source_text)
+        .ok()
+        .map(|value| {
+            let projected = project_json_value(&value, 0, 8, 200);
+            let serialized = serde_json::to_string(&projected).unwrap_or_default();
+            if serialized.chars().count() <= MAX_PREVIEW_SOURCE_CHARS {
+                serialized
+            } else {
+                serde_json::to_string(&project_json_value(&value, 0, 4, 80)).unwrap_or_default()
+            }
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            let mut preview = record
+                .source_text
+                .chars()
+                .take(MAX_PREVIEW_SOURCE_CHARS)
+                .collect::<String>();
+            preview.push_str("\n\n…（界面仅展示样本，确认后从归档原文件读取完整内容）");
+            preview
+        });
+    record
+}
+
+fn project_json_value(
+    value: &Value,
+    depth: usize,
+    max_entries: usize,
+    max_string_chars: usize,
+) -> Value {
+    if depth >= 4 {
+        return match value {
+            Value::String(text) => Value::String(truncate_chars(text, max_string_chars)),
+            Value::Number(_) | Value::Bool(_) | Value::Null => value.clone(),
+            Value::Array(items) => Value::String(format!("数组，共 {} 项", items.len())),
+            Value::Object(map) => Value::String(format!("对象，共 {} 个字段", map.len())),
+        };
+    }
+    match value {
+        Value::String(text) => Value::String(truncate_chars(text, max_string_chars)),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .take(max_entries)
+                .map(|item| project_json_value(item, depth + 1, max_entries, max_string_chars))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .take(max_entries)
+                .map(|(key, item)| {
+                    (
+                        key.clone(),
+                        project_json_value(item, depth + 1, max_entries, max_string_chars),
+                    )
+                })
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+fn truncate_chars(value: &str, limit: usize) -> String {
+    let mut chars = value.chars();
+    let result = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_some() {
+        format!("{result}…")
+    } else {
+        result
+    }
+}
+
+fn parse_records_for_confirmation(
+    text: &str,
+    file_kind: &str,
+    file_name: &str,
+    archived_path: &str,
+    mapping: &Value,
+    warnings: &mut Vec<String>,
+) -> AppResult<Vec<CreateRecordInput>> {
+    if file_kind != "json" {
+        return parse_records(text, file_kind, file_name, archived_path, warnings);
+    }
+
+    let root: Value = serde_json::from_str(text)?;
+    let boundary = mapping
+        .get("__boundary")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    let selected = select_json_values(&root, boundary)?;
+    let valid_values = selected
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, value)| match value {
+            Value::Object(map) if !map.is_empty() => Some(Value::Object(map)),
+            _ => {
+                warnings.push(format!("JSON 第 {} 项不是有效对象，已跳过", index + 1));
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if valid_values.is_empty() {
+        return Err(AppError::Validation(
+            "所选记录边界中没有可导入的对象".to_string(),
+        ));
+    }
+
+    let source = RecordSourceInput {
+        source_type: "import".to_string(),
+        title: file_name.to_string(),
+        url: None,
+        local_path: Some(archived_path.to_string()),
+        external_id: None,
+    };
+    let serialized = if valid_values.len() == 1 {
+        serde_json::to_string(&valid_values[0])?
+    } else {
+        serde_json::to_string(&valid_values)?
+    };
+    let mut records = parse_json_records(&serialized, source, warnings)?;
+    let explicit_mapping = mapping.as_object().is_some_and(|entries| {
+        entries.iter().any(|(key, value)| {
+            key != "__boundary" && value.as_str().is_some_and(|field| !field.trim().is_empty())
+        })
+    });
+    if explicit_mapping || boundary != "auto" {
+        for (index, record) in records.iter_mut().enumerate() {
+            if let Some(Value::Object(raw)) = valid_values.get(index) {
+                apply_field_mapping(record, raw, mapping, index);
+                record.source_text = serde_json::to_string(&valid_values[index])?;
+            }
+        }
+    }
+    Ok(records)
+}
+
+fn select_json_values(root: &Value, boundary: &str) -> AppResult<Vec<Value>> {
+    if boundary != "auto" {
+        return root
+            .as_object()
+            .and_then(|object| object.get(boundary))
+            .and_then(Value::as_array)
+            .map(|items| items.to_vec())
+            .ok_or_else(|| {
+                AppError::Validation(format!(
+                    "记录边界“{boundary}”在归档原文件中不存在或不是数组"
+                ))
+            });
+    }
+    match root {
+        Value::Array(items) => Ok(items.to_vec()),
+        Value::Object(object) => object
+            .get("records")
+            .and_then(Value::as_array)
+            .map(|items| items.to_vec())
+            .map_or_else(|| Ok(vec![root.clone()]), Ok),
+        _ => Err(AppError::Validation(
+            "JSON 顶层必须是对象、对象数组或包含 records 数组".to_string(),
+        )),
+    }
+}
+
+fn apply_field_mapping(
+    record: &mut CreateRecordInput,
+    raw: &serde_json::Map<String, Value>,
+    mapping: &Value,
+    index: usize,
+) {
+    let mapped_string = |target: &str| -> Option<String> {
+        let field = mapping.get(target)?.as_str()?;
+        match raw.get(field)? {
+            Value::String(value) => Some(value.clone()),
+            Value::Number(value) => Some(value.to_string()),
+            Value::Bool(value) => Some(value.to_string()),
+            _ => None,
+        }
+    };
+    let mapped_array = |target: &str| -> Option<Vec<String>> {
+        let field = mapping.get(target)?.as_str()?;
+        match raw.get(field)? {
+            Value::Array(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::String(value) => Some(value.clone()),
+                        Value::Number(value) => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            Value::String(value) => Some(
+                value
+                    .split([',', '，', ';', '\n'])
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            ),
+            _ => None,
+        }
+    };
+
+    if let Some(title) = mapped_string("title").filter(|value| !value.trim().is_empty()) {
+        record.title = title;
+    } else if record.title.trim().is_empty() {
+        record.title = format!("未命名导入记录 {}", index + 1);
+    }
+    if let Some(value) = mapped_string("summary") {
+        record.summary = value;
+    }
+    if let Some(value) = mapped_string("status").and_then(|value| RecordStatus::parse(value.trim()))
+    {
+        record.status = value;
+    }
+    if let Some(value) = mapped_array("tags") {
+        record.tags = value;
+    }
+    if let Some(value) = mapped_string("currentJudgment") {
+        record.current_judgment = value;
+    }
+    if let Some(value) = mapped_array("confirmedFacts") {
+        record.confirmed_facts = value;
+    }
+    if let Some(value) = mapped_array("openQuestions") {
+        record.open_questions = value;
+    }
+    if let Some(value) = mapped_array("nextActions") {
+        record.next_actions = value;
+    }
+    if let Some(value) = mapped_string("notes") {
+        record.notes = value;
+    }
 }
 
 fn parse_records(
@@ -343,6 +1008,7 @@ fn parse_json_records(
             Some(title) => title,
             None => {
                 let generated = title_from_chat_messages(object)
+                    .or_else(|| title_from_chatgpt_mapping(object))
                     .or_else(|| {
                         [
                             "summary",
@@ -408,8 +1074,13 @@ fn parse_json_records(
         if let Some(source_title) = string_value(object, &["source"]) {
             sources[0].title = source_title;
         }
+        sources[0].external_id = string_value(
+            object,
+            &["externalId", "external_id", "sourceId", "source_id"],
+        );
         records.push(CreateRecordInput {
             title,
+            original_at: database::derive_original_at(&serde_json::to_string(value)?),
             summary: string_value(object, &["summary", "description"]).unwrap_or_default(),
             status,
             tags,
@@ -444,25 +1115,52 @@ fn parse_json_records(
 }
 
 fn parse_text_record(text: &str, source: RecordSourceInput, markdown: bool) -> CreateRecordInput {
-    let non_empty = text
-        .lines()
-        .map(str::trim)
+    let lines = text.lines().map(str::trim).collect::<Vec<_>>();
+    let mut body_start = 0;
+    let mut frontmatter_title = None;
+    if markdown && lines.first().is_some_and(|line| *line == "---") {
+        if let Some(closing_index) = lines.iter().skip(1).position(|line| *line == "---") {
+            let closing_index = closing_index + 1;
+            frontmatter_title = lines[1..closing_index].iter().find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                if !key.trim().eq_ignore_ascii_case("title") {
+                    return None;
+                }
+                let title = value
+                    .trim()
+                    .trim_matches(|character| matches!(character, '\'' | '"'));
+                (!title.is_empty()).then_some(title)
+            });
+            body_start = closing_index + 1;
+        }
+    }
+    let non_empty = lines[body_start..]
+        .iter()
+        .copied()
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    let title_line = non_empty.first().copied().unwrap_or("未命名导入记录");
+    let body_title = non_empty.first().copied().unwrap_or("未命名导入记录");
     let title = if markdown {
-        title_line.trim_start_matches('#').trim()
+        readable_markdown_title(text, Some(&source.title)).unwrap_or_else(|| {
+            frontmatter_title
+                .unwrap_or(body_title)
+                .trim_start_matches('#')
+                .trim()
+                .to_string()
+        })
     } else {
-        title_line
+        body_title.to_string()
     };
+    let summary_index = usize::from(frontmatter_title.is_none());
     let summary = non_empty
-        .get(1)
+        .get(summary_index)
         .copied()
         .unwrap_or_default()
         .trim_start_matches('#')
         .trim();
     CreateRecordInput {
-        title: title.to_string(),
+        title,
+        original_at: None,
         summary: summary.to_string(),
         status: RecordStatus::Normal,
         tags: Vec::new(),
@@ -476,6 +1174,143 @@ fn parse_text_record(text: &str, source: RecordSourceInput, markdown: bool) -> C
         sources: vec![source],
         is_favorite: false,
     }
+}
+
+fn visible_html_text(line: &str) -> String {
+    let mut result = String::new();
+    let mut inside_tag = false;
+    for character in line.chars() {
+        match character {
+            '<' => inside_tag = true,
+            '>' => {
+                inside_tag = false;
+                result.push(' ');
+            }
+            _ if !inside_tag => result.push(character),
+            _ => {}
+        }
+    }
+    result
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn usable_markdown_title(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed.chars().count() <= 100
+        && trimmed.chars().any(char::is_alphanumeric)
+        && !trimmed.starts_with("---")
+        && ![
+            "tags:",
+            "tag:",
+            "aliases:",
+            "cssclasses:",
+            "created:",
+            "updated:",
+            "date:",
+        ]
+        .iter()
+        .any(|prefix| trimmed.to_ascii_lowercase().starts_with(prefix))
+        && !trimmed.eq_ignore_ascii_case("bazi monthly journal")
+        && !trimmed.eq_ignore_ascii_case("restored visual edition")
+        && !trimmed.eq_ignore_ascii_case("visual edition")
+}
+
+fn compact_markdown_title(value: &str) -> Option<String> {
+    let compact = visible_html_text(value)
+        .trim()
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '#' | '>' | '*' | '_' | '`' | '~' | '-')
+        })
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !usable_markdown_title(&compact) {
+        return None;
+    }
+    let mut characters = compact.chars();
+    let title = characters.by_ref().take(60).collect::<String>();
+    Some(if characters.next().is_some() {
+        format!("{title}…")
+    } else {
+        title
+    })
+}
+
+pub(crate) fn readable_markdown_title(
+    text: &str,
+    source_file_name: Option<&str>,
+) -> Option<String> {
+    let lines = text
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .collect::<Vec<_>>();
+    let mut body_start = 0;
+    if lines.first().is_some_and(|line| line.trim() == "---") {
+        if let Some(closing_offset) = lines.iter().skip(1).position(|line| line.trim() == "---") {
+            let closing_index = closing_offset + 1;
+            if let Some(title) = lines[1..closing_index].iter().find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                if !key.trim().eq_ignore_ascii_case("title") {
+                    return None;
+                }
+                let value = value.trim();
+                compact_markdown_title(
+                    value.trim_matches(|character| matches!(character, '\'' | '"')),
+                )
+            }) {
+                return Some(title);
+            }
+            body_start = closing_index + 1;
+        }
+    }
+    let body = &lines[body_start..];
+    if let Some(title) = body.iter().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed.strip_prefix("# ").and_then(compact_markdown_title)
+    }) {
+        return Some(title);
+    }
+    let html_titles = body
+        .iter()
+        .filter(|line| line.contains('<') && line.contains('>'))
+        .filter_map(|line| compact_markdown_title(line))
+        .collect::<Vec<_>>();
+    if let Some(title) = html_titles.iter().find(|title| {
+        title
+            .chars()
+            .any(|character| ('\u{3400}'..='\u{9fff}').contains(&character))
+    }) {
+        return Some(title.clone());
+    }
+    if let Some(title) = html_titles.into_iter().next() {
+        return Some(title);
+    }
+    if let Some(file_name) = source_file_name {
+        if let Some(stem) = Path::new(file_name)
+            .file_stem()
+            .and_then(|value| value.to_str())
+        {
+            if let Some(title) = compact_markdown_title(stem) {
+                if !matches!(
+                    title.to_ascii_lowercase().as_str(),
+                    "note" | "document" | "untitled"
+                ) {
+                    return Some(title);
+                }
+            }
+        }
+    }
+    body.iter().find_map(|line| compact_markdown_title(line))
 }
 
 fn string_value(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
@@ -530,6 +1365,47 @@ fn title_from_chat_messages(object: &serde_json::Map<String, Value>) -> Option<S
                         })
                 })
         })
+}
+
+fn title_from_chatgpt_mapping(object: &serde_json::Map<String, Value>) -> Option<String> {
+    let mapping = object.get("mapping")?.as_object()?;
+    let mut current = object
+        .get("current_node")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| mapping.keys().next().cloned())?;
+    let mut visited = std::collections::HashSet::new();
+    let mut lineage = Vec::new();
+    while visited.insert(current.clone()) {
+        let node = mapping.get(&current)?.as_object()?;
+        lineage.push(node);
+        let Some(parent) = node.get("parent").and_then(Value::as_str) else {
+            break;
+        };
+        current = parent.to_string();
+    }
+    lineage.reverse();
+
+    lineage.into_iter().find_map(|node| {
+        let message = node.get("message")?.as_object()?;
+        let role = message.get("author")?.as_object()?.get("role")?.as_str()?;
+        if role != "user" {
+            return None;
+        }
+        let content = message.get("content")?.as_object()?;
+        if !matches!(
+            content.get("content_type").and_then(Value::as_str),
+            Some("text" | "multimodal_text")
+        ) {
+            return None;
+        }
+        content
+            .get("parts")?
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .find_map(title_from_text)
+    })
 }
 
 fn is_generic_title(title: &str) -> bool {
@@ -685,6 +1561,82 @@ mod tests {
     }
 
     #[test]
+    fn markdown_import_uses_frontmatter_title_and_never_uses_delimiter_as_title() {
+        let source = RecordSourceInput {
+            source_type: "import".to_string(),
+            title: "note.md".to_string(),
+            url: None,
+            local_path: Some("imports/raw/note.md".to_string()),
+            external_id: None,
+        };
+        let with_title = parse_text_record(
+            "---\ntitle: \"清明家族记录\"\ntags: [家族]\n---\n# 正文标题\n正文摘要",
+            source.clone(),
+            true,
+        );
+        assert_eq!(with_title.title, "清明家族记录");
+        assert_eq!(with_title.summary, "正文标题");
+
+        let without_title =
+            parse_text_record("---\ntags: [家族]\n---\n# 清明祭祖\n家族线索", source, true);
+        assert_eq!(without_title.title, "清明祭祖");
+        assert_eq!(without_title.summary, "家族线索");
+
+        let styled_html = parse_text_record(
+            "---\ntags: [领域, 个人, 八字]\n---\n\
+             <div style=\"font-size:13px\">Bazi Monthly Journal · Restored Visual Edition</div>\n\
+             <div style=\"font-size:30px\">052 个人八字丙午年壬辰月</div>\n\
+             ## 2026年4月5日",
+            RecordSourceInput {
+                source_type: "import".to_string(),
+                title: "052 个人八字丙午年壬辰月.md".to_string(),
+                url: None,
+                local_path: Some("imports/raw/styled.md".to_string()),
+                external_id: None,
+            },
+            true,
+        );
+        assert_eq!(styled_html.title, "052 个人八字丙午年壬辰月");
+    }
+
+    #[test]
+    fn invalid_json_is_archived_without_partial_records_and_bom_is_supported() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let connection = database::open_database(&paths.database).expect("database");
+        let invalid = directory.path().join("错误 数据#1.json");
+        fs::write(&invalid, br#"{"title":"incomplete""#).expect("write invalid json");
+
+        let error = prepare_import(&connection, &paths, &invalid)
+            .expect_err("malformed JSON must not create a preview");
+        assert!(matches!(error, AppError::Serialization(_)));
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM records", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("record count"),
+            0
+        );
+        assert_eq!(
+            fs::read_dir(&paths.imports_raw)
+                .expect("archived imports")
+                .count(),
+            1
+        );
+
+        let bom = directory.path().join("中文 BOM.json");
+        fs::write(
+            &bom,
+            b"\xEF\xBB\xBF{\"title\":\"BOM \xE5\xAF\xBC\xE5\x85\xA5\"}",
+        )
+        .expect("write bom json");
+        let preview = prepare_import(&connection, &paths, &bom).expect("prepare bom json");
+        assert_eq!(preview.record_count, 1);
+        assert_eq!(preview.records[0].title, "BOM 导入");
+        assert!(Path::new(&preview.stored_file_path).is_file());
+    }
+
+    #[test]
     fn batch_json_source_text_is_scoped_to_each_item() {
         let source = RecordSourceInput {
             source_type: "import".to_string(),
@@ -754,6 +1706,60 @@ mod tests {
     }
 
     #[test]
+    fn chatgpt_mapping_import_uses_first_user_message_when_title_is_generic() {
+        let source = RecordSourceInput {
+            source_type: "import".to_string(),
+            title: "conversations.json".to_string(),
+            url: None,
+            local_path: Some("imports/raw/conversations.json".to_string()),
+            external_id: None,
+        };
+        let input = serde_json::json!({
+            "title": "Untitled",
+            "current_node": "answer",
+            "create_time": 1700000000.0,
+            "mapping": {
+                "root": {"parent": null, "message": null},
+                "user": {
+                    "parent": "root",
+                    "message": {
+                        "author": {"role": "user"},
+                        "content": {
+                            "content_type": "multimodal_text",
+                            "parts": [
+                                {"content_type": "image_asset_pointer", "asset_pointer": "sediment://file_1"},
+                                "NotebookLM 里多余邮箱无法删除，应该怎么处理？"
+                            ]
+                        }
+                    }
+                },
+                "answer": {
+                    "parent": "user",
+                    "message": {
+                        "author": {"role": "assistant"},
+                        "content": {"content_type": "text", "parts": ["实际回答"]}
+                    }
+                }
+            }
+        })
+        .to_string();
+        let mut warnings = Vec::new();
+        let records = parse_json_records(&input, source, &mut warnings)
+            .expect("ChatGPT mapping JSON should parse");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].title,
+            "NotebookLM 里多余邮箱无法删除，应该怎么处理？"
+        );
+        assert!(records[0].source_text.contains("\"mapping\""));
+        assert_eq!(
+            records[0].original_at.as_deref(),
+            Some("2023-11-14T22:13:20+00:00")
+        );
+    }
+
+    #[test]
     fn json_import_archives_previews_and_writes_records() {
         let directory = tempdir().expect("tempdir");
         let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
@@ -776,11 +1782,21 @@ mod tests {
                 job_id: preview.job_id,
                 records: preview.records,
                 allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({}),
             },
         )
         .expect("confirm");
         assert_eq!(result.status, "completed");
-        assert_eq!(result.imported_records[0].title, "导入验收");
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(
+            result
+                .first_imported_record
+                .as_ref()
+                .map(|record| record.title.as_str()),
+            Some("导入验收")
+        );
     }
 
     #[test]
@@ -798,20 +1814,220 @@ mod tests {
                 job_id: first.job_id,
                 records: first.records,
                 allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({}),
             },
         )
         .expect("first import");
         let second = prepare_import(&connection, &paths, &source).expect("second preview");
         assert!(second.duplicate);
+        assert!(second
+            .duplicate_candidates
+            .iter()
+            .any(|candidate| candidate.reason == "标题相同"));
         let error = confirm_import(
             &mut connection,
             &ConfirmImportInput {
                 job_id: second.job_id,
                 records: second.records,
                 allow_duplicate: false,
+                duplicate_strategy: "skip".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({}),
             },
         )
-        .expect_err("duplicate must be blocked");
-        assert!(matches!(error, AppError::Conflict(_)));
+        .expect("duplicate should be handled by skip strategy");
+        assert_eq!(error.status, "cancelled");
+        assert_eq!(error.skipped_count, 1);
+    }
+
+    #[test]
+    fn skip_strategy_only_skips_record_level_duplicates() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let first_file = directory.path().join("first.json");
+        fs::write(&first_file, r#"{"title":"已有记录"}"#).expect("write first");
+        let first = prepare_import(&connection, &paths, &first_file).expect("first preview");
+        confirm_import(
+            &mut connection,
+            &ConfirmImportInput {
+                job_id: first.job_id,
+                records: first.records,
+                allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({"title":"title"}),
+            },
+        )
+        .expect("first import");
+
+        let batch_file = directory.path().join("batch.json");
+        fs::write(
+            &batch_file,
+            r#"[{"title":"已有记录"},{"title":"全新记录"}]"#,
+        )
+        .expect("write batch");
+        let batch = prepare_import(&connection, &paths, &batch_file).expect("batch preview");
+        assert!(batch.duplicate);
+        let result = confirm_import(
+            &mut connection,
+            &ConfirmImportInput {
+                job_id: batch.job_id,
+                records: batch.records,
+                allow_duplicate: false,
+                duplicate_strategy: "skip".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({"title":"title"}),
+            },
+        )
+        .expect("import unique item");
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.skipped_count, 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM records", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("record count"),
+            2
+        );
+    }
+
+    #[test]
+    fn large_json_preview_is_bounded_but_confirmation_reads_full_archive() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let source = directory.path().join("large.json");
+        let items = (0..40)
+            .map(|index| {
+                serde_json::json!({
+                    "name": format!("大文件记录 {index}"),
+                    "body": format!("完整正文-{index}-{}", "长内容".repeat(20_000)),
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            &source,
+            serde_json::to_vec(&serde_json::json!({ "items": items })).expect("serialize source"),
+        )
+        .expect("write source");
+
+        let preview = prepare_import(&connection, &paths, &source).expect("prepare large import");
+        assert_eq!(preview.record_count, 1);
+        assert_eq!(preview.records.len(), 1);
+        assert!(preview.records[0].source_text.len() < 100_000);
+        assert_eq!(
+            preview
+                .boundary_options
+                .iter()
+                .find(|option| option.field == "items")
+                .map(|option| option.record_count),
+            Some(40)
+        );
+
+        let result = confirm_import(
+            &mut connection,
+            &ConfirmImportInput {
+                job_id: preview.job_id,
+                records: preview.records,
+                allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({
+                    "__boundary": "items",
+                    "title": "name",
+                    "summary": "",
+                }),
+            },
+        )
+        .expect("confirm full archive");
+        assert_eq!(result.imported_count, 40);
+        assert!(serde_json::to_vec(&result).expect("serialize result").len() < 1_000);
+        let last_source_length = connection
+            .query_row(
+                "SELECT length(source_text) FROM records WHERE title = '大文件记录 39'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("full source text");
+        assert!(last_source_length > 50_000);
+        let largest_audit_item = connection
+            .query_row(
+                "SELECT COALESCE(MAX(length(raw_json)), 0) FROM import_job_items",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("bounded audit row");
+        assert!(largest_audit_item < 1_000);
+    }
+
+    #[test]
+    fn duplicate_can_append_version_or_be_cancelled_with_audit_state() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let source = directory.path().join("version.json");
+        fs::write(
+            &source,
+            r#"{"title":"重复版本记录","currentJudgment":"第一版"}"#,
+        )
+        .expect("write source");
+        let first = prepare_import(&connection, &paths, &source).expect("first preview");
+        let first_result = confirm_import(
+            &mut connection,
+            &ConfirmImportInput {
+                job_id: first.job_id,
+                records: first.records,
+                allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({"title":"title"}),
+            },
+        )
+        .expect("first import");
+        let record_id = first_result
+            .first_imported_record
+            .as_ref()
+            .expect("first imported record")
+            .id;
+
+        fs::write(
+            &source,
+            r#"{"title":"重复版本记录","currentJudgment":"第二版"}"#,
+        )
+        .expect("update source");
+        let second = prepare_import(&connection, &paths, &source).expect("second preview");
+        let second_result = confirm_import(
+            &mut connection,
+            &ConfirmImportInput {
+                job_id: second.job_id,
+                records: second.records,
+                allow_duplicate: false,
+                duplicate_strategy: "version".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({"currentJudgment":"currentJudgment"}),
+            },
+        )
+        .expect("append imported version");
+        assert_eq!(
+            second_result
+                .first_imported_record
+                .as_ref()
+                .expect("versioned record")
+                .id,
+            record_id
+        );
+        let updated = database::get_record(&connection, record_id).expect("updated record");
+        assert_eq!(updated.current_judgment, "第二版");
+        assert_eq!(updated.version_count, 2);
+
+        let cancelled = prepare_import(&connection, &paths, &source).expect("cancel preview");
+        cancel_import(&connection, &cancelled.job_id).expect("cancel import");
+        let jobs = list_import_jobs(&connection).expect("list jobs");
+        assert!(jobs
+            .iter()
+            .any(|job| job.id == cancelled.job_id && job.status == "cancelled"));
     }
 }

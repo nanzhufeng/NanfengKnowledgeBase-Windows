@@ -6,3 +6,6 @@ dist/
 /design-qa-*.png
 .DS_Store
 .runtime-qa/
+.release-build/
+test-results/
+playwright-report/

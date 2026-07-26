@@ -1,29 +1,36 @@
+use std::net::TcpListener;
 use std::sync::{Mutex, MutexGuard};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tauri::State;
 
 use crate::database;
 use crate::error::{AppError, AppResult, CommandError};
-use crate::importer::{ConfirmImportInput, ImportPreview, ImportResult};
+use crate::importer::{ConfirmImportInput, ImportJobSummary, ImportPreview, ImportResult};
 use crate::models::{
-    AppendVersionInput, CreateRecordInput, CreateTagInput, DataLocation, FavoriteUpdate,
-    IntelligenceRecord, PermanentDeleteInput, RecordQuery, RecordVersion, RenameTagInput,
-    RestoreVersionInput, TagItem, UpdateRecordInput,
+    AppendVersionInput, AttachmentItem, CreateRecordInput, CreateTagInput, DataLocation,
+    DeleteVersionInput, FavoriteUpdate, IntelligenceRecord, PatchRecordInput, PermanentDeleteInput,
+    RecordMutation, RecordQuery, RecordSummary, RecordVersion, RenameTagInput, RestoreVersionInput,
+    StorageStats, TagItem, UpdateJudgmentInput, UpdateRecordInput, UpdateStatusInput,
 };
 use crate::paths::AppPaths;
-use crate::transfer::{ExportResult, RestoreResult};
+use crate::transfer::{
+    BackupPreview, ExportRecordsInput, ExportResult, PortableBackupPreview, PortableBackupResult,
+    PortableRestoreResult, RestoreResult,
+};
 
 pub struct AppState {
     connection: Mutex<Connection>,
     paths: AppPaths,
+    _instance_guard: TcpListener,
 }
 
 impl AppState {
-    pub fn new(connection: Connection, paths: AppPaths) -> Self {
+    pub fn new(connection: Connection, paths: AppPaths, instance_guard: TcpListener) -> Self {
         Self {
             connection: Mutex::new(connection),
             paths,
+            _instance_guard: instance_guard,
         }
     }
 
@@ -44,6 +51,12 @@ pub fn get_data_location(state: State<'_, AppState>) -> DataLocation {
 }
 
 #[tauri::command]
+pub fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, CommandError> {
+    let connection = command(state.connection())?;
+    command(state.paths.storage_stats(&connection))
+}
+
+#[tauri::command]
 pub fn open_data_directory(state: State<'_, AppState>) -> Result<(), CommandError> {
     command(
         open::that(&state.paths.root)
@@ -58,6 +71,15 @@ pub fn list_records(
 ) -> Result<Vec<IntelligenceRecord>, CommandError> {
     let connection = command(state.connection())?;
     command(database::list_records(&connection, &query))
+}
+
+#[tauri::command]
+pub fn list_record_summaries(
+    state: State<'_, AppState>,
+    query: RecordQuery,
+) -> Result<Vec<RecordSummary>, CommandError> {
+    let connection = command(state.connection())?;
+    command(database::list_record_summaries(&connection, &query))
 }
 
 #[tauri::command]
@@ -89,6 +111,16 @@ pub fn update_record(
 }
 
 #[tauri::command]
+pub fn patch_record(
+    state: State<'_, AppState>,
+    record_id: i64,
+    input: PatchRecordInput,
+) -> Result<RecordMutation, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(database::patch_record(&mut connection, record_id, &input))
+}
+
+#[tauri::command]
 pub fn set_favorite(
     state: State<'_, AppState>,
     record_id: i64,
@@ -102,6 +134,32 @@ pub fn set_favorite(
         is_favorite
     );
     Ok(update)
+}
+
+#[tauri::command]
+pub fn update_current_judgment(
+    state: State<'_, AppState>,
+    input: UpdateJudgmentInput,
+) -> Result<RecordMutation, CommandError> {
+    let connection = command(state.connection())?;
+    command(database::update_current_judgment(
+        &connection,
+        input.record_id,
+        &input.current_judgment,
+    ))
+}
+
+#[tauri::command]
+pub fn update_status(
+    state: State<'_, AppState>,
+    input: UpdateStatusInput,
+) -> Result<RecordMutation, CommandError> {
+    let connection = command(state.connection())?;
+    command(database::update_status(
+        &connection,
+        input.record_id,
+        &input.status,
+    ))
 }
 
 #[tauri::command]
@@ -147,6 +205,15 @@ pub fn list_versions(
 ) -> Result<Vec<RecordVersion>, CommandError> {
     let connection = command(state.connection())?;
     command(database::list_versions(&connection, record_id))
+}
+
+#[tauri::command]
+pub fn delete_version(
+    state: State<'_, AppState>,
+    input: DeleteVersionInput,
+) -> Result<(), CommandError> {
+    let connection = command(state.connection())?;
+    command(database::delete_version(&connection, &input))
 }
 
 #[tauri::command]
@@ -223,6 +290,18 @@ pub fn confirm_import(
 }
 
 #[tauri::command]
+pub fn cancel_import(state: State<'_, AppState>, job_id: String) -> Result<(), CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::importer::cancel_import(&connection, &job_id))
+}
+
+#[tauri::command]
+pub fn list_import_jobs(state: State<'_, AppState>) -> Result<Vec<ImportJobSummary>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::importer::list_import_jobs(&connection))
+}
+
+#[tauri::command]
 pub fn export_record(
     state: State<'_, AppState>,
     record_id: i64,
@@ -238,9 +317,48 @@ pub fn export_record(
 }
 
 #[tauri::command]
+pub fn write_docx_export(
+    state: State<'_, AppState>,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<ExportResult, CommandError> {
+    command(crate::transfer::write_docx_export(
+        &state.paths,
+        &file_name,
+        &bytes,
+    ))
+}
+
+#[tauri::command]
+pub fn write_markdown_export(
+    state: State<'_, AppState>,
+    file_name: String,
+    content: String,
+) -> Result<ExportResult, CommandError> {
+    command(crate::transfer::write_markdown_export(
+        &state.paths,
+        &file_name,
+        &content,
+    ))
+}
+
+#[tauri::command]
 pub fn export_all_json(state: State<'_, AppState>) -> Result<ExportResult, CommandError> {
     let connection = command(state.connection())?;
     command(crate::transfer::export_all_json(&connection, &state.paths))
+}
+
+#[tauri::command]
+pub fn export_records(
+    state: State<'_, AppState>,
+    input: ExportRecordsInput,
+) -> Result<ExportResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::transfer::export_records(
+        &connection,
+        &state.paths,
+        &input,
+    ))
 }
 
 #[tauri::command]
@@ -266,6 +384,120 @@ pub fn restore_backup(
 }
 
 #[tauri::command]
+pub fn inspect_backup(source_path: String) -> Result<BackupPreview, CommandError> {
+    command(crate::transfer::inspect_backup(source_path))
+}
+
+#[tauri::command]
+pub fn create_portable_backup(
+    state: State<'_, AppState>,
+    preferences_json: String,
+) -> Result<PortableBackupResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::transfer::create_portable_backup(
+        &connection,
+        &state.paths,
+        &preferences_json,
+        "南枫情报台_完整迁移备份",
+    ))
+}
+
+#[tauri::command]
+pub fn inspect_portable_backup(source_path: String) -> Result<PortableBackupPreview, CommandError> {
+    command(crate::transfer::inspect_portable_backup(source_path))
+}
+
+#[tauri::command]
+pub fn restore_portable_backup(
+    state: State<'_, AppState>,
+    source_path: String,
+    current_preferences_json: String,
+) -> Result<PortableRestoreResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::transfer::restore_portable_backup(
+        &mut connection,
+        &state.paths,
+        source_path,
+        &current_preferences_json,
+    ))
+}
+
+#[tauri::command]
 pub fn open_export_directory(state: State<'_, AppState>) -> Result<(), CommandError> {
     command(crate::transfer::open_export_directory(&state.paths))
+}
+
+#[tauri::command]
+pub fn list_attachments(
+    state: State<'_, AppState>,
+    record_id: i64,
+) -> Result<Vec<AttachmentItem>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::list_attachments(&connection, record_id))
+}
+
+#[tauri::command]
+pub async fn add_attachment(
+    state: State<'_, AppState>,
+    record_id: i64,
+    source_path: String,
+) -> Result<AttachmentItem, CommandError> {
+    {
+        let connection = command(state.connection())?;
+        let exists = command(
+            connection
+                .query_row("SELECT 1 FROM records WHERE id = ?1", [record_id], |_| {
+                    Ok(())
+                })
+                .optional()
+                .map_err(AppError::from),
+        )?
+        .is_some();
+        if !exists {
+            return Err(CommandError::from(AppError::NotFound(
+                "记录不存在".to_string(),
+            )));
+        }
+    }
+
+    let paths = state.paths.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        crate::attachments::prepare_attachment(&paths, record_id, source_path)
+    })
+    .await
+    .map_err(|error| {
+        CommandError::from(AppError::Conflict(format!(
+            "附件后台归档任务异常结束：{error}"
+        )))
+    })?
+    .map_err(CommandError::from)?;
+
+    let connection = command(state.connection())?;
+    command(crate::attachments::commit_attachment(
+        &connection,
+        record_id,
+        prepared,
+    ))
+}
+
+#[tauri::command]
+pub fn open_attachment(state: State<'_, AppState>, attachment_id: i64) -> Result<(), CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::open_attachment(
+        &connection,
+        attachment_id,
+    ))
+}
+
+#[tauri::command]
+pub fn remove_attachment(
+    state: State<'_, AppState>,
+    attachment_id: i64,
+) -> Result<(), CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::attachments::remove_attachment(
+        &mut connection,
+        &state.paths,
+        attachment_id,
+    ))
 }

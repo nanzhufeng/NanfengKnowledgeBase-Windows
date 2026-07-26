@@ -1,3 +1,4 @@
+mod attachments;
 mod commands;
 mod database;
 mod error;
@@ -8,6 +9,7 @@ mod transfer;
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::net::TcpListener;
 use std::path::PathBuf;
 
 use commands::AppState;
@@ -18,8 +20,19 @@ use tauri_plugin_log::{Target, TargetKind};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let instance_guard = match TcpListener::bind("127.0.0.1:47633") {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("南枫情报台已经在运行，本次重复启动已安全退出：{error}");
+                    std::process::exit(0);
+                }
+            };
+            instance_guard.set_nonblocking(true)?;
             let paths = paths::AppPaths::from_app(app.handle())?;
+            app.asset_protocol_scope()
+                .allow_directory(&paths.attachments, true)?;
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .clear_targets()
@@ -34,22 +47,28 @@ pub fn run() {
             log::info!("应用启动，数据目录：{}", paths.root.display());
 
             let connection = database::open_database(&paths.database)?;
-            app.manage(AppState::new(connection, paths));
+            app.manage(AppState::new(connection, paths, instance_guard));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_data_location,
+            commands::get_storage_stats,
             commands::open_data_directory,
             commands::list_records,
+            commands::list_record_summaries,
             commands::get_record,
             commands::create_record,
             commands::update_record,
+            commands::patch_record,
             commands::set_favorite,
+            commands::update_current_judgment,
+            commands::update_status,
             commands::move_to_trash,
             commands::restore_record,
             commands::permanently_delete_record,
             commands::append_version,
             commands::list_versions,
+            commands::delete_version,
             commands::restore_version,
             commands::list_tags,
             commands::create_tag,
@@ -59,11 +78,24 @@ pub fn run() {
             commands::run_integrity_check,
             commands::prepare_import,
             commands::confirm_import,
+            commands::cancel_import,
+            commands::list_import_jobs,
             commands::export_record,
+            commands::write_docx_export,
+            commands::write_markdown_export,
             commands::export_all_json,
+            commands::export_records,
             commands::create_backup,
             commands::restore_backup,
+            commands::inspect_backup,
+            commands::create_portable_backup,
+            commands::inspect_portable_backup,
+            commands::restore_portable_backup,
             commands::open_export_directory,
+            commands::list_attachments,
+            commands::add_attachment,
+            commands::open_attachment,
+            commands::remove_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("南枫情报台启动失败");

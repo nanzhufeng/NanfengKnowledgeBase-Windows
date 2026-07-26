@@ -51,17 +51,15 @@ describe("BrowserRecordRepository contract", () => {
     expect(await repository.listRecords()).toHaveLength(1);
   });
 
-  it("requires trash state and exact title for permanent deletion", async () => {
+  it("requires trash state but uses a simple confirmation for permanent deletion", async () => {
     const repository = new BrowserRecordRepository({ persist: false, empty: true });
     const created = await repository.createRecord({ title: "需要确认删除" });
 
-    await expect(repository.permanentlyDeleteRecord(created.id, created.title))
+    await expect(repository.permanentlyDeleteRecord(created.id))
       .rejects.toMatchObject({ code: "conflict" } satisfies Partial<RepositoryError>);
     await repository.moveToTrash(created.id);
-    await expect(repository.permanentlyDeleteRecord(created.id, "错误标题"))
-      .rejects.toMatchObject({ code: "validation_error" } satisfies Partial<RepositoryError>);
 
-    await repository.permanentlyDeleteRecord(created.id, created.title);
+    await repository.permanentlyDeleteRecord(created.id);
     await expect(repository.getRecord(created.id))
       .rejects.toMatchObject({ code: "not_found" } satisfies Partial<RepositoryError>);
   });
