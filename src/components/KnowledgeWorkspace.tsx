@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -34,6 +34,7 @@ import {
 import MarkdownContent from "./MarkdownContent";
 
 type Mode = "inbox" | "topics" | "organize";
+const INITIAL_INBOX_LIMIT = 120;
 
 function topicPath(topic: KnowledgeTopicRow, topics: KnowledgeTopicRow[]): string[] {
   const result = [topic.name];
@@ -89,6 +90,9 @@ export function KnowledgeWorkspace({
 }) {
   const repository = useMemo(() => new KnowledgeRepository(), []);
   const [inbox, setInbox] = useState<KnowledgeInboxItem[]>([]);
+  const [inboxLimit, setInboxLimit] = useState(INITIAL_INBOX_LIMIT);
+  const [selectedOriginalText, setSelectedOriginalText] = useState<string | null>(null);
+  const sourceTextRequestSequence = useRef(0);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>([]);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -167,7 +171,7 @@ export function KnowledgeWorkspace({
       nextEntities,
       nextRules,
     ] = await Promise.all([
-      repository.listInbox(),
+      repository.listInbox(inboxLimit),
       repository.listDomains(),
       repository.listTopics(),
       repository.getPersonalCatalogProposal(),
@@ -214,6 +218,27 @@ export function KnowledgeWorkspace({
       })
       .catch(() => setSuggestions([]));
   }, [repository, selectedId]);
+
+  useEffect(() => {
+    const sequence = ++sourceTextRequestSequence.current;
+    if (!selectedId || mode !== "inbox") {
+      setSelectedOriginalText(null);
+      return;
+    }
+    setSelectedOriginalText(null);
+    void repository.getSourceOriginalText(selectedId)
+      .then((originalText) => {
+        if (sequence === sourceTextRequestSequence.current) {
+          setSelectedOriginalText(originalText);
+        }
+      })
+      .catch((error) => {
+        if (sequence === sourceTextRequestSequence.current) {
+          setSelectedOriginalText("");
+          onNotify(error instanceof Error ? error.message : "来源正文读取失败");
+        }
+      });
+  }, [mode, repository, selectedId]);
 
   useEffect(() => {
     if (!browserTopicId || mode !== "topics") {
@@ -1490,7 +1515,7 @@ export function KnowledgeWorkspace({
   return (
     <main className="knowledge-page knowledge-inbox-page">
       <header className="knowledge-page-header">
-        <div><span>来源先归档，再分类</span><h1>收录箱</h1><p>{inbox.length} 条来源等待确认；分类失败不会丢失来源。</p></div>
+        <div><span>来源先归档，再分类</span><h1>收录箱</h1><p>已加载 {inbox.length} 条待确认来源；分类失败不会丢失来源。</p></div>
         <Inbox size={28} />
       </header>
       <section className="knowledge-inbox-layout">
@@ -1503,6 +1528,26 @@ export function KnowledgeWorkspace({
               <ChevronRight size={16} />
             </button>
           ))}
+          {inbox.length >= inboxLimit ? (
+            <button
+              className="knowledge-inbox-load-more"
+              disabled={busy}
+              onClick={async () => {
+                const nextLimit = inboxLimit + INITIAL_INBOX_LIMIT;
+                setBusy(true);
+                try {
+                  setInbox(await repository.listInbox(nextLimit));
+                  setInboxLimit(nextLimit);
+                } catch (error) {
+                  onNotify(error instanceof Error ? error.message : "加载更多来源失败");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              加载更多来源
+            </button>
+          ) : null}
           {!inbox.length ? <p className="knowledge-empty">收录箱已清空。新导入资料会自动进入这里。</p> : null}
         </div>
         <div className="knowledge-card knowledge-inbox-detail">
@@ -1512,7 +1557,11 @@ export function KnowledgeWorkspace({
                 <div><span>{selected.sourceType}</span><h2>{selected.title}</h2></div>
                 <button onClick={() => void generateSuggestions()} disabled={busy || !topics.length}><Sparkles size={16} />{busy ? "计算中…" : "生成分类建议"}</button>
               </div>
-              <div className="knowledge-source-preview"><MarkdownContent value={selected.originalText || "来源正文为空"} /></div>
+              <div className="knowledge-source-preview">
+                {selectedOriginalText === null
+                  ? <div className="page-loading"><span className="save-spinner" />正在读取当前来源正文…</div>
+                  : <MarkdownContent value={selectedOriginalText || "来源正文为空"} />}
+              </div>
               <div className="knowledge-suggestion-panel">
                 <h3>主题归属</h3>
                 {suggestions.filter((item) => item.status === "pending").map((suggestion) => {

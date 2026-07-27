@@ -3564,7 +3564,8 @@ export function App() {
 
   useEffect(() => {
     const sequence = ++detailRequestSequence.current;
-    if (selectedId === null) {
+    const recordPageActive = ["records", "favorites", "tracking", "updates"].includes(page);
+    if (selectedId === null || !recordPageActive) {
       setSelectedRecord(null);
       return;
     }
@@ -3590,10 +3591,11 @@ export function App() {
           notify(error instanceof Error ? error.message : "读取记录详情失败");
         }
       });
-  }, [repository, selectedId]);
+  }, [page, repository, selectedId]);
 
   useEffect(() => {
-    if (selectedId === null) {
+    const recordPageActive = ["records", "favorites", "tracking", "updates"].includes(page);
+    if (selectedId === null || !recordPageActive) {
       setRecordVersions([]);
       setAttachments([]);
       return;
@@ -3607,7 +3609,7 @@ export function App() {
         setAttachments(recordAttachments);
       })
       .catch((error) => notify(error instanceof Error ? error.message : "读取历史版本或附件失败"));
-  }, [repository, selectedId]);
+  }, [page, repository, selectedId]);
 
   useEffect(() => {
     if (!pendingSave) return;

@@ -1,10 +1,59 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 import { KnowledgeRepository } from "./knowledgeRepository";
+
+describe("KnowledgeRepository inbox performance contract", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads lightweight rows first and fetches only the selected source body", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_knowledge_inbox") {
+        return Promise.resolve([{
+          id: 42,
+          publicId: "source-42",
+          legacyRecordId: 9,
+          sourceType: "ai_conversation",
+          title: "大型来源",
+          platform: "ChatGPT",
+          originalAt: null,
+          importedAt: "2026-07-27T10:00:00+08:00",
+          readState: "unread",
+          organizationState: "inbox",
+          duplicateState: "unique",
+          freshnessState: "current",
+          pendingSuggestionCount: 0,
+        }]);
+      }
+      if (command === "get_knowledge_source_original_text") {
+        return Promise.resolve("完整正文");
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const repository = new KnowledgeRepository();
+
+    const inbox = await repository.listInbox();
+    expect(invoke).toHaveBeenNthCalledWith(1, "list_knowledge_inbox", { limit: 120 });
+    expect(inbox[0]).not.toHaveProperty("originalText");
+
+    await expect(repository.getSourceOriginalText(42)).resolves.toBe("完整正文");
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      "get_knowledge_source_original_text",
+      { sourceItemId: 42 },
+    );
+  });
+});
 
 describe("KnowledgeRepository classification context", () => {
   beforeEach(() => {

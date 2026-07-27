@@ -3778,6 +3778,16 @@ textarea:focus-visible,
   box-shadow: 0 9px 15px -13px rgba(223, 100, 21, .9);
 }
 
+.knowledge-inbox-list > button.knowledge-inbox-load-more {
+  display: block;
+  margin-top: 8px;
+  border-color: #d7deea;
+  background: #f6f8fb;
+  color: #365b87;
+  text-align: center;
+  font-weight: 700;
+}
+
 .knowledge-inbox-list strong {
   align-self: center;
   min-width: 0;

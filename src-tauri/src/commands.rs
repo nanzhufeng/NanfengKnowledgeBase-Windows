@@ -81,6 +81,18 @@ pub fn list_knowledge_inbox(
 }
 
 #[tauri::command]
+pub fn get_knowledge_source_original_text(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+) -> Result<String, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::get_source_original_text(
+        &connection,
+        source_item_id,
+    ))
+}
+
+#[tauri::command]
 pub fn list_knowledge_domains(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::knowledge::repository::KnowledgeDomainRow>, CommandError> {

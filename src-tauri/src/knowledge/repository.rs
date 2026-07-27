@@ -19,7 +19,6 @@ pub struct KnowledgeInboxItem {
     pub source_type: String,
     pub title: String,
     pub platform: String,
-    pub original_text: String,
     pub original_at: Option<String>,
     pub imported_at: String,
     pub read_state: String,
@@ -836,7 +835,7 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
     let limit = limit.clamp(1, 2_000) as i64;
     let mut statement = connection.prepare(
         "SELECT source.id, source.public_id, source.legacy_record_id, source.source_type,
-                source.title, source.platform, source.original_text, source.original_at,
+                source.title, source.platform, source.original_at,
                 source.imported_at, source.read_state, source.organization_state,
                 source.duplicate_state, source.freshness_state,
                 COUNT(suggestion.id)
@@ -856,17 +855,29 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
             source_type: row.get(3)?,
             title: row.get(4)?,
             platform: row.get(5)?,
-            original_text: row.get(6)?,
-            original_at: row.get(7)?,
-            imported_at: row.get(8)?,
-            read_state: row.get(9)?,
-            organization_state: row.get(10)?,
-            duplicate_state: row.get(11)?,
-            freshness_state: row.get(12)?,
-            pending_suggestion_count: row.get(13)?,
+            original_at: row.get(6)?,
+            imported_at: row.get(7)?,
+            read_state: row.get(8)?,
+            organization_state: row.get(9)?,
+            duplicate_state: row.get(10)?,
+            freshness_state: row.get(11)?,
+            pending_suggestion_count: row.get(12)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn get_source_original_text(connection: &Connection, source_item_id: i64) -> AppResult<String> {
+    connection
+        .query_row(
+            "SELECT original_text
+             FROM source_items
+             WHERE id = ?1 AND status = 'active'",
+            [source_item_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("来源不存在或已停用".to_string()))
 }
 
 pub fn list_domains(connection: &Connection) -> AppResult<Vec<KnowledgeDomainRow>> {
@@ -4266,6 +4277,43 @@ mod tests {
             assert_eq!(topic.depth, depth);
             parent = Some(topic.id);
         }
+    }
+
+    #[test]
+    fn inbox_list_is_lightweight_and_selected_source_text_is_lossless() {
+        let mut connection = database::open_memory_database().expect("database");
+        let original_text = format!("按需读取正文标记-{}", "长正文".repeat(200_000));
+        let record = database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "大型来源".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: original_text.clone(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("record");
+        sync_legacy_record(&mut connection, record.id).expect("sync");
+
+        let inbox = list_inbox(&connection, 20).expect("inbox");
+        assert_eq!(inbox.len(), 1);
+        let serialized = serde_json::to_string(&inbox).expect("serialize inbox");
+        assert!(!serialized.contains("按需读取正文标记"));
+        assert!(serialized.len() < 2_000);
+        assert_eq!(
+            get_source_original_text(&connection, inbox[0].id).expect("source text"),
+            original_text
+        );
     }
 
     #[test]

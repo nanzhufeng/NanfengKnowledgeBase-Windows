@@ -13,7 +13,6 @@ const inboxItemSchema = z.object({
   sourceType: z.string(),
   title: z.string(),
   platform: z.string(),
-  originalText: z.string(),
   originalAt: z.string().nullable(),
   importedAt: z.string(),
   readState: z.string(),
@@ -444,9 +443,16 @@ export class KnowledgeRepository {
     return "__TAURI_INTERNALS__" in window;
   }
 
-  async listInbox(limit = 500): Promise<KnowledgeInboxItem[]> {
+  async listInbox(limit = 120): Promise<KnowledgeInboxItem[]> {
     if (!this.desktopAvailable) return [];
     return z.array(inboxItemSchema).parse(await invoke("list_knowledge_inbox", { limit }));
+  }
+
+  async getSourceOriginalText(sourceItemId: number): Promise<string> {
+    if (!this.desktopAvailable) return "";
+    return z.string().parse(
+      await invoke("get_knowledge_source_original_text", { sourceItemId }),
+    );
   }
 
   async listDomains(): Promise<KnowledgeDomainRow[]> {

@@ -58,6 +58,7 @@ pub fn run() {
             commands::get_storage_stats,
             commands::open_data_directory,
             commands::list_knowledge_inbox,
+            commands::get_knowledge_source_original_text,
             commands::list_knowledge_domains,
             commands::list_knowledge_topics,
             commands::get_personal_topic_catalog_proposal,
