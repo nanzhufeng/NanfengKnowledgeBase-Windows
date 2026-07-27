@@ -153,6 +153,7 @@ const personalCatalogApplyResultSchema = z.object({
   createdAliases: z.number().int().nonnegative(),
   createdEntities: z.number().int().nonnegative(),
   createdRules: z.number().int().nonnegative(),
+  deletedRules: z.number().int().nonnegative(),
 });
 
 const topicAliasRowSchema = z.object({

@@ -89,6 +89,7 @@ test("收录箱仅滚动左侧列表并使用统一正文卡片", async ({ page 
               createdAliases: 0,
               createdEntities: 0,
               createdRules: 0,
+              deletedRules: 0,
             };
           }
           if ([

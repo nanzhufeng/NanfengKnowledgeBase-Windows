@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-pub const PERSONAL_CATALOG_VERSION: &str = "nanzhufeng-personal-catalog-v5";
+pub const PERSONAL_CATALOG_VERSION: &str = "nanzhufeng-personal-catalog-v6";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -39,8 +39,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
     PersonalCatalogProposal {
         version: PERSONAL_CATALOG_VERSION.to_string(),
         status: "proposal".to_string(),
-        title: "南烛枫个人主题目录 v5".to_string(),
-        note: "按正式库 901 条来源的完整分布重构：补齐公司行业、券商服务、能源材料、AI 产品与安全、效率工具、影视 AI、信息图、摄影、设备、沟通、新闻和体育等主题。分类以标题和正文核心段的主体为先，长正文中的偶然词不再主导；升级只补充目录并停用旧版宽泛规则，不覆盖原文、已有归类或用户自建规则。".to_string(),
+        title: "南烛枫个人主题目录 v6".to_string(),
+        note: "按正式库 901 条来源逐条生成准确性矩阵：分类改为标题主体优先，正文实体只作组合佐证；补齐证券账户、支付通信、模型额度、影视 AI、设备订阅、职业教育等可复用概念边界。升级只补充目录并停用旧版宽泛规则，不覆盖原文、已有归类或用户自建规则。".to_string(),
         domains: vec![
             domain("investment", "投资研究", "公司、行业、资产与投资判断"),
             domain("ai-software", "AI 与软件", "模型、Agent、软件开发与知识工作流"),
@@ -79,6 +79,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "基金",
                     "主力资金",
                     "大盘",
+                    "宽基指数", "QDII 定投", "基金年费率", "基金费率对比",
                 ],
             ),
             topic(
@@ -89,7 +90,10 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 "算力、数据中心、云厂商与产业链",
                 &["AI 算力", "数据中心产业链"],
                 &["英伟达", "NVIDIA", "数据中心"],
-                &["云端算力集群", "训练集群", "推理集群", "数据中心电力"],
+                &[
+                    "云端算力集群", "训练集群", "推理集群", "数据中心电力",
+                    "AI 基建投资框架", "AI 基础设施投资", "算力基础设施",
+                ],
             ),
             topic(
                 "investment-ai-capex",
@@ -117,6 +121,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "全球股市",
                     "纳指 ETF",
                     "美股", "港股", "纳斯达克",
+                    "VIX 恐慌指数", "全球市场波动", "海外股票投资",
+                    "微软股价", "微软股市", "海外科技股",
                 ],
             ),
             topic(
@@ -139,6 +145,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "内存价格",
                     "存储涨价",
                     "美光", "存储超级周期", "Cerebras",
+                    "光模块", "国产半导体", "Rubin 架构", "GPU 适配", "Rubin",
+                    "英特尔投资", "Intel 投资",
                     "谷歌 AI 内斗", "OpenAI 做咨询", "机器人数据荒", "大芯片 IPO",
                 ],
             ),
@@ -158,6 +166,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "经济周期",
                     "资金流动",
                     "经济", "货币",
+                    "中国资产转型", "经济结构转型", "宏观资产转型",
                 ],
             ),
             topic(
@@ -205,6 +214,13 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "避险值",
                     "李录演讲",
                     "财经网红付费圈子",
+                    "投资框架自检", "个股恐慌", "交易纪律", "交易者体系",
+                    "DCF 直觉", "投资哲学", "市值误区", "极简策略体系",
+                    "定投风险", "DRIP", "价值判断", "投资管理平台",
+                    "交易者分类", "体系匹配纪律", "市值与投资",
+                    "付费直播内容", "直播风险评估", "投资人物观点",
+                    "每周订阅内容", "加仓提醒", "孙宇晨观点",
+                    "孙宇晨的主要观点", "产业天花板估值方法", "股息科普",
                 ],
             ),
             topic(
@@ -233,6 +249,13 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "华为市场表现",
                     "比亚迪工厂",
                     "刘强东徐新对赌协议", "对赌协议",
+                    "安全边际", "债务风险", "公司组织结构", "公司现金流模板",
+                    "利润转化效率", "股息价值", "股东盈利", "资源型公司",
+                    "行业龙头", "公司下跌原因", "公司反转前景",
+                    "股票下跌原因", "反转前景", "苹果投资分析", "看多苹果",
+                    "腾讯价值投资", "谷歌价值投资", "ToB 与 ToC 投资",
+                    "云计算股票投资", "云厂股票", "老登股",
+                    "谷歌估值", "台积电商业模式", "台积电估值", "ASML 财报",
                 ],
             ),
             topic(
@@ -254,6 +277,13 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "跨境券商整治",
                     "盈透报表",
                     "券商",
+                    "雪盈证券", "证券账户地区", "海外证券账户", "证券账户选择",
+                    "开户流程", "券商价格管理", "交易算法设置", "日结单邮件",
+                    "券商账户安全", "账户批准", "券商身份更新", "券商税务处理",
+                    "盈透雪盈", "香港开户", "盈透银行身份", "雪盈账号身份",
+                    "不注资", "账户未入金", "小额入金", "投资账户",
+                    "投资账户迁移", "盈透账户税务", "IBKR 税务",
+                    "境外股票税务", "CRS 报送", "境外券商税务",
                 ],
             ),
             topic(
@@ -271,6 +301,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "石油价格",
                     "有色金属投资",
                     "关键材料产业",
+                    "电力设备产业链", "电网设备产业链", "水电工程", "氢能源",
+                    "电力危机", "核聚变投资", "核聚变产业",
                 ],
             ),
             topic(
@@ -310,6 +342,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "保本理财",
                     "长期理财",
                     "平账",
+                    "税务自查", "境外所得税", "资本利得税", "香港保险",
+                    "境外资本利得", "个人税务处理",
                 ],
             ),
             topic(
@@ -323,7 +357,9 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "大模型价格", "API 计费", "Token 成本", "推理成本", "模型额度",
                     "Codex 额度", "Codex额度", "ChatGPT 会员额度", "Opus 额度",
-                    "速率限制重置", "模型满负载",
+                    "速率限制重置", "模型满负载", "额度消耗", "额外额度",
+                    "重置次数", "剩余重置次数", "额度重置次数",
+                    "额度消化", "银行重置",
                 ],
             ),
             topic(
@@ -340,6 +376,15 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "Codex 指令", "Codex 队列", "Codex 状态", "AGENTS.md",
                     "Codex", "Agent",
                     "工具加载模式", "连接器加载模式",
+                    "Agent 与 API", "AI 执行系统", "智能体核心观点",
+                    "Agent Beta", "自动化限制", "Codex 执行命令",
+                    "Superpowers 卡顿", "AI 协作协议", "Codex 电脑控制选项",
+                    "Superpowers skills", "Superpowers 技能", "节流模式",
+                    "Control Mac apps from Codex", "Computer Use 技能",
+                    "Command Line Developer Tools", "AI 协作",
+                    "Codex 设备连接记录", "删除设备连接记录",
+                    "Codex Record & Replay", "Codex 更新频率",
+                    "Codex 更新与性能", "Codex 模型提示问题",
                 ],
             ),
             topic(
@@ -354,6 +399,10 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "软件开发", "代码调试", "自动化测试", "生产构建", "桌面软件",
                     "自动消费记账系统", "系统架构调整", "开发经验总结", "项目审计",
                     "开发", "代码", "南枫情报台项目规则",
+                    "Vibe coding", "自然语言生成代码", "开发流程优先级",
+                    "项目反馈", "开发原则", "项目文档", "开发经验整理",
+                    "监控漏报", "软件卡顿", "iOS 开发插件",
+                    "Codex 开发 Android", "Mac Codex 开发安卓",
                 ],
             ),
             topic(
@@ -372,6 +421,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "GitHub 登录",
                     "gitignore 配置",
                     "GitHub设备码", "GitHub 设备码",
+                    "GitHub UI", "gitignore 使用", "私有仓库", "分叉功能",
                 ],
             ),
             topic(
@@ -393,6 +443,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "会话记录导出",
                     "数据迁移",
                     "CSV 导出",
+                    "备份大小", "账本验证", "无写账验证",
                 ],
             ),
             topic(
@@ -412,6 +463,10 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "代理配置",
                     "VPN", "Clash", "机场", "TLS", "代理",
                     "无法打开链接",
+                    "中转站", "节点机场", "机场节点", "翻墙风险",
+                    "订阅链接失败", "订阅链接报错", "梯子需求",
+                    "翻墙产业", "代理产业风险", "Quantumult X", "流量异常",
+                    "连接被重置", "网络安全拦截页", "出口 IP",
                 ],
             ),
             topic(
@@ -469,6 +524,15 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "AI 组织结构",
                     "AI行业",
                     "AI产业",
+                    "AI 公司组织结构", "AI 职业影响", "AI 营销", "AI 科技频道",
+                    "AI 人工智能供应链", "AI 产业链", "AI 与职业", "AI 经济现状",
+                    "数据标注机会", "科技公司高管观点", "苹果 AI 竞争",
+                    "AI Agent 竞争", "AI 与互联网行业", "美国 AI 模型出口管制",
+                    "AI 市场份额", "国产模型发展", "AI 与云业务增长",
+                    "云业务增长", "纳德拉观点", "传统苹果 AI 优势",
+                    "苹果 AI Agent 生态护城河",
+                    "蘋果 AI 優勢", "蘋果AI優勢", "纳德拉文章",
+                    "AI market share",
                 ],
             ),
             topic(
@@ -484,6 +548,9 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "Obsidian 同步", "Obsidian 导入", "思源笔记", "长期档案", "信息整理",
                     "Obsidian", "笔记字体", "生成长期文档",
                     "快照定义", "记录信息",
+                    "长期档案总控", "长期偏好记忆", "Obsidian 同步方案",
+                    "导入 Obsidian", "笔记导入", "PDF 内容概述", "每日重点简报",
+                    "ChatGPT 长期档案", "ChatGPT 长期使用档案", "Codex 投资工作台",
                 ],
             ),
             topic(
@@ -513,6 +580,12 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "Gemini",
                     "大模型",
                     "Claude技能手册", "Claude code", "Live模式", "Fable 模型",
+                    "Opus 版本", "模型数据来源", "AI 平台对比", "开源闭源模型",
+                    "图像生成模型", "ChatGPT 图像生成模型", "模型缺失", "默认助手限制", "AI 产品分类",
+                    "个性化回答", "AI 功能差异",
+                    "开源与闭源模型", "ChatGPT Plus", "NotebookLM",
+                    "模型分析与评估", "自定义指令", "K3 模型分析",
+                    "20x Pro 消耗",
                 ],
             ),
             topic(
@@ -532,6 +605,11 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "AI 隐私风险",
                     "Claude 隐私政策",
                     "AI 隐私政策",
+                    "设备监听", "隐私政策更新", "AI 风控风险", "模型风控",
+                    "手机监听", "Claude 风控", "是否存在监听",
+                    "隐私政策影响", "第三方 AI 平台", "AI 中转平台风险",
+                    "共享订阅风险", "模型路由替换", "第三方 AI 中转",
+                    "共享号", "风控套利", "模型替换",
                 ],
             ),
             topic(
@@ -559,6 +637,12 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "CLI vs 客户端", "自动检查器", "UTC",
                     "FLAC转MP3", "FLAC 转 MP3", "自动压缩",
                     "API账户与Web端",
+                    "Gmail 收不到邮件", "邮箱收不到邮件", "插件识别",
+                    "Omnisearch", "UTC 与北京时间", "自动压缩解释",
+                    "海外输入法", "邮件图片拦截", "工具清单", "Mac 软件推荐",
+                    "连接器安装", "OAuth 授权流程", "Google 3D 地图", "谷歌 3D 地图",
+                    "周末任务", "Google 搜索设置", "Gmail 连接器",
+                    "Install Gmail", "Google 授权", "拉起浏览器",
                 ],
             ),
             topic(
@@ -592,6 +676,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "音频转写", "视频转写", "视频转录", "字幕时间码", "语音识别",
                     "视频转文字稿",
+                    "转写安卓版", "安卓转写", "手机转写应用",
                 ],
             ),
             topic(
@@ -608,6 +693,9 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "重新生成图片", "卡通图片生成",
                     "生成图片", "提示词",
                     "生成高清图", "写实照片", "90年代港剧武侠风",
+                    "古风写真人像", "人像生成提示", "女性模特设定",
+                    "卡通手势图片", "photo description", "ChatGPT 图像生成",
+                    "自拍提示词", "手机广角自拍提示词",
                 ],
             ),
             topic(
@@ -625,6 +713,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "音视频转码",
                     "媒体处理",
                     "下载播放列表",
+                    "视频内容分析", "视频实用性分析",
                 ],
             ),
             topic(
@@ -645,6 +734,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "影视后期 AI",
                     "视频自动化转写",
                     "影视AI工具开发",
+                    "影视后期 AI 指南", "影视后期从业", "AI 时代工作指南",
                 ],
             ),
             topic(
@@ -700,6 +790,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "参考风格",
                     "视觉需求",
                     "创意评审",
+                    "视觉高级感", "设计显廉价", "高级感",
                 ],
             ),
             topic(
@@ -716,7 +807,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "图表排版",
                     "数据呈现设计",
                     "可视化叙事",
-                    "信息图", "桑基图",
+                    "信息图", "桑基图", "财务桑基图",
                 ],
             ),
             topic(
@@ -742,6 +833,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "图片", "摄影", "自拍",
                     "调整拍摄", "出图指令",
                     "桌布图案分析", "视觉梗",
+                    "街拍风格", "手机街拍", "广角自拍", "人像提示",
+                    "请求图片内容", "询问图片内容",
                 ],
             ),
             topic(
@@ -759,6 +852,13 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "Apple ID",
                     "Apple 登录", "美国身份", "ITIN",
                     "姓名填写规范", "Claude账户迁移",
+                    "Apple 账号密码", "Apple 账号付款",
+                    "美国地址填写", "iPhone 换绑", "账户限制",
+                    "通行密钥", "Passkey",
+                    "Claude 实名制方案", "香港 iPhone 账户影响",
+                    "Claude 外国手机号注册", "邮箱前缀修改",
+                    "马来西亚账号体系", "WhatsApp 注册", "实名制",
+                    "港版 iPhone 国内账号影响", "邮箱前缀", "登录方式优化",
                 ],
             ),
             topic(
@@ -772,6 +872,20 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "海外银行", "银行卡申请", "借记卡方案", "信用卡方案", "跨境支付",
                     "券商账户", "银行卡", "汇丰", "信用卡",
+                    "海外收付账户", "海外收付体系", "海外消费链路",
+                    "Bybit 卡", "SafePal 卡", "双币卡", "NFC 支付卡",
+                    "银行卡注销", "银行卡信息更新", "借记卡激活", "借记卡补卡",
+                    "充值扣款失败", "支付方式", "会员支付", "退款规则",
+                    "信用卡注销", "扣款失败", "充值失败", "SoFi 银行卡",
+                    "Visa 卡建议", "Apple Store 余额", "iOS 支付 Claude 会员",
+                    "Apple Card", "汇丰账户", "苹果扣款", "Apple Pay 地址",
+                    "提现方案", "SafePal 支付", "银行开户",
+                    "Apple ID 与 ChatGPT 充值绑定",
+                    "办卡靠谱", "XMoney", "卡片服务中国限制",
+                    "AI 订阅支付与风控", "HSBC 含义", "Apple 扣款查询",
+                    "出金方式", "SafePal 付款通道", "银行开卡",
+                    "Visa 卡绑定 PayPal 支付", "PayPal 支付 Apple ID",
+                    "银行卡到期绑定", "BOA 银行卡优缺点",
                 ],
             ),
             topic(
@@ -785,6 +899,12 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "海外手机卡", "Wi-Fi Calling", "国际漫游", "手机号码保号", "eSIM 套餐",
                     "手机卡", "流量卡", "虚拟号码",
+                    "运营商线路", "短信发送失败", "短信验证码", "短信验证",
+                    "手机卡无服务", "境外流量卡", "流量卡适用性",
+                    "电话接收", "国际短信", "骚扰电话", "号码识别",
+                    "流量卡是否靠谱", "手机卡是否靠谱",
+                    "电话骚扰", "陌生来电", "Ultra Mobile eSIM",
+                    "Saily 手机卡", "Saily 流量卡",
                 ],
             ),
             topic(
@@ -802,6 +922,18 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "账号风险",
                     "Outlook 验证邮箱",
                     "防钓鱼码",
+                    "账号密码修改", "账号限制", "账号停用", "登录失败",
+                    "身份验证器", "验证码查找", "邮箱账号污染",
+                    "诈骗电话", "换汇诈骗", "开发者身份验证",
+                    "账号污染", "邮箱污染",
+                    "Google 邮箱手机号验证", "Google 短信验证",
+                    "Google 账号未知手机号", "AI 订阅支付风险",
+                    "Claude 账号封禁真实性", "主账号封禁",
+                    "美区 Codex 风控", "Google 账号反复停用",
+                    "Mac 浏览器登录", "Claude 账号封禁处理",
+                    "谷歌邮箱手机验证", "谷歌邮箱短信发送",
+                    "谷歌账号陌生手机号", "主号被封",
+                    "Claude 账号封禁通知", "PayPal 账户限制",
                 ],
             ),
             topic(
@@ -816,6 +948,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "新能源车", "二手车选择", "选车建议", "电池衰减", "车辆保值率",
                     "用车成本", "理想i6", "极氪7X",
                     "理想", "极氪",
+                    "氢能源汽车", "新能源智驾", "L3 自驾",
                 ],
             ),
             topic(
@@ -836,6 +969,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "MPV和SUV",
                     "购车体验",
                     "卡槽对比", "民国汽车",
+                    "购车选择", "车辆体验分析",
                 ],
             ),
             topic(
@@ -853,6 +987,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "车辆售后",
                     "车载香薰",
                     "用车体验",
+                    "流媒体后视镜", "车载后视镜",
                 ],
             ),
             topic(
@@ -877,6 +1012,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "违章处理",
                     "驾驶证", "限速", "红灯",
                     "高速公路桩标", "车牌选号",
+                    "违章延迟", "违章处理延迟",
                 ],
             ),
             topic(
@@ -912,6 +1048,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "激光手术",
                     "就医", "用药",
                     "针灸机制", "科学审查",
+                    "健康风险", "病因分析",
                 ],
             ),
             topic(
@@ -940,7 +1077,10 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 "艺术、设计、数媒和动画专业的院校与志愿选择",
                 &["艺术专业报考", "艺术设计升学", "美术专业报考"],
                 &["视觉传达专业", "环境艺术设计", "数字媒体艺术"],
-                &["艺术专业", "美术专业", "专科报考", "志愿填报", "录取分数", "艺术统考"],
+                &[
+                    "艺术专业", "美术专业", "专科报考", "志愿填报", "录取分数",
+                    "艺术统考", "美术生志愿", "艺术生志愿", "美术生志愿分析",
+                ],
             ),
             topic(
                 "education-general",
@@ -975,6 +1115,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "职业规划",
                     "能力要求",
                     "面试", "职位", "入职",
+                    "简历优化", "HR 认可", "入职评估", "面试准备",
+                    "职位选择", "AI 就业影响",
                 ],
             ),
             topic(
@@ -998,6 +1140,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "电脑硬件", "显示器选择", "音频设备", "工作室噪音", "设备温度",
                     "香氛机",
+                    "内存占用", "系统资源占用", "硬件使用", "充电器建议",
                 ],
             ),
             topic(
@@ -1025,6 +1168,17 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "苹果流畅",
                     "Mac", "苹果", "iPhone", "Siri",
                     "朗读内容设置",
+                    "iPhone 有锁无锁", "iPhone 通知历史", "苹果充电器",
+                    "Mac 截图设置", "Mac App Store", "Mac 管理员密码",
+                    "苹果授权店", "苹果直营店", "Apple 智能",
+                    "苹果流畅对比", "Siri 翻译", "Siri 使用",
+                    "iCloud 存储", "删除设备连接",
+                    "苹果手机 AI", "苹果 AI 功能", "苹果 AI 优势",
+                    "Siri 聊天", "Mac 初始设置", "Mac 下载微信", "iCloud 使用",
+                    "苹果系统更新提示", "iPhone 17 Pro Max", "手机与 iCloud",
+                    "17 Pro Max", "iPhone17 备用机", "iPhone 备用机",
+                    "iPhone 长截图", "长截图 APP",
+                    "iPhone 邮件滑动设置", "iPhone17 息屏设置",
                 ],
             ),
             topic(
@@ -1046,6 +1200,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "折叠屏手机",
                     "旗舰手机性能",
                     "OPPO", "安卓手机",
+                    "旗舰手机性能", "手机游戏性能", "OPPO Find N",
+                    "手机充电器", "充电器选择", "消费电子对比", "iPhone 与 OPPO",
                 ],
             ),
             topic(
@@ -1065,6 +1221,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "旅游建议",
                     "狮城", "新加坡", "美卡申请和旅游要求",
                     "高铁车票", "添加到日历", "G752", "苏州北", "枣庄",
+                    "美签旅游", "美国签证旅游",
                 ],
             ),
             topic(
@@ -1091,6 +1248,13 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "订阅", "会员",
                     "附加服务", "英国ISA",
                     "美团外卖预计时间",
+                    "年付套餐退款", "订阅取消", "AI 会员支付",
+                    "服务试用", "重置机制",
+                    "年付套餐", "套餐取消退款", "酷狗多设备登录",
+                    "SuperGrok 套餐区别", "AI 会员套餐区别",
+                    "淘宝账号与礼品卡", "酷狗账号多设备", "SuperGrok Lite",
+                    "套餐取消和退费", "取消和退费规则", "不同档位",
+                    "月费", "年费",
                 ],
             ),
             topic(
@@ -1129,6 +1293,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "陌生人私信",
                     "人际关系",
                     "结婚离婚统计", "彩礼问题",
+                    "婚姻制度", "婚姻风险管理", "财务独立",
                 ],
             ),
             topic(
@@ -1147,6 +1312,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "社会现象",
                     "历史背景",
                     "县丞", "历史",
+                    "韬定律", "人物观点整理", "社会制度",
                     "中期选举",
                     "禁止吸烟", "烟灰缸", "中式酒店", "行为艺术", "形式合规",
                 ],
@@ -1171,6 +1337,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "石中玉", "石破天", "狗哥", "沈一石",
                     "伊邪那岐", "妙木山", "木叶三忍", "通灵兽", "兜的战略",
                     "赵贞吉", "K-pop", "港剧武侠",
+                    "火影忍者角色", "日系动画角色", "歌词解析",
                 ],
             ),
             topic(
@@ -1196,6 +1363,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "转成带中文的版本",
                     "conversation highlights",
                     "Conversation Overview",
+                    "内容概述", "内容用途", "内容总结",
                 ],
             ),
             topic(
@@ -1222,6 +1390,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "婉拒购车话术", "个人协议与对话框架",
                     "问候交流", "信号冲突与幽默",
                     "第三个人梗",
+                    "父亲争执", "婚姻信任差异", "关系风险管理",
+                    "父子争执", "家庭争执", "父亲的争执",
                 ],
             ),
             topic(
@@ -1238,6 +1408,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "幸运数字",
                     "民俗解释",
                     "生活习俗",
+                    "数字意义", "数字象征意义",
+                    "八字", "命理", "月运",
                 ],
             ),
             topic(
@@ -1259,6 +1431,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                     "谣言",
                     "政策解析",
                     "新闻", "真伪",
+                    "今日新闻速览", "每日新闻", "新闻简报",
+                    "地缘政治", "政坛人事", "事实层待验证", "多主题时事简报",
                 ],
             ),
             topic(
@@ -1272,6 +1446,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "Reddit帖子", "Reddit和X", "Reddit vs X", "TikTok 内容",
                     "TikTok 隐私", "TikTok链接", "抖音直播", "内容过滤",
+                    "知识星球提问", "星球提问", "内容时间线",
                 ],
             ),
             topic(

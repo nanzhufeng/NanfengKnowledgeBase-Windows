@@ -15,6 +15,7 @@ if (!inputArgument || !outputArgument || process.argv.length !== 4) {
 const inputPath = path.resolve(inputArgument);
 const outputDirectory = path.resolve(outputArgument);
 const jsonReportPath = path.join(outputDirectory, "classification-coverage-report.json");
+const minimumSubstantiveCharacters = 80;
 await mkdir(outputDirectory, { recursive: true });
 
 const input = JSON.parse(await readFile(inputPath, "utf8"));
@@ -62,6 +63,7 @@ try {
       searchSignals: record.searchSignals,
     }, input.generatedAt);
     const top = result.suggestions[0] ?? null;
+    const second = result.suggestions[1] ?? null;
     if (!top) {
       confidenceBands.unmatched += 1;
     } else {
@@ -81,8 +83,10 @@ try {
           topicId: Number(top.topicId),
           topicPath: top.topicPath,
           confidence: top.confidence,
+          marginToSecond: second ? Number((top.confidence - second.confidence).toFixed(2)) : null,
           action: top.action,
           reasons: top.reasons,
+          signalScores: top.signalScores,
         }
         : null,
       suggestions: result.suggestions.slice(0, 3).map((suggestion) => ({
@@ -90,6 +94,8 @@ try {
         topicPath: suggestion.topicPath,
         confidence: suggestion.confidence,
         action: suggestion.action,
+        reasons: suggestion.reasons,
+        signalScores: suggestion.signalScores,
       })),
     };
   });
@@ -112,7 +118,8 @@ try {
     matchedCount: records.length - unmatched.length,
     unmatchedCount: unmatched.length,
     substantiveUnmatchedCount: unmatched.filter((record) =>
-      record.substantiveTitle && record.visibleCharacterCount >= 20).length,
+      record.substantiveTitle
+      && record.visibleCharacterCount >= minimumSubstantiveCharacters).length,
     confidenceBands,
     topicCounts: Object.fromEntries(
       [...topicCounts.entries()].sort((left, right) =>

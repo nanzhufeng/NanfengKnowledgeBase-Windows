@@ -639,7 +639,7 @@ export function KnowledgeWorkspace({
       await reload();
       setCatalogReviewed(false);
       onNotify(
-        `个人目录已确认：新增 ${result.createdDomains} 个领域、${result.createdTopics} 个主题，已有内容未覆盖`,
+        `个人目录已确认：新增 ${result.createdDomains} 个领域、${result.createdTopics} 个主题，清理 ${result.deletedRules} 条旧版系统规则，已有内容未覆盖`,
       );
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "个人目录写入失败");

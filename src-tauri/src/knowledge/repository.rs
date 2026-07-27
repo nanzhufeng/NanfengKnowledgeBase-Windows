@@ -160,6 +160,7 @@ pub struct ApplyPersonalCatalogResult {
     pub created_aliases: usize,
     pub created_entities: usize,
     pub created_rules: usize,
+    pub deleted_rules: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1161,13 +1162,12 @@ pub fn apply_personal_catalog(
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };
+    let mut deleted_rules = 0;
     for public_id in existing_managed_rules {
         if !managed_rule_ids.contains(&public_id) {
-            transaction.execute(
-                "UPDATE classification_rules
-                 SET enabled = 0, updated_at = ?2
-                 WHERE public_id = ?1 AND enabled <> 0",
-                params![public_id, now],
+            deleted_rules += transaction.execute(
+                "DELETE FROM classification_rules WHERE public_id = ?1",
+                [public_id],
             )?;
         }
     }
@@ -1180,6 +1180,7 @@ pub fn apply_personal_catalog(
         created_aliases: 0,
         created_entities: 0,
         created_rules: 0,
+        deleted_rules,
     };
     let mut domain_ids = HashMap::new();
     for domain in &proposal.domains {
@@ -4890,7 +4891,7 @@ mod tests {
     }
 
     #[test]
-    fn personal_catalog_preview_is_read_only_and_apply_is_additive_and_idempotent() {
+    fn personal_catalog_preview_is_read_only_and_apply_reconciles_managed_rules_idempotently() {
         let mut connection = database::open_memory_database().expect("database");
         let proposal = get_personal_catalog_proposal();
         assert_eq!(proposal.version, personal_catalog::PERSONAL_CATALOG_VERSION);
@@ -5008,15 +5009,16 @@ mod tests {
                 .expect("stable topic count"),
             topic_count
         );
+        assert_eq!(second.deleted_rules, 1);
         assert_eq!(
             connection
                 .query_row(
-                    "SELECT enabled FROM classification_rules
+                    "SELECT COUNT(*) FROM classification_rules
                      WHERE public_id = 'catalog-rule-v1-obsolete-entity-9'",
                     [],
                     |row| row.get::<_, i64>(0),
                 )
-                .expect("obsolete rule state"),
+                .expect("obsolete rule count"),
             0
         );
         for unsafe_pattern in [
@@ -5052,7 +5054,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_v5_exposes_direct_evidence_for_reported_unmatched_subjects() {
+    fn catalog_v6_exposes_direct_evidence_for_reported_unmatched_subjects() {
         let mut connection = database::open_memory_database().expect("database");
         let proposal = get_personal_catalog_proposal();
         apply_personal_catalog(
