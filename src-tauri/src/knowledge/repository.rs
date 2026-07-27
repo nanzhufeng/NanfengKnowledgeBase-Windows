@@ -509,6 +509,61 @@ pub struct TopicQuestionRow {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeNoteRow {
+    pub id: i64,
+    pub public_id: String,
+    pub title: String,
+    pub body_markdown: String,
+    pub summary: String,
+    pub note_type: String,
+    pub status: String,
+    pub organization_state: String,
+    pub primary_topic_id: i64,
+    pub related_topic_ids: Vec<i64>,
+    pub source_item_ids: Vec<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateKnowledgeNoteInput {
+    pub title: String,
+    #[serde(default)]
+    pub body_markdown: String,
+    #[serde(default)]
+    pub summary: String,
+    pub note_type: String,
+    pub status: String,
+    pub organization_state: String,
+    pub primary_topic_id: i64,
+    #[serde(default)]
+    pub related_topic_ids: Vec<i64>,
+    #[serde(default)]
+    pub source_item_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKnowledgeNoteInput {
+    pub id: i64,
+    pub title: String,
+    #[serde(default)]
+    pub body_markdown: String,
+    #[serde(default)]
+    pub summary: String,
+    pub note_type: String,
+    pub status: String,
+    pub organization_state: String,
+    pub primary_topic_id: i64,
+    #[serde(default)]
+    pub related_topic_ids: Vec<i64>,
+    #[serde(default)]
+    pub source_item_ids: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeTopicDetail {
@@ -517,6 +572,7 @@ pub struct KnowledgeTopicDetail {
     pub judgments: Vec<TopicJudgmentRow>,
     pub evidence: Vec<TopicEvidenceRow>,
     pub questions: Vec<TopicQuestionRow>,
+    pub notes: Vec<KnowledgeNoteRow>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1377,6 +1433,207 @@ pub fn delete_classification_rule(
     })
 }
 
+pub fn list_notes(
+    connection: &Connection,
+    topic_id: Option<i64>,
+    include_archived: bool,
+) -> AppResult<Vec<KnowledgeNoteRow>> {
+    let mut statement = connection.prepare(
+        "SELECT note.id
+         FROM notes note
+         WHERE (?1 IS NULL OR EXISTS(
+           SELECT 1 FROM note_topics link
+           WHERE link.note_id = note.id AND link.topic_id = ?1
+         ))
+           AND (?2 = 1 OR note.status <> 'archived')
+         ORDER BY note.updated_at DESC, note.id DESC",
+    )?;
+    let ids = statement
+        .query_map(params![topic_id, include_archived as i64], |row| {
+            row.get::<_, i64>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    ids.into_iter().map(|id| get_note(connection, id)).collect()
+}
+
+pub fn get_note(connection: &Connection, note_id: i64) -> AppResult<KnowledgeNoteRow> {
+    let (
+        id,
+        public_id,
+        title,
+        body_markdown,
+        summary,
+        note_type,
+        status,
+        organization_state,
+        created_at,
+        updated_at,
+    ) = connection
+        .query_row(
+            "SELECT id, public_id, title, body_markdown, summary, note_type,
+                    status, organization_state, created_at, updated_at
+             FROM notes WHERE id = ?1",
+            [note_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        )
+        .map_err(|_| AppError::NotFound("笔记不存在".to_string()))?;
+    let mut topic_statement = connection.prepare(
+        "SELECT topic_id, role FROM note_topics WHERE note_id = ?1 ORDER BY role, topic_id",
+    )?;
+    let topic_links = topic_statement
+        .query_map([note_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let primary_topic_id = topic_links
+        .iter()
+        .find(|(_, role)| role == "primary")
+        .map(|(topic_id, _)| *topic_id)
+        .ok_or_else(|| AppError::Conflict("笔记缺少主要主题".to_string()))?;
+    let related_topic_ids = topic_links
+        .into_iter()
+        .filter_map(|(topic_id, role)| (role == "secondary").then_some(topic_id))
+        .collect();
+    let mut source_statement = connection.prepare(
+        "SELECT DISTINCT source_item_id FROM note_sources
+         WHERE note_id = ?1 ORDER BY source_item_id",
+    )?;
+    let source_item_ids = source_statement
+        .query_map([note_id], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(KnowledgeNoteRow {
+        id,
+        public_id,
+        title,
+        body_markdown,
+        summary,
+        note_type,
+        status,
+        organization_state,
+        primary_topic_id,
+        related_topic_ids,
+        source_item_ids,
+        created_at,
+        updated_at,
+    })
+}
+
+pub fn create_note(
+    connection: &mut Connection,
+    input: &CreateKnowledgeNoteInput,
+) -> AppResult<KnowledgeNoteRow> {
+    let (related_topic_ids, source_item_ids) = validate_note_input(
+        connection,
+        &input.title,
+        &input.note_type,
+        &input.status,
+        &input.organization_state,
+        input.primary_topic_id,
+        &input.related_topic_ids,
+        &input.source_item_ids,
+    )?;
+    let transaction = connection.transaction()?;
+    let now = Utc::now().to_rfc3339();
+    transaction.execute(
+        "INSERT INTO notes(
+           public_id, title, body_markdown, summary, note_type,
+           status, organization_state, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        params![
+            format!("note-{}", Uuid::new_v4()),
+            input.title.trim(),
+            input.body_markdown,
+            input.summary.trim(),
+            input.note_type,
+            input.status,
+            input.organization_state,
+            now,
+        ],
+    )?;
+    let note_id = transaction.last_insert_rowid();
+    write_note_links(
+        &transaction,
+        note_id,
+        input.primary_topic_id,
+        &related_topic_ids,
+        &source_item_ids,
+        &now,
+    )?;
+    transaction.commit()?;
+    get_note(connection, note_id)
+}
+
+pub fn update_note(
+    connection: &mut Connection,
+    input: &UpdateKnowledgeNoteInput,
+) -> AppResult<KnowledgeNoteRow> {
+    get_note(connection, input.id)?;
+    let (related_topic_ids, source_item_ids) = validate_note_input(
+        connection,
+        &input.title,
+        &input.note_type,
+        &input.status,
+        &input.organization_state,
+        input.primary_topic_id,
+        &input.related_topic_ids,
+        &input.source_item_ids,
+    )?;
+    let transaction = connection.transaction()?;
+    let now = Utc::now().to_rfc3339();
+    transaction.execute(
+        "UPDATE notes
+         SET title = ?1, body_markdown = ?2, summary = ?3, note_type = ?4,
+             status = ?5, organization_state = ?6, updated_at = ?7
+         WHERE id = ?8",
+        params![
+            input.title.trim(),
+            input.body_markdown,
+            input.summary.trim(),
+            input.note_type,
+            input.status,
+            input.organization_state,
+            now,
+            input.id,
+        ],
+    )?;
+    transaction.execute("DELETE FROM note_topics WHERE note_id = ?1", [input.id])?;
+    transaction.execute("DELETE FROM note_sources WHERE note_id = ?1", [input.id])?;
+    write_note_links(
+        &transaction,
+        input.id,
+        input.primary_topic_id,
+        &related_topic_ids,
+        &source_item_ids,
+        &now,
+    )?;
+    transaction.commit()?;
+    get_note(connection, input.id)
+}
+
+pub fn archive_note(connection: &Connection, note_id: i64) -> AppResult<KnowledgeNoteRow> {
+    let changed = connection.execute(
+        "UPDATE notes SET status = 'archived', updated_at = ?1 WHERE id = ?2",
+        params![Utc::now().to_rfc3339(), note_id],
+    )?;
+    if changed != 1 {
+        return Err(AppError::NotFound("笔记不存在".to_string()));
+    }
+    get_note(connection, note_id)
+}
+
 pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<KnowledgeTopicDetail> {
     let topic = list_topics(connection)?
         .into_iter()
@@ -1478,6 +1735,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
         rows.collect::<Result<Vec<_>, _>>()?
     };
     Ok(KnowledgeTopicDetail {
+        notes: list_notes(connection, Some(topic_id), true)?,
         topic,
         sources,
         judgments,
@@ -3365,6 +3623,95 @@ fn infer_entity_type(value: &str) -> &'static str {
     }
 }
 
+fn validate_note_input(
+    connection: &Connection,
+    title: &str,
+    note_type: &str,
+    status: &str,
+    organization_state: &str,
+    primary_topic_id: i64,
+    related_topic_ids: &[i64],
+    source_item_ids: &[i64],
+) -> AppResult<(Vec<i64>, Vec<i64>)> {
+    if title.trim().is_empty() {
+        return Err(AppError::Validation("笔记标题不能为空".to_string()));
+    }
+    if !matches!(
+        note_type,
+        "normal" | "research" | "conclusion" | "review" | "decision" | "project" | "summary"
+    ) {
+        return Err(AppError::Validation("笔记类型无效".to_string()));
+    }
+    if !matches!(status, "draft" | "active" | "archived") {
+        return Err(AppError::Validation("笔记状态无效".to_string()));
+    }
+    if !matches!(organization_state, "inbox" | "organized") {
+        return Err(AppError::Validation("笔记整理状态无效".to_string()));
+    }
+    require_active_topic(connection, primary_topic_id)?;
+    let mut related_topic_ids = related_topic_ids.to_vec();
+    related_topic_ids.sort_unstable();
+    related_topic_ids.dedup();
+    related_topic_ids.retain(|topic_id| *topic_id != primary_topic_id);
+    for topic_id in &related_topic_ids {
+        require_active_topic(connection, *topic_id)?;
+    }
+    let mut source_item_ids = source_item_ids.to_vec();
+    source_item_ids.sort_unstable();
+    source_item_ids.dedup();
+    for source_item_id in &source_item_ids {
+        connection
+            .query_row(
+                "SELECT 1 FROM source_items WHERE id = ?1 AND status = 'active'",
+                [source_item_id],
+                |_| Ok(()),
+            )
+            .map_err(|_| AppError::NotFound("笔记关联的来源不存在".to_string()))?;
+    }
+    Ok((related_topic_ids, source_item_ids))
+}
+
+fn require_active_topic(connection: &Connection, topic_id: i64) -> AppResult<()> {
+    connection
+        .query_row(
+            "SELECT 1 FROM topics WHERE id = ?1 AND status NOT IN ('archived', 'merged')",
+            [topic_id],
+            |_| Ok(()),
+        )
+        .map_err(|_| AppError::NotFound("笔记关联的主题不存在或不可用".to_string()))
+}
+
+fn write_note_links(
+    connection: &Connection,
+    note_id: i64,
+    primary_topic_id: i64,
+    related_topic_ids: &[i64],
+    source_item_ids: &[i64],
+    created_at: &str,
+) -> AppResult<()> {
+    connection.execute(
+        "INSERT INTO note_topics(note_id, topic_id, role, confidence, created_at)
+         VALUES (?1, ?2, 'primary', 100, ?3)",
+        params![note_id, primary_topic_id, created_at],
+    )?;
+    for topic_id in related_topic_ids {
+        connection.execute(
+            "INSERT INTO note_topics(note_id, topic_id, role, confidence, created_at)
+             VALUES (?1, ?2, 'secondary', NULL, ?3)",
+            params![note_id, topic_id, created_at],
+        )?;
+    }
+    for source_item_id in source_item_ids {
+        connection.execute(
+            "INSERT INTO note_sources(
+               note_id, source_item_id, relation_type, locator_json, created_at
+             ) VALUES (?1, ?2, 'derived_from', '{}', ?3)",
+            params![note_id, source_item_id, created_at],
+        )?;
+    }
+    Ok(())
+}
+
 fn normalize_name(value: &str) -> String {
     value
         .trim()
@@ -4020,6 +4367,146 @@ mod tests {
             .iter()
             .filter(|item| matches!(item.suggested_topic_id, Some(id) if id == wrong.id || id == correct.id))
             .all(|item| item.status == "undone" || item.status == "rejected"));
+    }
+
+    #[test]
+    fn note_crud_preserves_sources_and_updates_topic_links_transactionally() {
+        let mut connection = database::open_memory_database().expect("database");
+        database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "笔记来源".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: "必须保持不变的原始正文".to_string(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("source");
+        let source = list_inbox(&connection, 20).expect("inbox")[0].clone();
+        let domain = create_domain(
+            &connection,
+            &CreateKnowledgeDomainInput {
+                name: "笔记测试".to_string(),
+                description: String::new(),
+            },
+        )
+        .expect("domain");
+        let first_topic = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "主要主题".to_string(),
+                description: String::new(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("first topic");
+        let second_topic = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "相关主题".to_string(),
+                description: String::new(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("second topic");
+
+        let created = create_note(
+            &mut connection,
+            &CreateKnowledgeNoteInput {
+                title: "研究笔记".to_string(),
+                body_markdown: "初始整理内容".to_string(),
+                summary: "摘要".to_string(),
+                note_type: "research".to_string(),
+                status: "draft".to_string(),
+                organization_state: "organized".to_string(),
+                primary_topic_id: first_topic.id,
+                related_topic_ids: vec![first_topic.id, second_topic.id, second_topic.id],
+                source_item_ids: vec![source.id, source.id],
+            },
+        )
+        .expect("created note");
+        assert_eq!(created.primary_topic_id, first_topic.id);
+        assert_eq!(created.related_topic_ids, vec![second_topic.id]);
+        assert_eq!(created.source_item_ids, vec![source.id]);
+        assert_eq!(
+            get_topic_detail(&connection, first_topic.id)
+                .expect("first detail")
+                .notes
+                .len(),
+            1
+        );
+        assert_eq!(
+            get_topic_detail(&connection, second_topic.id)
+                .expect("second detail")
+                .notes
+                .len(),
+            1
+        );
+
+        let updated = update_note(
+            &mut connection,
+            &UpdateKnowledgeNoteInput {
+                id: created.id,
+                title: "更新后的研究笔记".to_string(),
+                body_markdown: "更新后的独立 Note 正文".to_string(),
+                summary: "新摘要".to_string(),
+                note_type: "conclusion".to_string(),
+                status: "active".to_string(),
+                organization_state: "organized".to_string(),
+                primary_topic_id: second_topic.id,
+                related_topic_ids: vec![first_topic.id],
+                source_item_ids: vec![source.id],
+            },
+        )
+        .expect("updated note");
+        assert_eq!(updated.primary_topic_id, second_topic.id);
+        assert_eq!(updated.related_topic_ids, vec![first_topic.id]);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT original_text FROM source_items WHERE id = ?1",
+                    [source.id],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("source text"),
+            "必须保持不变的原始正文"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM notes_fts WHERE notes_fts MATCH '更新后的'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("note fts"),
+            1
+        );
+
+        let archived = archive_note(&connection, created.id).expect("archive");
+        assert_eq!(archived.status, "archived");
+        assert!(list_notes(&connection, Some(second_topic.id), false)
+            .expect("active notes")
+            .is_empty());
+        assert_eq!(
+            list_notes(&connection, Some(second_topic.id), true)
+                .expect("all notes")
+                .len(),
+            1
+        );
     }
 
     #[test]

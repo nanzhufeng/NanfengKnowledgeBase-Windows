@@ -337,6 +337,65 @@ pub fn get_knowledge_topic_detail(
 }
 
 #[tauri::command]
+pub fn list_knowledge_notes(
+    state: State<'_, AppState>,
+    topic_id: Option<i64>,
+    include_archived: Option<bool>,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeNoteRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_notes(
+        &connection,
+        topic_id,
+        include_archived.unwrap_or(false),
+    ))
+}
+
+#[tauri::command]
+pub fn get_knowledge_note(
+    state: State<'_, AppState>,
+    note_id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeNoteRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::get_note(&connection, note_id))
+}
+
+#[tauri::command]
+pub fn create_knowledge_note(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateKnowledgeNoteInput,
+) -> Result<crate::knowledge::repository::KnowledgeNoteRow, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_note(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn update_knowledge_note(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateKnowledgeNoteInput,
+) -> Result<crate::knowledge::repository::KnowledgeNoteRow, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_note(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn archive_knowledge_note(
+    state: State<'_, AppState>,
+    note_id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeNoteRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::archive_note(
+        &connection,
+        note_id,
+    ))
+}
+
+#[tauri::command]
 pub fn add_knowledge_topic_judgment(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::AddTopicJudgmentInput,

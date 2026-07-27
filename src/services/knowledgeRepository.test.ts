@@ -110,3 +110,55 @@ describe("KnowledgeRepository classification context", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("KnowledgeRepository notes", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("creates an independent note with topic and source links", async () => {
+    invoke.mockResolvedValue({
+      id: 9,
+      publicId: "note-9",
+      title: "镜头复盘",
+      bodyMarkdown: "保留的独立笔记正文",
+      summary: "关键结论",
+      noteType: "review",
+      status: "active",
+      organizationState: "organized",
+      primaryTopicId: 3,
+      relatedTopicIds: [4],
+      sourceItemIds: [12, 15],
+      createdAt: "2026-07-27T10:00:00+08:00",
+      updatedAt: "2026-07-27T10:00:00+08:00",
+    });
+
+    const note = await new KnowledgeRepository().createNote({
+      title: "镜头复盘",
+      bodyMarkdown: "保留的独立笔记正文",
+      summary: "关键结论",
+      noteType: "review",
+      status: "active",
+      organizationState: "organized",
+      primaryTopicId: 3,
+      relatedTopicIds: [4],
+      sourceItemIds: [12, 15],
+    });
+
+    expect(invoke).toHaveBeenCalledWith("create_knowledge_note", {
+      input: {
+        title: "镜头复盘",
+        bodyMarkdown: "保留的独立笔记正文",
+        summary: "关键结论",
+        noteType: "review",
+        status: "active",
+        organizationState: "organized",
+        primaryTopicId: 3,
+        relatedTopicIds: [4],
+        sourceItemIds: [12, 15],
+      },
+    });
+    expect(note.publicId).toBe("note-9");
+    expect(note.sourceItemIds).toEqual([12, 15]);
+  });
+});

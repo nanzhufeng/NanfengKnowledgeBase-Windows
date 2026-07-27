@@ -321,12 +321,37 @@ const topicQuestionRowSchema = z.object({
   updatedAt: z.string(),
 });
 
+const knowledgeNoteRowSchema = z.object({
+  id: z.number().int(),
+  publicId: z.string(),
+  title: z.string(),
+  bodyMarkdown: z.string(),
+  summary: z.string(),
+  noteType: z.enum([
+    "normal",
+    "research",
+    "conclusion",
+    "review",
+    "decision",
+    "project",
+    "summary",
+  ]),
+  status: z.enum(["draft", "active", "archived"]),
+  organizationState: z.enum(["inbox", "organized"]),
+  primaryTopicId: z.number().int(),
+  relatedTopicIds: z.array(z.number().int()),
+  sourceItemIds: z.array(z.number().int()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 const topicDetailSchema = z.object({
   topic: topicRowSchema,
   sources: z.array(topicSourceRowSchema),
   judgments: z.array(topicJudgmentRowSchema),
   evidence: z.array(topicEvidenceRowSchema),
   questions: z.array(topicQuestionRowSchema),
+  notes: z.array(knowledgeNoteRowSchema),
 });
 
 export type KnowledgeInboxItem = z.infer<typeof inboxItemSchema>;
@@ -335,6 +360,7 @@ export type KnowledgeTopicRow = z.infer<typeof topicRowSchema>;
 export type KnowledgeClassificationSuggestionRow = z.infer<typeof suggestionRowSchema>;
 export type KnowledgeOperationResult = z.infer<typeof operationResultSchema>;
 export type KnowledgeTopicDetail = z.infer<typeof topicDetailSchema>;
+export type KnowledgeNoteRow = z.infer<typeof knowledgeNoteRowSchema>;
 export type TopicMergePreview = z.infer<typeof topicMergePreviewSchema>;
 export type TopicMergeResult = z.infer<typeof topicMergeResultSchema>;
 export type TopicSplitPreview = z.infer<typeof topicSplitPreviewSchema>;
@@ -563,6 +589,63 @@ export class KnowledgeRepository {
 
   async getTopicDetail(topicId: number): Promise<KnowledgeTopicDetail> {
     return topicDetailSchema.parse(await invoke("get_knowledge_topic_detail", { topicId }));
+  }
+
+  async listNotes(
+    topicId: number | null = null,
+    includeArchived = false,
+  ): Promise<KnowledgeNoteRow[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(knowledgeNoteRowSchema).parse(
+      await invoke("list_knowledge_notes", { topicId, includeArchived }),
+    );
+  }
+
+  async getNote(noteId: number): Promise<KnowledgeNoteRow> {
+    return knowledgeNoteRowSchema.parse(await invoke("get_knowledge_note", { noteId }));
+  }
+
+  async createNote(input: {
+    title: string;
+    bodyMarkdown: string;
+    summary?: string;
+    noteType: KnowledgeNoteRow["noteType"];
+    status: KnowledgeNoteRow["status"];
+    organizationState: KnowledgeNoteRow["organizationState"];
+    primaryTopicId: number;
+    relatedTopicIds: number[];
+    sourceItemIds: number[];
+  }): Promise<KnowledgeNoteRow> {
+    return knowledgeNoteRowSchema.parse(
+      await invoke("create_knowledge_note", {
+        input: { ...input, summary: input.summary ?? "" },
+      }),
+    );
+  }
+
+  async updateNote(input: {
+    id: number;
+    title: string;
+    bodyMarkdown: string;
+    summary?: string;
+    noteType: KnowledgeNoteRow["noteType"];
+    status: KnowledgeNoteRow["status"];
+    organizationState: KnowledgeNoteRow["organizationState"];
+    primaryTopicId: number;
+    relatedTopicIds: number[];
+    sourceItemIds: number[];
+  }): Promise<KnowledgeNoteRow> {
+    return knowledgeNoteRowSchema.parse(
+      await invoke("update_knowledge_note", {
+        input: { ...input, summary: input.summary ?? "" },
+      }),
+    );
+  }
+
+  async archiveNote(noteId: number): Promise<KnowledgeNoteRow> {
+    return knowledgeNoteRowSchema.parse(
+      await invoke("archive_knowledge_note", { noteId }),
+    );
   }
 
   async addTopicJudgment(input: {

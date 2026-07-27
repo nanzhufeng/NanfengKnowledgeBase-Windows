@@ -20,6 +20,7 @@ import {
   type KnowledgeDomainRow,
   type KnowledgeEntityRow,
   type KnowledgeInboxItem,
+  type KnowledgeNoteRow,
   type KnowledgeTopicAliasRow,
   type KnowledgeTopicDetail,
   type KnowledgeTopicRow,
@@ -77,6 +78,14 @@ export function KnowledgeWorkspace({
   const [evidenceText, setEvidenceText] = useState("");
   const [evidenceSourceId, setEvidenceSourceId] = useState<number | null>(null);
   const [questionText, setQuestionText] = useState("");
+  const [noteEditId, setNoteEditId] = useState<number | null>(null);
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteSummary, setNoteSummary] = useState("");
+  const [noteBody, setNoteBody] = useState("");
+  const [noteType, setNoteType] = useState<KnowledgeNoteRow["noteType"]>("normal");
+  const [noteStatus, setNoteStatus] = useState<KnowledgeNoteRow["status"]>("draft");
+  const [noteRelatedTopicIds, setNoteRelatedTopicIds] = useState<number[]>([]);
+  const [noteSourceItemIds, setNoteSourceItemIds] = useState<number[]>([]);
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
   const [mergePreview, setMergePreview] = useState<TopicMergePreview | null>(null);
@@ -415,6 +424,73 @@ export function KnowledgeWorkspace({
     }
   };
 
+  const resetNoteEditor = () => {
+    setNoteEditId(null);
+    setNoteTitle("");
+    setNoteSummary("");
+    setNoteBody("");
+    setNoteType("normal");
+    setNoteStatus("draft");
+    setNoteRelatedTopicIds([]);
+    setNoteSourceItemIds([]);
+  };
+
+  const beginEditNote = (note: KnowledgeNoteRow) => {
+    setNoteEditId(note.id);
+    setNoteTitle(note.title);
+    setNoteSummary(note.summary);
+    setNoteBody(note.bodyMarkdown);
+    setNoteType(note.noteType);
+    setNoteStatus(note.status);
+    setNoteRelatedTopicIds(note.relatedTopicIds);
+    setNoteSourceItemIds(note.sourceItemIds);
+  };
+
+  const saveNote = async () => {
+    if (!topicDetail || !noteTitle.trim()) return;
+    setBusy(true);
+    try {
+      const input = {
+        title: noteTitle.trim(),
+        summary: noteSummary.trim(),
+        bodyMarkdown: noteBody,
+        noteType,
+        status: noteStatus,
+        organizationState: "organized" as const,
+        primaryTopicId: topicDetail.topic.id,
+        relatedTopicIds: noteRelatedTopicIds,
+        sourceItemIds: noteSourceItemIds,
+      };
+      if (noteEditId) {
+        await repository.updateNote({ id: noteEditId, ...input });
+      } else {
+        await repository.createNote(input);
+      }
+      resetNoteEditor();
+      await reloadTopicDetail();
+      onNotify(noteEditId ? "笔记已更新，原始来源未被改写" : "独立笔记已创建");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "笔记保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archiveNote = async (noteId: number) => {
+    if (!window.confirm("归档这篇笔记？原始来源、主题和笔记正文都会保留。")) return;
+    setBusy(true);
+    try {
+      await repository.archiveNote(noteId);
+      if (noteEditId === noteId) resetNoteEditor();
+      await reloadTopicDetail();
+      onNotify("笔记已归档，可通过编辑重新启用");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "笔记归档失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const generateSuggestions = async () => {
     if (!selected || !topics.length) {
       onNotify("请先在“主题浏览器”建立至少一个真实主题");
@@ -576,7 +652,10 @@ export function KnowledgeWorkspace({
                     className={`knowledge-topic-row ${browserTopicId === topic.id ? "active" : ""}`}
                     key={topic.id}
                     style={{ paddingLeft: `${Math.min(topic.depth - 1, 4) * 22 + 12}px` }}
-                    onClick={() => setBrowserTopicId(topic.id)}
+                    onClick={() => {
+                      setBrowserTopicId(topic.id);
+                      resetNoteEditor();
+                    }}
                   >
                     <ChevronRight size={14} /><span>{topic.name}</span><em>{topic.sourceCount} 条来源</em>
                   </button>
@@ -666,6 +745,158 @@ export function KnowledgeWorkspace({
                   await reloadTopicDetail();
                   onNotify("待验证问题已添加");
                 }}><Plus size={15} />添加问题</button>
+              </div>
+            </div>
+            <div className="knowledge-note-workspace">
+              <div className="knowledge-note-list">
+                <div className="knowledge-note-section-title">
+                  <div>
+                    <span>独立知识对象</span>
+                    <h3>笔记</h3>
+                  </div>
+                  <em>{topicDetail.notes.length} 篇</em>
+                </div>
+                {topicDetail.notes.map((note) => (
+                  <article
+                    className={`knowledge-note-item ${note.status === "archived" ? "archived" : ""}`}
+                    key={note.id}
+                  >
+                    <div className="knowledge-note-item-header">
+                      <div>
+                        <strong>{note.title}</strong>
+                        <small>{note.noteType} · {note.status}</small>
+                      </div>
+                      <div>
+                        <button disabled={busy} onClick={() => beginEditNote(note)}>编辑</button>
+                        {note.status !== "archived" ? (
+                          <button className="danger" disabled={busy} onClick={() => void archiveNote(note.id)}>
+                            归档
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    {note.summary ? <p>{note.summary}</p> : null}
+                    {note.bodyMarkdown ? <MarkdownContent value={note.bodyMarkdown} /> : null}
+                    <footer>
+                      <span>{note.sourceItemIds.length} 条来源</span>
+                      <span>{note.relatedTopicIds.length} 个相关主题</span>
+                      <time>{note.updatedAt}</time>
+                    </footer>
+                  </article>
+                ))}
+                {!topicDetail.notes.length ? (
+                  <p className="knowledge-empty">这个主题尚无独立笔记。右侧新建后，来源正文不会被改写。</p>
+                ) : null}
+              </div>
+              <div className="knowledge-note-editor">
+                <div className="knowledge-note-section-title">
+                  <div>
+                    <span>{noteEditId ? "保留关联后更新" : "从主题沉淀知识"}</span>
+                    <h3>{noteEditId ? "编辑笔记" : "新建笔记"}</h3>
+                  </div>
+                </div>
+                <label>
+                  标题
+                  <input
+                    value={noteTitle}
+                    onChange={(event) => setNoteTitle(event.target.value)}
+                    placeholder="清晰、可复用的笔记标题"
+                  />
+                </label>
+                <label>
+                  摘要
+                  <input
+                    value={noteSummary}
+                    onChange={(event) => setNoteSummary(event.target.value)}
+                    placeholder="可选，一句话说明结论或用途"
+                  />
+                </label>
+                <div className="knowledge-note-editor-row">
+                  <label>
+                    类型
+                    <select
+                      value={noteType}
+                      onChange={(event) => setNoteType(event.target.value as KnowledgeNoteRow["noteType"])}
+                    >
+                      <option value="normal">普通笔记</option>
+                      <option value="research">研究笔记</option>
+                      <option value="conclusion">结论</option>
+                      <option value="review">复盘</option>
+                      <option value="decision">决策</option>
+                      <option value="project">项目</option>
+                      <option value="summary">摘要</option>
+                    </select>
+                  </label>
+                  <label>
+                    状态
+                    <select
+                      value={noteStatus}
+                      onChange={(event) => setNoteStatus(event.target.value as KnowledgeNoteRow["status"])}
+                    >
+                      <option value="draft">草稿</option>
+                      <option value="active">生效</option>
+                      <option value="archived">归档</option>
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  正文（Markdown）
+                  <textarea
+                    value={noteBody}
+                    onChange={(event) => setNoteBody(event.target.value)}
+                    placeholder="记录分析、结论和后续行动"
+                  />
+                </label>
+                <label>
+                  相关主题
+                  <select
+                    multiple
+                    value={noteRelatedTopicIds.map(String)}
+                    onChange={(event) => {
+                      setNoteRelatedTopicIds(
+                        Array.from(event.currentTarget.selectedOptions, (option) => Number(option.value)),
+                      );
+                    }}
+                  >
+                    {topics
+                      .filter((topic) => topic.id !== topicDetail.topic.id && topic.status !== "merged")
+                      .map((topic) => (
+                        <option key={topic.id} value={topic.id}>
+                          {topicPath(topic, topics).join(" / ")}
+                        </option>
+                      ))}
+                  </select>
+                  <small>按住 Ctrl 可多选；主要主题固定为当前知识页。</small>
+                </label>
+                <fieldset>
+                  <legend>关联来源</legend>
+                  <div className="knowledge-note-source-list">
+                    {topicDetail.sources.map((source) => (
+                      <label key={source.id}>
+                        <input
+                          type="checkbox"
+                          checked={noteSourceItemIds.includes(source.id)}
+                          onChange={(event) => {
+                            setNoteSourceItemIds((current) => event.target.checked
+                              ? Array.from(new Set([...current, source.id]))
+                              : current.filter((id) => id !== source.id));
+                          }}
+                        />
+                        <span>{source.title}</span>
+                      </label>
+                    ))}
+                    {!topicDetail.sources.length ? <small>当前主题尚无可关联来源。</small> : null}
+                  </div>
+                </fieldset>
+                <div className="knowledge-note-editor-actions">
+                  <button disabled={busy || !noteTitle.trim()} onClick={() => void saveNote()}>
+                    {noteEditId ? "保存笔记" : "创建笔记"}
+                  </button>
+                  {noteEditId ? (
+                    <button className="secondary" disabled={busy} onClick={resetNoteEditor}>取消编辑</button>
+                  ) : null}
+                </div>
+                <p className="knowledge-note-safety">笔记是独立对象；保存只更新笔记及关联表，不覆盖任何原始来源正文。</p>
               </div>
             </div>
           </section>
