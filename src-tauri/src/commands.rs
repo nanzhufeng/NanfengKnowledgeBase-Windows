@@ -97,6 +97,155 @@ pub fn list_knowledge_topics(
 }
 
 #[tauri::command]
+pub fn get_personal_topic_catalog_proposal(
+) -> crate::knowledge::personal_catalog::PersonalCatalogProposal {
+    crate::knowledge::repository::get_personal_catalog_proposal()
+}
+
+#[tauri::command]
+pub fn apply_personal_topic_catalog(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::ApplyPersonalCatalogInput,
+) -> Result<crate::knowledge::repository::ApplyPersonalCatalogResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::apply_personal_catalog(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn list_knowledge_topic_aliases(
+    state: State<'_, AppState>,
+    topic_id: Option<i64>,
+) -> Result<Vec<crate::knowledge::repository::TopicAliasRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_topic_aliases(
+        &connection,
+        topic_id,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_topic_alias(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateTopicAliasInput,
+) -> Result<crate::knowledge::repository::TopicAliasRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_topic_alias(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn update_knowledge_topic_alias(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateTopicAliasInput,
+) -> Result<crate::knowledge::repository::TopicAliasRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_topic_alias(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn delete_knowledge_topic_alias(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeDeleteResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::delete_topic_alias(
+        &connection,
+        id,
+    ))
+}
+
+#[tauri::command]
+pub fn list_knowledge_entities(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::knowledge::repository::EntityDictionaryRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_entity_dictionary(
+        &connection,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_entity(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateEntityDictionaryInput,
+) -> Result<crate::knowledge::repository::EntityDictionaryRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_entity_dictionary_entry(&connection, &input))
+}
+
+#[tauri::command]
+pub fn update_knowledge_entity(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateEntityDictionaryInput,
+) -> Result<crate::knowledge::repository::EntityDictionaryRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_entity_dictionary_entry(&connection, &input))
+}
+
+#[tauri::command]
+pub fn delete_knowledge_entity(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeDeleteResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::delete_entity_dictionary_entry(&connection, id))
+}
+
+#[tauri::command]
+pub fn list_knowledge_classification_rules(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::knowledge::repository::ClassificationRuleRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_classification_rules(
+        &connection,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_classification_rule(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateClassificationRuleInput,
+) -> Result<crate::knowledge::repository::ClassificationRuleRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_classification_rule(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn update_knowledge_classification_rule(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateClassificationRuleInput,
+) -> Result<crate::knowledge::repository::ClassificationRuleRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_classification_rule(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn delete_knowledge_classification_rule(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeDeleteResult, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::delete_classification_rule(
+        &connection,
+        id,
+    ))
+}
+
+#[tauri::command]
 pub fn prepare_knowledge_classification_context(
     state: State<'_, AppState>,
     source_item_id: i64,

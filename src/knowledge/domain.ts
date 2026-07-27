@@ -96,6 +96,7 @@ export type ClassificationRule = {
   topicId: string;
   field: ClassificationRuleField;
   operator: "contains" | "equals";
+  effect?: "include" | "exclude";
   value: string;
   jsonField?: string;
   strength: number;

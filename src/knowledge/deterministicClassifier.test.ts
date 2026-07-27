@@ -83,6 +83,40 @@ describe("deterministicClassifier", () => {
     expect(fullText?.reasons).toContain("FTS5/BM25 标题与正文加权命中");
   });
 
+  it("applies persisted negative rules as an explainable explicit-rule penalty", () => {
+    const topic = classificationTopics[0];
+    const result = classifySource({
+      source: {
+        ...classificationSourceFixtures[0].source,
+        title: "招聘：AI 资本开支分析师",
+      },
+      topics: [topic],
+      rules: [{
+        id: "negative-job",
+        topicId: topic.id,
+        field: "title",
+        operator: "contains",
+        effect: "exclude",
+        value: "招聘",
+        strength: 1,
+        reason: "招聘信息不进入投资研究",
+        enabled: true,
+      }],
+      history: {
+        confirmedTopicCounts: {},
+        recentTopicIds: [],
+        batchTopicIds: {},
+      },
+    });
+
+    const explicit = result.suggestions[0].signalScores.find(
+      (signal) => signal.key === "explicit_rules",
+    );
+    expect(explicit?.normalizedScore).toBe(-1);
+    expect(explicit?.contributedPoints).toBe(-35);
+    expect(explicit?.reasons[0]).toContain("排除规则");
+  });
+
   it("rejects rules that point to a missing topic", () => {
     const fixture = classificationSourceFixtures[0];
     expect(() =>

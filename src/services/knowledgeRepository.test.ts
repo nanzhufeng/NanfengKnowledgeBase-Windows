@@ -44,6 +44,7 @@ describe("KnowledgeRepository classification context", () => {
         topicId: "7",
         field: "text",
         operator: "contains",
+        effect: "include",
         value: "token",
         jsonField: null,
         strength: 0.8,

@@ -26,6 +26,9 @@ test("整理工作台展示正式的预览与确认结构", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "合并主题" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "拆分预览" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "关系建议" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "主题别名" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "实体词典" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "分类规则" })).toBeVisible();
   await expect(page.getByText("预览在前、提交可撤销；所有结果来自正式知识表。")).toBeVisible();
   await expect(page.getByText("当前没有满足确定性门槛的关系候选。")).toBeVisible();
 });

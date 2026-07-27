@@ -117,9 +117,20 @@ function evaluateExplicitRules(
     (rule) => rule.enabled && rule.topicId === topic.id && ruleMatches(source, rule),
   );
   if (!matched.length) return { normalizedScore: 0, reasons: [] };
+  const included = matched.filter((rule) => rule.effect !== "exclude");
+  const excluded = matched.filter((rule) => rule.effect === "exclude");
+  const includedStrength = included.length
+    ? Math.max(...included.map((rule) => rule.strength))
+    : 0;
+  const excludedStrength = excluded.length
+    ? Math.max(...excluded.map((rule) => rule.strength))
+    : 0;
   return {
-    normalizedScore: clamp01(Math.max(...matched.map((rule) => rule.strength))),
-    reasons: matched.map((rule) => rule.reason),
+    normalizedScore: Math.max(-1, Math.min(1, includedStrength - excludedStrength)),
+    reasons: [
+      ...included.map((rule) => rule.reason),
+      ...excluded.map((rule) => `排除规则：${rule.reason}`),
+    ],
   };
 }
 
@@ -243,9 +254,10 @@ function scoreTopic(context: ClassificationContext, topic: KnowledgeTopicCandida
     ),
     toSignalScore("history", evaluateHistory(context, topic)),
   ];
-  const confidence = round(
-    signalScores.reduce((total, signal) => total + signal.contributedPoints, 0),
-  );
+  const confidence = round(Math.max(
+    0,
+    Math.min(100, signalScores.reduce((total, signal) => total + signal.contributedPoints, 0)),
+  ));
   return {
     topicId: topic.id,
     topicPath: topic.path,

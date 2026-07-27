@@ -103,6 +103,7 @@ const classificationContextSchema = z.object({
       "json_field",
     ]),
     operator: z.enum(["contains", "equals"]),
+    effect: z.enum(["include", "exclude"]),
     value: z.string(),
     jsonField: nullableOptionalStringSchema,
     strength: z.number().min(0).max(1),
@@ -119,6 +120,98 @@ const classificationContextSchema = z.object({
     normalizedScore: z.number().min(0).max(1),
     reason: z.string(),
   })),
+});
+
+const personalCatalogProposalSchema = z.object({
+  version: z.string(),
+  status: z.literal("proposal"),
+  title: z.string(),
+  note: z.string(),
+  domains: z.array(z.object({
+    key: z.string(),
+    name: z.string(),
+    description: z.string(),
+  })),
+  topics: z.array(z.object({
+    key: z.string(),
+    domainKey: z.string(),
+    parentKey: z.string().nullable(),
+    name: z.string(),
+    description: z.string(),
+    topicKind: z.string(),
+    aliases: z.array(z.string()),
+    entities: z.array(z.string()),
+    keywords: z.array(z.string()),
+  })),
+});
+
+const personalCatalogApplyResultSchema = z.object({
+  version: z.string(),
+  createdDomains: z.number().int().nonnegative(),
+  existingDomains: z.number().int().nonnegative(),
+  createdTopics: z.number().int().nonnegative(),
+  existingTopics: z.number().int().nonnegative(),
+  createdAliases: z.number().int().nonnegative(),
+  createdEntities: z.number().int().nonnegative(),
+  createdRules: z.number().int().nonnegative(),
+});
+
+const topicAliasRowSchema = z.object({
+  id: z.number().int(),
+  topicId: z.number().int(),
+  alias: z.string(),
+  aliasType: z.enum(["name", "abbreviation", "redirect", "legacy_tag"]),
+  createdAt: z.string(),
+});
+
+const entityDictionaryRowSchema = z.object({
+  id: z.number().int(),
+  canonicalName: z.string(),
+  entityType: z.enum([
+    "company",
+    "person",
+    "product",
+    "model",
+    "industry",
+    "place",
+    "project",
+    "custom",
+    "other",
+  ]),
+  aliases: z.array(z.string()),
+  description: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const classificationRuleRowSchema = z.object({
+  id: z.number().int(),
+  publicId: z.string(),
+  ruleType: z.enum([
+    "keyword",
+    "exact_alias",
+    "negative_keyword",
+    "file_path",
+    "entity",
+    "source",
+    "legacy_tag",
+    "stopword",
+    "domain_hint",
+  ]),
+  pattern: z.string(),
+  targetDomainId: z.number().int().nullable(),
+  targetTopicId: z.number().int().nullable(),
+  weight: z.number().min(0).max(1),
+  priority: z.number().int(),
+  enabled: z.boolean(),
+  configJson: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const deleteResultSchema = z.object({
+  id: z.number().int(),
+  deleted: z.boolean(),
 });
 
 const operationResultSchema = z.object({
@@ -245,6 +338,22 @@ export type TopicMergePreview = z.infer<typeof topicMergePreviewSchema>;
 export type TopicMergeResult = z.infer<typeof topicMergeResultSchema>;
 export type TopicSplitPreview = z.infer<typeof topicSplitPreviewSchema>;
 export type TopicRelationSuggestion = z.infer<typeof topicRelationSuggestionSchema>;
+export type PersonalCatalogProposal = z.infer<typeof personalCatalogProposalSchema>;
+export type PersonalCatalogApplyResult = z.infer<typeof personalCatalogApplyResultSchema>;
+export type KnowledgeTopicAliasRow = z.infer<typeof topicAliasRowSchema>;
+export type KnowledgeEntityRow = z.infer<typeof entityDictionaryRowSchema>;
+export type KnowledgeClassificationRuleRow = z.infer<typeof classificationRuleRowSchema>;
+
+export type ClassificationRuleMutationInput = {
+  ruleType: KnowledgeClassificationRuleRow["ruleType"];
+  pattern: string;
+  targetDomainId: number | null;
+  targetTopicId: number | null;
+  weight: number;
+  priority: number;
+  enabled: boolean;
+  configJson?: string;
+};
 
 export type SaveKnowledgeSuggestionsInput = {
   sourceItemId: number;
@@ -287,6 +396,119 @@ export class KnowledgeRepository {
   async prepareClassificationContext(sourceItemId: number): Promise<ClassificationContext> {
     return classificationContextSchema.parse(
       await invoke("prepare_knowledge_classification_context", { sourceItemId }),
+    );
+  }
+
+  async getPersonalCatalogProposal(): Promise<PersonalCatalogProposal | null> {
+    if (!this.desktopAvailable) return null;
+    return personalCatalogProposalSchema.parse(
+      await invoke("get_personal_topic_catalog_proposal"),
+    );
+  }
+
+  async applyPersonalCatalog(version: string): Promise<PersonalCatalogApplyResult> {
+    return personalCatalogApplyResultSchema.parse(
+      await invoke("apply_personal_topic_catalog", { input: { version } }),
+    );
+  }
+
+  async listTopicAliases(topicId: number | null = null): Promise<KnowledgeTopicAliasRow[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(topicAliasRowSchema).parse(
+      await invoke("list_knowledge_topic_aliases", { topicId }),
+    );
+  }
+
+  async createTopicAlias(input: {
+    topicId: number;
+    alias: string;
+    aliasType: KnowledgeTopicAliasRow["aliasType"];
+  }): Promise<KnowledgeTopicAliasRow> {
+    return topicAliasRowSchema.parse(
+      await invoke("create_knowledge_topic_alias", { input }),
+    );
+  }
+
+  async updateTopicAlias(input: {
+    id: number;
+    alias: string;
+    aliasType: KnowledgeTopicAliasRow["aliasType"];
+  }): Promise<KnowledgeTopicAliasRow> {
+    return topicAliasRowSchema.parse(
+      await invoke("update_knowledge_topic_alias", { input }),
+    );
+  }
+
+  async deleteTopicAlias(id: number) {
+    return deleteResultSchema.parse(await invoke("delete_knowledge_topic_alias", { id }));
+  }
+
+  async listEntities(): Promise<KnowledgeEntityRow[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(entityDictionaryRowSchema).parse(await invoke("list_knowledge_entities"));
+  }
+
+  async createEntity(input: {
+    canonicalName: string;
+    entityType: KnowledgeEntityRow["entityType"];
+    aliases: string[];
+    description?: string;
+  }): Promise<KnowledgeEntityRow> {
+    return entityDictionaryRowSchema.parse(
+      await invoke("create_knowledge_entity", {
+        input: { ...input, description: input.description ?? "" },
+      }),
+    );
+  }
+
+  async updateEntity(input: {
+    id: number;
+    canonicalName: string;
+    entityType: KnowledgeEntityRow["entityType"];
+    aliases: string[];
+    description?: string;
+  }): Promise<KnowledgeEntityRow> {
+    return entityDictionaryRowSchema.parse(
+      await invoke("update_knowledge_entity", {
+        input: { ...input, description: input.description ?? "" },
+      }),
+    );
+  }
+
+  async deleteEntity(id: number) {
+    return deleteResultSchema.parse(await invoke("delete_knowledge_entity", { id }));
+  }
+
+  async listClassificationRules(): Promise<KnowledgeClassificationRuleRow[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(classificationRuleRowSchema).parse(
+      await invoke("list_knowledge_classification_rules"),
+    );
+  }
+
+  async createClassificationRule(
+    input: ClassificationRuleMutationInput,
+  ): Promise<KnowledgeClassificationRuleRow> {
+    return classificationRuleRowSchema.parse(
+      await invoke("create_knowledge_classification_rule", {
+        input: { ...input, configJson: input.configJson ?? "{}" },
+      }),
+    );
+  }
+
+  async updateClassificationRule(
+    input: ClassificationRuleMutationInput & { id: number },
+  ): Promise<KnowledgeClassificationRuleRow> {
+    return classificationRuleRowSchema.parse(
+      await invoke("update_knowledge_classification_rule", {
+        input: { ...input, configJson: input.configJson ?? "{}" },
+      }),
+    );
+  }
+
+  async deleteClassificationRule(id: number) {
+    return deleteResultSchema.parse(
+      await invoke("delete_knowledge_classification_rule", { id }),
     );
   }
 

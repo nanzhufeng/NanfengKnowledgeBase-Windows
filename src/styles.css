@@ -4205,6 +4205,7 @@ textarea:focus-visible,
 }
 
 .knowledge-governance-controls select,
+.knowledge-governance-controls input,
 .knowledge-governance-controls button,
 .knowledge-operation-preview button,
 .knowledge-relation-list button {
@@ -4215,6 +4216,107 @@ textarea:focus-visible,
   color: #173766;
   padding: 0 12px;
   font: inherit;
+}
+
+.knowledge-catalog-proposal {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.knowledge-catalog-proposal summary {
+  cursor: pointer;
+  color: #173766;
+  font-weight: 700;
+}
+
+.knowledge-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.knowledge-catalog-grid article {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #dce4ef;
+  border-radius: 10px;
+  background: #f9fbfe;
+}
+
+.knowledge-catalog-grid strong {
+  color: #153664;
+}
+
+.knowledge-catalog-grid small,
+.knowledge-catalog-grid span {
+  color: #6f7d91;
+  font-size: 12px;
+}
+
+.knowledge-confirm-check {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.knowledge-confirm-check input {
+  min-height: auto;
+}
+
+.knowledge-classification-management {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.knowledge-management-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.knowledge-management-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid #e0e6ef;
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.knowledge-management-list span {
+  display: grid;
+  min-width: 0;
+}
+
+.knowledge-management-list strong,
+.knowledge-management-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-management-list strong {
+  color: #173766;
+}
+
+.knowledge-management-list small {
+  color: #78869a;
+}
+
+.knowledge-management-list button {
+  min-height: 30px;
+  border: 1px solid #d7dfeb;
+  border-radius: 8px;
+  background: #fff;
+  color: #53647b;
+  cursor: pointer;
 }
 
 .knowledge-governance-controls button,
@@ -4351,8 +4453,13 @@ textarea:focus-visible,
 }
 
 @media (max-width: 1100px) {
-  .knowledge-governance-grid {
+  .knowledge-governance-grid,
+  .knowledge-classification-management {
     grid-template-columns: 1fr;
+  }
+
+  .knowledge-catalog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -4365,6 +4472,12 @@ textarea:focus-visible,
     max-height: 36vh;
   }
   .knowledge-detail-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .knowledge-catalog-grid {
     grid-template-columns: 1fr;
   }
 }

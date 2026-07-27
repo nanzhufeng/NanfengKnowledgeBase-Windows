@@ -16,10 +16,14 @@ import { CLASSIFIER_ALGORITHM_VERSION, classifySource } from "../knowledge/deter
 import {
   KnowledgeRepository,
   type KnowledgeClassificationSuggestionRow,
+  type KnowledgeClassificationRuleRow,
   type KnowledgeDomainRow,
+  type KnowledgeEntityRow,
   type KnowledgeInboxItem,
+  type KnowledgeTopicAliasRow,
   type KnowledgeTopicDetail,
   type KnowledgeTopicRow,
+  type PersonalCatalogProposal,
   type TopicMergePreview,
   type TopicRelationSuggestion,
   type TopicSplitPreview,
@@ -79,23 +83,60 @@ export function KnowledgeWorkspace({
   const [splitTopicId, setSplitTopicId] = useState<number | null>(null);
   const [splitPreview, setSplitPreview] = useState<TopicSplitPreview | null>(null);
   const [relationSuggestions, setRelationSuggestions] = useState<TopicRelationSuggestion[]>([]);
+  const [catalogProposal, setCatalogProposal] = useState<PersonalCatalogProposal | null>(null);
+  const [catalogReviewed, setCatalogReviewed] = useState(false);
+  const [topicAliases, setTopicAliases] = useState<KnowledgeTopicAliasRow[]>([]);
+  const [entities, setEntities] = useState<KnowledgeEntityRow[]>([]);
+  const [classificationRules, setClassificationRules] = useState<KnowledgeClassificationRuleRow[]>([]);
+  const [aliasEditId, setAliasEditId] = useState<number | null>(null);
+  const [aliasTopicId, setAliasTopicId] = useState<number | null>(null);
+  const [aliasValue, setAliasValue] = useState("");
+  const [aliasType, setAliasType] = useState<KnowledgeTopicAliasRow["aliasType"]>("name");
+  const [entityEditId, setEntityEditId] = useState<number | null>(null);
+  const [entityName, setEntityName] = useState("");
+  const [entityType, setEntityType] = useState<KnowledgeEntityRow["entityType"]>("other");
+  const [entityAliasesText, setEntityAliasesText] = useState("");
+  const [ruleEditId, setRuleEditId] = useState<number | null>(null);
+  const [ruleTopicId, setRuleTopicId] = useState<number | null>(null);
+  const [ruleType, setRuleType] = useState<KnowledgeClassificationRuleRow["ruleType"]>("keyword");
+  const [rulePattern, setRulePattern] = useState("");
+  const [ruleWeight, setRuleWeight] = useState(0.8);
+  const [ruleEnabled, setRuleEnabled] = useState(true);
 
   const selected = inbox.find((item) => item.id === selectedId) ?? null;
 
   const reload = async () => {
-    const [nextInbox, nextDomains, nextTopics] = await Promise.all([
+    const [
+      nextInbox,
+      nextDomains,
+      nextTopics,
+      nextCatalog,
+      nextAliases,
+      nextEntities,
+      nextRules,
+    ] = await Promise.all([
       repository.listInbox(),
       repository.listDomains(),
       repository.listTopics(),
+      repository.getPersonalCatalogProposal(),
+      repository.listTopicAliases(),
+      repository.listEntities(),
+      repository.listClassificationRules(),
     ]);
     setInbox(nextInbox);
     setDomains(nextDomains);
     setTopics(nextTopics);
+    setCatalogProposal(nextCatalog);
+    setTopicAliases(nextAliases);
+    setEntities(nextEntities);
+    setClassificationRules(nextRules);
     setSelectedId((current) =>
       current && nextInbox.some((item) => item.id === current)
         ? current
         : nextInbox[0]?.id ?? null);
     setTopicDomainId((current) => current ?? nextDomains[0]?.id ?? null);
+    setAliasTopicId((current) => current ?? nextTopics[0]?.id ?? null);
+    setRuleTopicId((current) => current ?? nextTopics[0]?.id ?? null);
     setBrowserTopicId((current) =>
       current && nextTopics.some((topic) => topic.id === current)
         ? current
@@ -219,6 +260,161 @@ export function KnowledgeWorkspace({
     }
   };
 
+  const applyCatalog = async () => {
+    if (!catalogProposal || !catalogReviewed) return;
+    setBusy(true);
+    try {
+      const result = await repository.applyPersonalCatalog(catalogProposal.version);
+      await reload();
+      setCatalogReviewed(false);
+      onNotify(
+        `个人目录已确认：新增 ${result.createdDomains} 个领域、${result.createdTopics} 个主题，已有内容未覆盖`,
+      );
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "个人目录写入失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAlias = async () => {
+    if (!aliasTopicId || !aliasValue.trim()) return;
+    setBusy(true);
+    try {
+      if (aliasEditId) {
+        await repository.updateTopicAlias({
+          id: aliasEditId,
+          alias: aliasValue.trim(),
+          aliasType,
+        });
+      } else {
+        await repository.createTopicAlias({
+          topicId: aliasTopicId,
+          alias: aliasValue.trim(),
+          aliasType,
+        });
+      }
+      setAliasEditId(null);
+      setAliasValue("");
+      setTopicAliases(await repository.listTopicAliases());
+      onNotify(aliasEditId ? "主题别名已更新" : "主题别名已创建");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "主题别名保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEntity = async () => {
+    if (!entityName.trim()) return;
+    const aliases = entityAliasesText
+      .split(/[,，、\n]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    setBusy(true);
+    try {
+      if (entityEditId) {
+        await repository.updateEntity({
+          id: entityEditId,
+          canonicalName: entityName.trim(),
+          entityType,
+          aliases,
+        });
+      } else {
+        await repository.createEntity({
+          canonicalName: entityName.trim(),
+          entityType,
+          aliases,
+        });
+      }
+      setEntityEditId(null);
+      setEntityName("");
+      setEntityAliasesText("");
+      setEntities(await repository.listEntities());
+      onNotify(entityEditId ? "实体词典已更新" : "实体词典已创建");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "实体词典保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveRule = async () => {
+    if (!ruleTopicId || !rulePattern.trim()) return;
+    const target = topics.find((topic) => topic.id === ruleTopicId);
+    if (!target) return;
+    setBusy(true);
+    try {
+      const input = {
+        ruleType,
+        pattern: rulePattern.trim(),
+        targetDomainId: target.domainId,
+        targetTopicId: target.id,
+        weight: ruleWeight,
+        priority: 0,
+        enabled: ruleEnabled,
+      };
+      if (ruleEditId) {
+        await repository.updateClassificationRule({ id: ruleEditId, ...input });
+      } else {
+        await repository.createClassificationRule(input);
+      }
+      setRuleEditId(null);
+      setRulePattern("");
+      setClassificationRules(await repository.listClassificationRules());
+      onNotify(ruleEditId ? "分类规则已更新" : "分类规则已创建");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "分类规则保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteAlias = async (id: number) => {
+    if (!window.confirm("删除这个主题别名？主题和来源不会被删除。")) return;
+    setBusy(true);
+    try {
+      const result = await repository.deleteTopicAlias(id);
+      if (!result.deleted) throw new Error("主题别名已经不存在");
+      setTopicAliases(await repository.listTopicAliases());
+      onNotify("主题别名已删除");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "主题别名删除失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteEntity = async (id: number) => {
+    if (!window.confirm("删除这个实体词典条目？已有来源不会被修改。")) return;
+    setBusy(true);
+    try {
+      const result = await repository.deleteEntity(id);
+      if (!result.deleted) throw new Error("实体词典条目已经不存在");
+      setEntities(await repository.listEntities());
+      onNotify("实体词典条目已删除");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "实体词典删除失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteRule = async (id: number) => {
+    if (!window.confirm("删除这条分类规则？历史分类结果不会被重写。")) return;
+    setBusy(true);
+    try {
+      const result = await repository.deleteClassificationRule(id);
+      if (!result.deleted) throw new Error("分类规则已经不存在");
+      setClassificationRules(await repository.listClassificationRules());
+      onNotify("分类规则已删除");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "分类规则删除失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const generateSuggestions = async () => {
     if (!selected || !topics.length) {
       onNotify("请先在“主题浏览器”建立至少一个真实主题");
@@ -291,6 +487,51 @@ export function KnowledgeWorkspace({
           <div><span>长期结构</span><h1>主题浏览器</h1><p>数据库保存任意深度；界面默认展开前四层。</p></div>
           <FolderTree size={28} />
         </header>
+        {catalogProposal ? (
+          <section className="knowledge-card knowledge-catalog-proposal">
+            <div className="knowledge-panel-title">
+              <Layers3 size={20} />
+              <div>
+                <h2>{catalogProposal.title}</h2>
+                <p>{catalogProposal.note}</p>
+              </div>
+            </div>
+            <details>
+              <summary>
+                审阅 {catalogProposal.domains.length} 个领域、{catalogProposal.topics.length} 个主题
+              </summary>
+              <div className="knowledge-catalog-grid">
+                {catalogProposal.domains.map((domain) => (
+                  <article key={domain.key}>
+                    <strong>{domain.name}</strong>
+                    <small>{domain.description}</small>
+                    <span>
+                      {catalogProposal.topics
+                        .filter((topic) => topic.domainKey === domain.key)
+                        .map((topic) => topic.name)
+                        .join("、")}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            </details>
+            <label className="knowledge-confirm-check">
+              <input
+                type="checkbox"
+                checked={catalogReviewed}
+                onChange={(event) => setCatalogReviewed(event.target.checked)}
+              />
+              我已审阅；确认后只补齐缺失项，不覆盖现有主题
+            </label>
+            <button
+              className="knowledge-primary-action"
+              disabled={busy || !catalogReviewed}
+              onClick={() => void applyCatalog()}
+            >
+              <Check size={16} />确认并补齐个人目录
+            </button>
+          </section>
+        ) : null}
         <section className="knowledge-topic-layout">
           <div className="knowledge-card knowledge-create-card">
             <h2>建立领域与主题</h2>
@@ -447,6 +688,122 @@ export function KnowledgeWorkspace({
           <div className="knowledge-card"><strong>{inbox.length}</strong><span>待归类来源</span></div>
           <div className="knowledge-card"><strong>{topics.filter((topic) => topic.sourceCount === 0).length}</strong><span>空主题</span></div>
           <div className="knowledge-card"><strong>{duplicateNames.length}</strong><span>同名候选</span></div>
+        </section>
+        <section className="knowledge-classification-management">
+          <article className="knowledge-card knowledge-governance-panel">
+            <div className="knowledge-panel-title"><Link2 size={19} /><div><h2>主题别名</h2><p>名称、缩写与旧路径都参与分类和搜索。</p></div></div>
+            <div className="knowledge-governance-controls">
+              <label>目标主题<select value={aliasTopicId ?? ""} onChange={(event) => setAliasTopicId(event.target.value ? Number(event.target.value) : null)}>
+                <option value="">请选择</option>
+                {activeTopics.map((topic) => <option key={topic.id} value={topic.id}>{topicPath(topic, topics).join(" / ")}</option>)}
+              </select></label>
+              <label>别名<input value={aliasValue} onChange={(event) => setAliasValue(event.target.value)} placeholder="例如：Google 风控" /></label>
+              <label>类型<select value={aliasType} onChange={(event) => setAliasType(event.target.value as KnowledgeTopicAliasRow["aliasType"])}>
+                <option value="name">常用名称</option>
+                <option value="abbreviation">缩写</option>
+                <option value="redirect">旧路径重定向</option>
+                <option value="legacy_tag">旧标签</option>
+              </select></label>
+              <button disabled={busy || !aliasTopicId || !aliasValue.trim()} onClick={() => void saveAlias()}>
+                {aliasEditId ? "保存修改" : "添加别名"}
+              </button>
+            </div>
+            <div className="knowledge-management-list">
+              {topicAliases.slice(0, 12).map((alias) => (
+                <div key={alias.id}>
+                  <span><strong>{alias.alias}</strong><small>{topics.find((topic) => topic.id === alias.topicId)?.name ?? "未知主题"} · {alias.aliasType}</small></span>
+                  <button onClick={() => {
+                    setAliasEditId(alias.id);
+                    setAliasTopicId(alias.topicId);
+                    setAliasValue(alias.alias);
+                    setAliasType(alias.aliasType);
+                  }}>编辑</button>
+                  <button disabled={busy} onClick={() => void deleteAlias(alias.id)}>删除</button>
+                </div>
+              ))}
+              {!topicAliases.length ? <p className="knowledge-empty">尚无正式主题别名。</p> : null}
+            </div>
+          </article>
+
+          <article className="knowledge-card knowledge-governance-panel">
+            <div className="knowledge-panel-title"><Sparkles size={19} /><div><h2>实体词典</h2><p>统一公司、产品、模型、地点和项目名称。</p></div></div>
+            <div className="knowledge-governance-controls">
+              <label>标准名称<input value={entityName} onChange={(event) => setEntityName(event.target.value)} placeholder="例如：Microsoft" /></label>
+              <label>类型<select value={entityType} onChange={(event) => setEntityType(event.target.value as KnowledgeEntityRow["entityType"])}>
+                <option value="company">公司</option>
+                <option value="person">人物</option>
+                <option value="product">产品</option>
+                <option value="model">模型</option>
+                <option value="industry">行业</option>
+                <option value="place">地点</option>
+                <option value="project">项目</option>
+                <option value="custom">自定义</option>
+                <option value="other">其他</option>
+              </select></label>
+              <label>同义名称<input value={entityAliasesText} onChange={(event) => setEntityAliasesText(event.target.value)} placeholder="用逗号分隔，例如：微软、MSFT" /></label>
+              <button disabled={busy || !entityName.trim()} onClick={() => void saveEntity()}>
+                {entityEditId ? "保存修改" : "添加实体"}
+              </button>
+            </div>
+            <div className="knowledge-management-list">
+              {entities.slice(0, 12).map((entity) => (
+                <div key={entity.id}>
+                  <span><strong>{entity.canonicalName}</strong><small>{entity.entityType}{entity.aliases.length ? ` · ${entity.aliases.join("、")}` : ""}</small></span>
+                  <button onClick={() => {
+                    setEntityEditId(entity.id);
+                    setEntityName(entity.canonicalName);
+                    setEntityType(entity.entityType);
+                    setEntityAliasesText(entity.aliases.join("、"));
+                  }}>编辑</button>
+                  <button disabled={busy} onClick={() => void deleteEntity(entity.id)}>删除</button>
+                </div>
+              ))}
+              {!entities.length ? <p className="knowledge-empty">尚无正式实体词典。</p> : null}
+            </div>
+          </article>
+
+          <article className="knowledge-card knowledge-governance-panel">
+            <div className="knowledge-panel-title"><Sparkles size={19} /><div><h2>分类规则</h2><p>显式规则可启用、停用和修正，不覆盖原始资料。</p></div></div>
+            <div className="knowledge-governance-controls">
+              <label>目标主题<select value={ruleTopicId ?? ""} onChange={(event) => setRuleTopicId(event.target.value ? Number(event.target.value) : null)}>
+                <option value="">请选择</option>
+                {activeTopics.map((topic) => <option key={topic.id} value={topic.id}>{topicPath(topic, topics).join(" / ")}</option>)}
+              </select></label>
+              <label>规则类型<select value={ruleType} onChange={(event) => setRuleType(event.target.value as KnowledgeClassificationRuleRow["ruleType"])}>
+                <option value="keyword">关键词</option>
+                <option value="exact_alias">别名</option>
+                <option value="negative_keyword">排除关键词</option>
+                <option value="file_path">文件路径</option>
+                <option value="entity">实体</option>
+                <option value="source">来源平台</option>
+                <option value="legacy_tag">旧标签</option>
+                <option value="domain_hint">领域提示</option>
+              </select></label>
+              <label>匹配内容<input value={rulePattern} onChange={(event) => setRulePattern(event.target.value)} placeholder="例如：资本开支" /></label>
+              <label>强度<input type="number" min="0" max="1" step="0.05" value={ruleWeight} onChange={(event) => setRuleWeight(Number(event.target.value))} /></label>
+              <label className="knowledge-confirm-check"><input type="checkbox" checked={ruleEnabled} onChange={(event) => setRuleEnabled(event.target.checked)} />启用规则</label>
+              <button disabled={busy || !ruleTopicId || !rulePattern.trim()} onClick={() => void saveRule()}>
+                {ruleEditId ? "保存修改" : "添加规则"}
+              </button>
+            </div>
+            <div className="knowledge-management-list">
+              {classificationRules.slice(0, 12).map((rule) => (
+                <div key={rule.id}>
+                  <span><strong>{rule.pattern}</strong><small>{rule.ruleType} · {rule.enabled ? "启用" : "停用"} · {Math.round(rule.weight * 100)}%</small></span>
+                  <button onClick={() => {
+                    setRuleEditId(rule.id);
+                    setRuleTopicId(rule.targetTopicId);
+                    setRuleType(rule.ruleType);
+                    setRulePattern(rule.pattern);
+                    setRuleWeight(rule.weight);
+                    setRuleEnabled(rule.enabled);
+                  }}>编辑</button>
+                  <button disabled={busy} onClick={() => void deleteRule(rule.id)}>删除</button>
+                </div>
+              ))}
+              {!classificationRules.length ? <p className="knowledge-empty">尚无正式分类规则。</p> : null}
+            </div>
+          </article>
         </section>
         <section className="knowledge-governance-grid">
           <article className="knowledge-card knowledge-governance-panel">

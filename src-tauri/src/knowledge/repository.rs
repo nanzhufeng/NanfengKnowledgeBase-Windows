@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::knowledge::personal_catalog;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +110,7 @@ pub struct ClassificationRuleContext {
     pub topic_id: String,
     pub field: String,
     pub operator: String,
+    pub effect: String,
     pub value: String,
     pub json_field: Option<String>,
     pub strength: f64,
@@ -140,6 +142,139 @@ pub struct KnowledgeClassificationContext {
     pub rules: Vec<ClassificationRuleContext>,
     pub history: ClassificationHistoryContext,
     pub search_signals: Vec<ClassificationSearchSignal>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPersonalCatalogInput {
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPersonalCatalogResult {
+    pub version: String,
+    pub created_domains: usize,
+    pub existing_domains: usize,
+    pub created_topics: usize,
+    pub existing_topics: usize,
+    pub created_aliases: usize,
+    pub created_entities: usize,
+    pub created_rules: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicAliasRow {
+    pub id: i64,
+    pub topic_id: i64,
+    pub alias: String,
+    pub alias_type: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTopicAliasInput {
+    pub topic_id: i64,
+    pub alias: String,
+    pub alias_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTopicAliasInput {
+    pub id: i64,
+    pub alias: String,
+    pub alias_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityDictionaryRow {
+    pub id: i64,
+    pub canonical_name: String,
+    pub entity_type: String,
+    pub aliases: Vec<String>,
+    pub description: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEntityDictionaryInput {
+    pub canonical_name: String,
+    pub entity_type: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEntityDictionaryInput {
+    pub id: i64,
+    pub canonical_name: String,
+    pub entity_type: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationRuleRow {
+    pub id: i64,
+    pub public_id: String,
+    pub rule_type: String,
+    pub pattern: String,
+    pub target_domain_id: Option<i64>,
+    pub target_topic_id: Option<i64>,
+    pub weight: f64,
+    pub priority: i64,
+    pub enabled: bool,
+    pub config_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateClassificationRuleInput {
+    pub rule_type: String,
+    pub pattern: String,
+    pub target_domain_id: Option<i64>,
+    pub target_topic_id: Option<i64>,
+    pub weight: f64,
+    pub priority: i64,
+    pub enabled: bool,
+    #[serde(default)]
+    pub config_json: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateClassificationRuleInput {
+    pub id: i64,
+    pub rule_type: String,
+    pub pattern: String,
+    pub target_domain_id: Option<i64>,
+    pub target_topic_id: Option<i64>,
+    pub weight: f64,
+    pub priority: i64,
+    pub enabled: bool,
+    #[serde(default)]
+    pub config_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeDeleteResult {
+    pub id: i64,
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -742,12 +877,12 @@ pub fn prepare_classification_context(
     };
 
     let topic_rows = list_topics(connection)?;
-    let positive_rules = read_positive_classification_rules(connection)?;
+    let persisted_rules = read_persisted_classification_rules(connection)?;
     let entity_dictionary = read_entity_dictionary(connection)?;
     let mut topics = Vec::with_capacity(topic_rows.len());
     for topic in &topic_rows {
         let aliases = read_topic_aliases(connection, topic.id)?;
-        let topic_rules = positive_rules
+        let topic_rules = persisted_rules
             .iter()
             .filter(|rule| rule.topic_id == topic.id.to_string())
             .collect::<Vec<_>>();
@@ -800,9 +935,442 @@ pub fn prepare_classification_context(
     Ok(KnowledgeClassificationContext {
         source,
         topics,
-        rules: positive_rules,
+        rules: persisted_rules,
         history,
         search_signals,
+    })
+}
+
+pub fn get_personal_catalog_proposal() -> personal_catalog::PersonalCatalogProposal {
+    personal_catalog::personal_catalog_proposal()
+}
+
+pub fn apply_personal_catalog(
+    connection: &mut Connection,
+    input: &ApplyPersonalCatalogInput,
+) -> AppResult<ApplyPersonalCatalogResult> {
+    if input.version != personal_catalog::PERSONAL_CATALOG_VERSION {
+        return Err(AppError::Validation(
+            "个人主题目录版本已变化，请重新审阅后确认".to_string(),
+        ));
+    }
+    let proposal = personal_catalog::personal_catalog_proposal();
+    let transaction = connection.transaction()?;
+    let now = Utc::now().to_rfc3339();
+    let mut result = ApplyPersonalCatalogResult {
+        version: proposal.version.clone(),
+        created_domains: 0,
+        existing_domains: 0,
+        created_topics: 0,
+        existing_topics: 0,
+        created_aliases: 0,
+        created_entities: 0,
+        created_rules: 0,
+    };
+    let mut domain_ids = HashMap::new();
+    for domain in &proposal.domains {
+        let normalized_name = normalize_name(&domain.name);
+        let existing_id = transaction
+            .query_row(
+                "SELECT id FROM domains WHERE normalized_name = ?1",
+                [normalized_name.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let domain_id = if let Some(id) = existing_id {
+            result.existing_domains += 1;
+            id
+        } else {
+            transaction.execute(
+                "INSERT INTO domains(
+                   public_id, name, normalized_name, description, sort_order, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![
+                    format!("catalog-domain-{}", domain.key),
+                    domain.name,
+                    normalized_name,
+                    domain.description,
+                    result.created_domains as i64,
+                    now,
+                ],
+            )?;
+            result.created_domains += 1;
+            transaction.last_insert_rowid()
+        };
+        domain_ids.insert(domain.key.clone(), domain_id);
+    }
+
+    let mut topic_ids = HashMap::new();
+    for topic in &proposal.topics {
+        let domain_id = *domain_ids
+            .get(&topic.domain_key)
+            .ok_or_else(|| AppError::Conflict("目录提案引用了不存在的领域".to_string()))?;
+        let parent_topic_id = topic
+            .parent_key
+            .as_ref()
+            .map(|key| {
+                topic_ids
+                    .get(key)
+                    .copied()
+                    .ok_or_else(|| AppError::Conflict("目录提案的父主题顺序或引用无效".to_string()))
+            })
+            .transpose()?;
+        let normalized_name = normalize_name(&topic.name);
+        let existing_id = transaction
+            .query_row(
+                "SELECT id FROM topics
+                 WHERE domain_id = ?1 AND ifnull(parent_topic_id, 0) = ifnull(?2, 0)
+                   AND normalized_name = ?3",
+                params![domain_id, parent_topic_id, normalized_name],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let topic_id = if let Some(id) = existing_id {
+            result.existing_topics += 1;
+            id
+        } else {
+            let depth = parent_topic_id
+                .map(|parent_id| {
+                    transaction.query_row(
+                        "SELECT depth + 1 FROM topics WHERE id = ?1",
+                        [parent_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                })
+                .transpose()?
+                .unwrap_or(1);
+            transaction.execute(
+                "INSERT INTO topics(
+                   public_id, domain_id, parent_topic_id, name, normalized_name,
+                   description, topic_kind, depth, sort_order, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                params![
+                    format!("catalog-topic-{}", topic.key),
+                    domain_id,
+                    parent_topic_id,
+                    topic.name,
+                    normalized_name,
+                    topic.description,
+                    topic.topic_kind,
+                    depth,
+                    result.created_topics as i64,
+                    now,
+                ],
+            )?;
+            result.created_topics += 1;
+            transaction.last_insert_rowid()
+        };
+        topic_ids.insert(topic.key.clone(), topic_id);
+
+        for alias in &topic.aliases {
+            result.created_aliases += transaction.execute(
+                "INSERT OR IGNORE INTO topic_aliases(
+                   topic_id, alias, normalized_alias, alias_type, created_at
+                 ) VALUES (?1, ?2, ?3, 'name', ?4)",
+                params![topic_id, alias, normalize_name(alias), now],
+            )?;
+        }
+        for entity in &topic.entities {
+            result.created_entities += transaction.execute(
+                "INSERT OR IGNORE INTO entity_dictionary(
+                   canonical_name, normalized_name, entity_type, aliases_json,
+                   description, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, '[]', '', ?4, ?4)",
+                params![
+                    entity,
+                    normalize_name(entity),
+                    infer_entity_type(entity),
+                    now
+                ],
+            )?;
+        }
+        for (rule_type, patterns, weight) in [
+            ("exact_alias", &topic.aliases, 0.8_f64),
+            ("entity", &topic.entities, 0.9_f64),
+            ("keyword", &topic.keywords, 0.75_f64),
+        ] {
+            for (index, pattern) in patterns.iter().enumerate() {
+                let exists = transaction.query_row(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM classification_rules
+                       WHERE rule_type = ?1 AND pattern = ?2 AND target_topic_id = ?3
+                     )",
+                    params![rule_type, pattern, topic_id],
+                    |row| row.get::<_, i64>(0),
+                )? != 0;
+                if exists {
+                    continue;
+                }
+                transaction.execute(
+                    "INSERT INTO classification_rules(
+                       public_id, rule_type, pattern, target_domain_id, target_topic_id,
+                       weight, priority, enabled, config_json, created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 1, '{}', ?7, ?7)",
+                    params![
+                        format!("catalog-rule-{}-{rule_type}-{index}", topic.key),
+                        rule_type,
+                        pattern,
+                        domain_id,
+                        topic_id,
+                        weight,
+                        now,
+                    ],
+                )?;
+                result.created_rules += 1;
+            }
+        }
+    }
+    transaction.commit()?;
+    Ok(result)
+}
+
+pub fn list_topic_aliases(
+    connection: &Connection,
+    topic_id: Option<i64>,
+) -> AppResult<Vec<TopicAliasRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, topic_id, alias, alias_type, created_at
+         FROM topic_aliases
+         WHERE ?1 IS NULL OR topic_id = ?1
+         ORDER BY topic_id, alias_type, alias",
+    )?;
+    let rows = statement.query_map([topic_id], topic_alias_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn create_topic_alias(
+    connection: &Connection,
+    input: &CreateTopicAliasInput,
+) -> AppResult<TopicAliasRow> {
+    validate_topic_alias(
+        connection,
+        input.topic_id,
+        &input.alias,
+        &input.alias_type,
+        None,
+    )?;
+    let now = Utc::now().to_rfc3339();
+    connection.execute(
+        "INSERT INTO topic_aliases(topic_id, alias, normalized_alias, alias_type, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            input.topic_id,
+            input.alias.trim(),
+            normalize_name(&input.alias),
+            input.alias_type,
+            now
+        ],
+    )?;
+    get_topic_alias(connection, connection.last_insert_rowid())
+}
+
+pub fn update_topic_alias(
+    connection: &Connection,
+    input: &UpdateTopicAliasInput,
+) -> AppResult<TopicAliasRow> {
+    let topic_id = connection
+        .query_row(
+            "SELECT topic_id FROM topic_aliases WHERE id = ?1",
+            [input.id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| AppError::NotFound("主题别名不存在".to_string()))?;
+    validate_topic_alias(
+        connection,
+        topic_id,
+        &input.alias,
+        &input.alias_type,
+        Some(input.id),
+    )?;
+    connection.execute(
+        "UPDATE topic_aliases
+         SET alias = ?1, normalized_alias = ?2, alias_type = ?3
+         WHERE id = ?4",
+        params![
+            input.alias.trim(),
+            normalize_name(&input.alias),
+            input.alias_type,
+            input.id
+        ],
+    )?;
+    get_topic_alias(connection, input.id)
+}
+
+pub fn delete_topic_alias(connection: &Connection, id: i64) -> AppResult<KnowledgeDeleteResult> {
+    Ok(KnowledgeDeleteResult {
+        id,
+        deleted: connection.execute("DELETE FROM topic_aliases WHERE id = ?1", [id])? == 1,
+    })
+}
+
+pub fn list_entity_dictionary(connection: &Connection) -> AppResult<Vec<EntityDictionaryRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, canonical_name, entity_type, aliases_json, description, created_at, updated_at
+         FROM entity_dictionary ORDER BY entity_type, canonical_name",
+    )?;
+    let rows = statement.query_map([], entity_dictionary_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn create_entity_dictionary_entry(
+    connection: &Connection,
+    input: &CreateEntityDictionaryInput,
+) -> AppResult<EntityDictionaryRow> {
+    let aliases = validate_entity_dictionary_input(
+        &input.canonical_name,
+        &input.entity_type,
+        &input.aliases,
+    )?;
+    let now = Utc::now().to_rfc3339();
+    connection.execute(
+        "INSERT INTO entity_dictionary(
+           canonical_name, normalized_name, entity_type, aliases_json,
+           description, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![
+            input.canonical_name.trim(),
+            normalize_name(&input.canonical_name),
+            input.entity_type,
+            serde_json::to_string(&aliases)?,
+            input.description.trim(),
+            now,
+        ],
+    )?;
+    get_entity_dictionary_entry(connection, connection.last_insert_rowid())
+}
+
+pub fn update_entity_dictionary_entry(
+    connection: &Connection,
+    input: &UpdateEntityDictionaryInput,
+) -> AppResult<EntityDictionaryRow> {
+    let aliases = validate_entity_dictionary_input(
+        &input.canonical_name,
+        &input.entity_type,
+        &input.aliases,
+    )?;
+    let changed = connection.execute(
+        "UPDATE entity_dictionary
+         SET canonical_name = ?1, normalized_name = ?2, entity_type = ?3,
+             aliases_json = ?4, description = ?5, updated_at = ?6
+         WHERE id = ?7",
+        params![
+            input.canonical_name.trim(),
+            normalize_name(&input.canonical_name),
+            input.entity_type,
+            serde_json::to_string(&aliases)?,
+            input.description.trim(),
+            Utc::now().to_rfc3339(),
+            input.id,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(AppError::NotFound("实体词典条目不存在".to_string()));
+    }
+    get_entity_dictionary_entry(connection, input.id)
+}
+
+pub fn delete_entity_dictionary_entry(
+    connection: &Connection,
+    id: i64,
+) -> AppResult<KnowledgeDeleteResult> {
+    Ok(KnowledgeDeleteResult {
+        id,
+        deleted: connection.execute("DELETE FROM entity_dictionary WHERE id = ?1", [id])? == 1,
+    })
+}
+
+pub fn list_classification_rules(connection: &Connection) -> AppResult<Vec<ClassificationRuleRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, public_id, rule_type, pattern, target_domain_id, target_topic_id,
+                weight, priority, enabled, config_json, created_at, updated_at
+         FROM classification_rules
+         ORDER BY enabled DESC, priority DESC, id",
+    )?;
+    let rows = statement.query_map([], classification_rule_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn create_classification_rule(
+    connection: &Connection,
+    input: &CreateClassificationRuleInput,
+) -> AppResult<ClassificationRuleRow> {
+    validate_classification_rule(
+        connection,
+        &input.rule_type,
+        &input.pattern,
+        input.target_domain_id,
+        input.target_topic_id,
+        input.weight,
+        &input.config_json,
+        None,
+    )?;
+    let now = Utc::now().to_rfc3339();
+    connection.execute(
+        "INSERT INTO classification_rules(
+           public_id, rule_type, pattern, target_domain_id, target_topic_id,
+           weight, priority, enabled, config_json, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+        params![
+            format!("rule-{}", Uuid::new_v4()),
+            input.rule_type,
+            input.pattern.trim(),
+            input.target_domain_id,
+            input.target_topic_id,
+            input.weight,
+            input.priority,
+            input.enabled as i64,
+            normalized_json_object(&input.config_json)?,
+            now,
+        ],
+    )?;
+    get_classification_rule(connection, connection.last_insert_rowid())
+}
+
+pub fn update_classification_rule(
+    connection: &Connection,
+    input: &UpdateClassificationRuleInput,
+) -> AppResult<ClassificationRuleRow> {
+    validate_classification_rule(
+        connection,
+        &input.rule_type,
+        &input.pattern,
+        input.target_domain_id,
+        input.target_topic_id,
+        input.weight,
+        &input.config_json,
+        Some(input.id),
+    )?;
+    let changed = connection.execute(
+        "UPDATE classification_rules
+         SET rule_type = ?1, pattern = ?2, target_domain_id = ?3, target_topic_id = ?4,
+             weight = ?5, priority = ?6, enabled = ?7, config_json = ?8, updated_at = ?9
+         WHERE id = ?10",
+        params![
+            input.rule_type,
+            input.pattern.trim(),
+            input.target_domain_id,
+            input.target_topic_id,
+            input.weight,
+            input.priority,
+            input.enabled as i64,
+            normalized_json_object(&input.config_json)?,
+            Utc::now().to_rfc3339(),
+            input.id,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(AppError::NotFound("分类规则不存在".to_string()));
+    }
+    get_classification_rule(connection, input.id)
+}
+
+pub fn delete_classification_rule(
+    connection: &Connection,
+    id: i64,
+) -> AppResult<KnowledgeDeleteResult> {
+    Ok(KnowledgeDeleteResult {
+        id,
+        deleted: connection.execute("DELETE FROM classification_rules WHERE id = ?1", [id])? == 1,
     })
 }
 
@@ -1892,6 +2460,42 @@ pub fn confirm_classification(
             |_| Ok(()),
         )
         .map_err(|_| AppError::NotFound("目标主题不存在".to_string()))?;
+    let top_suggestion = transaction
+        .query_row(
+            "SELECT id, suggested_topic_id
+             FROM classification_suggestions
+             WHERE source_item_id = ?1 AND status = 'pending'
+             ORDER BY score DESC, id
+             LIMIT 1",
+            [input.source_item_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()?;
+    if let Some(suggestion_id) = input.suggestion_id {
+        let suggestion_topic_id = transaction
+            .query_row(
+                "SELECT suggested_topic_id
+                 FROM classification_suggestions
+                 WHERE id = ?1 AND source_item_id = ?2 AND status = 'pending'",
+                params![suggestion_id, input.source_item_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(|_| AppError::Validation("选择的分类建议无效或已经处理".to_string()))?;
+        if suggestion_topic_id != Some(input.topic_id) {
+            return Err(AppError::Validation(
+                "选择的分类建议与目标主题不一致".to_string(),
+            ));
+        }
+    }
+    let feedback_kind = match top_suggestion {
+        Some((top_id, Some(top_topic_id)))
+            if input.suggestion_id == Some(top_id) && top_topic_id == input.topic_id =>
+        {
+            "accepted_suggestion"
+        }
+        Some(_) => "modified_suggestion",
+        None => "manual_classification",
+    };
     let before = serde_json::json!({
         "sourceItemId": input.source_item_id,
         "organizationState": source_state,
@@ -1922,17 +2526,27 @@ pub fn confirm_classification(
          WHERE id = ?1",
         [input.source_item_id],
     )?;
+    let reviewed_at = Utc::now().to_rfc3339();
     transaction.execute(
         "UPDATE classification_suggestions
-         SET status = CASE WHEN id = ?2 THEN 'accepted' ELSE 'rejected' END,
-             reviewed_at = ?3
+         SET status = 'rejected', reviewed_at = ?2
          WHERE source_item_id = ?1 AND status = 'pending'",
-        params![
-            input.source_item_id,
-            input.suggestion_id,
-            Utc::now().to_rfc3339()
-        ],
+        params![input.source_item_id, reviewed_at],
     )?;
+    if let Some((top_id, _)) = top_suggestion {
+        if feedback_kind == "modified_suggestion" {
+            transaction.execute(
+                "UPDATE classification_suggestions SET status = 'modified' WHERE id = ?1",
+                [top_id],
+            )?;
+        }
+    }
+    if let Some(suggestion_id) = input.suggestion_id {
+        transaction.execute(
+            "UPDATE classification_suggestions SET status = 'accepted' WHERE id = ?1",
+            [suggestion_id],
+        )?;
+    }
     let operation_public_id = format!("operation-{}", Uuid::new_v4());
     let after = serde_json::json!({
         "sourceItemId": input.source_item_id,
@@ -1940,6 +2554,11 @@ pub fn confirm_classification(
         "organizationState": "organized",
         "confidence": input.confidence,
         "suggestionId": input.suggestion_id,
+        "classificationFeedback": {
+            "kind": feedback_kind,
+            "topSuggestedTopicId": top_suggestion.and_then(|(_, topic_id)| topic_id),
+            "chosenTopicId": input.topic_id,
+        },
     });
     transaction.execute(
         "INSERT INTO operation_logs(
@@ -1993,7 +2612,7 @@ pub fn undo_classification(
     transaction.execute(
         "UPDATE classification_suggestions
          SET status = 'undone'
-         WHERE source_item_id = ?1 AND status = 'accepted'",
+         WHERE source_item_id = ?1 AND status IN ('accepted', 'modified')",
         [source_item_id],
     )?;
     transaction.execute(
@@ -2245,14 +2864,13 @@ fn topic_path(connection: &Connection, topic_id: i64) -> AppResult<Vec<String>> 
     Ok(path)
 }
 
-fn read_positive_classification_rules(
+fn read_persisted_classification_rules(
     connection: &Connection,
 ) -> AppResult<Vec<ClassificationRuleContext>> {
     let mut statement = connection.prepare(
         "SELECT public_id, rule_type, pattern, target_topic_id, weight, enabled
          FROM classification_rules
          WHERE target_topic_id IS NOT NULL
-           AND rule_type NOT IN ('negative_keyword', 'stopword')
          ORDER BY priority DESC, id",
     )?;
     let rows = statement.query_map([], |row| {
@@ -2263,7 +2881,9 @@ fn read_positive_classification_rules(
             "file_path" => ("file_path", "contains"),
             "source" => ("platform", "contains"),
             "legacy_tag" => ("tag", "contains"),
-            "keyword" | "entity" | "domain_hint" => ("text", "contains"),
+            "keyword" | "negative_keyword" | "stopword" | "entity" | "domain_hint" => {
+                ("text", "contains")
+            }
             _ => ("text", "contains"),
         };
         let value = row.get::<_, String>(2)?;
@@ -2272,6 +2892,11 @@ fn read_positive_classification_rules(
             topic_id: row.get::<_, i64>(3)?.to_string(),
             field: field.to_string(),
             operator: operator.to_string(),
+            effect: if matches!(rule_type.as_str(), "negative_keyword" | "stopword") {
+                "exclude".to_string()
+            } else {
+                "include".to_string()
+            },
             value: value.clone(),
             json_field: None,
             strength: row.get::<_, f64>(4)?.clamp(0.0, 1.0),
@@ -2456,6 +3081,261 @@ fn deduplicate_strings(values: &mut Vec<String>) {
         let normalized = normalize_name(value);
         !normalized.is_empty() && seen.insert(normalized)
     });
+}
+
+fn topic_alias_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicAliasRow> {
+    Ok(TopicAliasRow {
+        id: row.get(0)?,
+        topic_id: row.get(1)?,
+        alias: row.get(2)?,
+        alias_type: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
+fn get_topic_alias(connection: &Connection, id: i64) -> AppResult<TopicAliasRow> {
+    connection
+        .query_row(
+            "SELECT id, topic_id, alias, alias_type, created_at
+             FROM topic_aliases WHERE id = ?1",
+            [id],
+            topic_alias_from_row,
+        )
+        .map_err(|_| AppError::NotFound("主题别名不存在".to_string()))
+}
+
+fn validate_topic_alias(
+    connection: &Connection,
+    topic_id: i64,
+    alias: &str,
+    alias_type: &str,
+    current_id: Option<i64>,
+) -> AppResult<()> {
+    if alias.trim().is_empty() {
+        return Err(AppError::Validation("主题别名不能为空".to_string()));
+    }
+    if !matches!(
+        alias_type,
+        "name" | "abbreviation" | "redirect" | "legacy_tag"
+    ) {
+        return Err(AppError::Validation("主题别名类型无效".to_string()));
+    }
+    connection
+        .query_row(
+            "SELECT 1 FROM topics WHERE id = ?1 AND status <> 'merged'",
+            [topic_id],
+            |_| Ok(()),
+        )
+        .map_err(|_| AppError::NotFound("目标主题不存在".to_string()))?;
+    let duplicate = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM topic_aliases
+           WHERE topic_id = ?1 AND normalized_alias = ?2
+             AND (?3 IS NULL OR id <> ?3)
+         )",
+        params![topic_id, normalize_name(alias), current_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    if duplicate {
+        return Err(AppError::Conflict("该主题别名已经存在".to_string()));
+    }
+    Ok(())
+}
+
+fn entity_dictionary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EntityDictionaryRow> {
+    let aliases_json = row.get::<_, String>(3)?;
+    Ok(EntityDictionaryRow {
+        id: row.get(0)?,
+        canonical_name: row.get(1)?,
+        entity_type: row.get(2)?,
+        aliases: serde_json::from_str(&aliases_json).unwrap_or_default(),
+        description: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+fn get_entity_dictionary_entry(connection: &Connection, id: i64) -> AppResult<EntityDictionaryRow> {
+    connection
+        .query_row(
+            "SELECT id, canonical_name, entity_type, aliases_json, description,
+                    created_at, updated_at
+             FROM entity_dictionary WHERE id = ?1",
+            [id],
+            entity_dictionary_from_row,
+        )
+        .map_err(|_| AppError::NotFound("实体词典条目不存在".to_string()))
+}
+
+fn validate_entity_dictionary_input(
+    canonical_name: &str,
+    entity_type: &str,
+    aliases: &[String],
+) -> AppResult<Vec<String>> {
+    if canonical_name.trim().is_empty() {
+        return Err(AppError::Validation("实体标准名称不能为空".to_string()));
+    }
+    if !matches!(
+        entity_type,
+        "company"
+            | "person"
+            | "product"
+            | "model"
+            | "industry"
+            | "place"
+            | "project"
+            | "custom"
+            | "other"
+    ) {
+        return Err(AppError::Validation("实体类型无效".to_string()));
+    }
+    let mut aliases = aliases
+        .iter()
+        .map(|alias| alias.trim().to_string())
+        .filter(|alias| !alias.is_empty())
+        .collect::<Vec<_>>();
+    deduplicate_strings(&mut aliases);
+    aliases.retain(|alias| normalize_name(alias) != normalize_name(canonical_name));
+    Ok(aliases)
+}
+
+fn classification_rule_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ClassificationRuleRow> {
+    Ok(ClassificationRuleRow {
+        id: row.get(0)?,
+        public_id: row.get(1)?,
+        rule_type: row.get(2)?,
+        pattern: row.get(3)?,
+        target_domain_id: row.get(4)?,
+        target_topic_id: row.get(5)?,
+        weight: row.get(6)?,
+        priority: row.get(7)?,
+        enabled: row.get::<_, i64>(8)? != 0,
+        config_json: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+fn get_classification_rule(connection: &Connection, id: i64) -> AppResult<ClassificationRuleRow> {
+    connection
+        .query_row(
+            "SELECT id, public_id, rule_type, pattern, target_domain_id, target_topic_id,
+                    weight, priority, enabled, config_json, created_at, updated_at
+             FROM classification_rules WHERE id = ?1",
+            [id],
+            classification_rule_from_row,
+        )
+        .map_err(|_| AppError::NotFound("分类规则不存在".to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_classification_rule(
+    connection: &Connection,
+    rule_type: &str,
+    pattern: &str,
+    target_domain_id: Option<i64>,
+    target_topic_id: Option<i64>,
+    weight: f64,
+    config_json: &str,
+    current_id: Option<i64>,
+) -> AppResult<()> {
+    if !matches!(
+        rule_type,
+        "keyword"
+            | "exact_alias"
+            | "negative_keyword"
+            | "file_path"
+            | "entity"
+            | "source"
+            | "legacy_tag"
+            | "stopword"
+            | "domain_hint"
+    ) {
+        return Err(AppError::Validation("分类规则类型无效".to_string()));
+    }
+    if pattern.trim().is_empty() {
+        return Err(AppError::Validation("分类规则匹配内容不能为空".to_string()));
+    }
+    if !(0.0..=1.0).contains(&weight) {
+        return Err(AppError::Validation(
+            "分类规则强度必须在 0 到 1 之间".to_string(),
+        ));
+    }
+    normalized_json_object(config_json)?;
+    if rule_type != "stopword" && target_topic_id.is_none() && target_domain_id.is_none() {
+        return Err(AppError::Validation(
+            "分类规则必须指定目标领域或主题".to_string(),
+        ));
+    }
+    if let Some(domain_id) = target_domain_id {
+        connection
+            .query_row("SELECT 1 FROM domains WHERE id = ?1", [domain_id], |_| {
+                Ok(())
+            })
+            .map_err(|_| AppError::NotFound("分类规则目标领域不存在".to_string()))?;
+    }
+    if let Some(topic_id) = target_topic_id {
+        let topic_domain_id = connection
+            .query_row(
+                "SELECT domain_id FROM topics WHERE id = ?1 AND status <> 'merged'",
+                [topic_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| AppError::NotFound("分类规则目标主题不存在".to_string()))?;
+        if target_domain_id.is_some_and(|domain_id| domain_id != topic_domain_id) {
+            return Err(AppError::Validation(
+                "分类规则的目标领域与目标主题不一致".to_string(),
+            ));
+        }
+    }
+    let duplicate = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM classification_rules
+           WHERE rule_type = ?1 AND pattern = ?2
+             AND ifnull(target_domain_id, 0) = ifnull(?3, 0)
+             AND ifnull(target_topic_id, 0) = ifnull(?4, 0)
+             AND (?5 IS NULL OR id <> ?5)
+         )",
+        params![
+            rule_type,
+            pattern.trim(),
+            target_domain_id,
+            target_topic_id,
+            current_id
+        ],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    if duplicate {
+        return Err(AppError::Conflict("相同分类规则已经存在".to_string()));
+    }
+    Ok(())
+}
+
+fn normalized_json_object(value: &str) -> AppResult<String> {
+    if value.trim().is_empty() {
+        return Ok("{}".to_string());
+    }
+    let value = serde_json::from_str::<serde_json::Value>(value)?;
+    if !value.is_object() {
+        return Err(AppError::Validation(
+            "分类规则附加配置必须是 JSON 对象".to_string(),
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn infer_entity_type(value: &str) -> &'static str {
+    match value {
+        "Claude" | "ChatGPT" | "Gemini" => "model",
+        "Codex" | "Fusion" | "Whisper" | "SQLite" | "Markdown" | "Obsidian" | "After Effects" => {
+            "product"
+        }
+        "Google" | "Apple" | "极氪" | "特斯拉" => "company",
+        "南京" | "河西" | "江宁" => "place",
+        _ => "other",
+    }
 }
 
 fn normalize_name(value: &str) -> String {
@@ -2802,6 +3682,317 @@ mod tests {
             .expect("bm25 signal");
         assert!(signal.normalized_score > 0.0);
         assert!(signal.reason.contains("FTS5/BM25"));
+    }
+
+    #[test]
+    fn personal_catalog_preview_is_read_only_and_apply_is_additive_and_idempotent() {
+        let mut connection = database::open_memory_database().expect("database");
+        let proposal = get_personal_catalog_proposal();
+        assert_eq!(proposal.version, personal_catalog::PERSONAL_CATALOG_VERSION);
+        assert!(!proposal.domains.is_empty());
+        assert!(!proposal.topics.is_empty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM domains", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("domain count"),
+            0
+        );
+
+        let first = apply_personal_catalog(
+            &mut connection,
+            &ApplyPersonalCatalogInput {
+                version: proposal.version.clone(),
+            },
+        )
+        .expect("first apply");
+        assert_eq!(first.created_domains, proposal.domains.len());
+        assert_eq!(first.created_topics, proposal.topics.len());
+        assert!(first.created_aliases > 0);
+        assert!(first.created_entities > 0);
+        assert!(first.created_rules > 0);
+        let topic_count = connection
+            .query_row("SELECT COUNT(*) FROM topics", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("topic count");
+
+        let second = apply_personal_catalog(
+            &mut connection,
+            &ApplyPersonalCatalogInput {
+                version: proposal.version,
+            },
+        )
+        .expect("second apply");
+        assert_eq!(second.created_domains, 0);
+        assert_eq!(second.created_topics, 0);
+        assert_eq!(second.created_aliases, 0);
+        assert_eq!(second.created_entities, 0);
+        assert_eq!(second.created_rules, 0);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM topics", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("stable topic count"),
+            topic_count
+        );
+    }
+
+    #[test]
+    fn classification_knowledge_crud_validates_updates_duplicates_and_deletes() {
+        let connection = database::open_memory_database().expect("database");
+        let domain = create_domain(
+            &connection,
+            &CreateKnowledgeDomainInput {
+                name: "测试领域".to_string(),
+                description: String::new(),
+            },
+        )
+        .expect("domain");
+        let topic = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "测试主题".to_string(),
+                description: String::new(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("topic");
+
+        let alias = create_topic_alias(
+            &connection,
+            &CreateTopicAliasInput {
+                topic_id: topic.id,
+                alias: "旧名称".to_string(),
+                alias_type: "redirect".to_string(),
+            },
+        )
+        .expect("alias");
+        let alias = update_topic_alias(
+            &connection,
+            &UpdateTopicAliasInput {
+                id: alias.id,
+                alias: "历史名称".to_string(),
+                alias_type: "legacy_tag".to_string(),
+            },
+        )
+        .expect("updated alias");
+        assert_eq!(alias.alias, "历史名称");
+        assert!(create_topic_alias(
+            &connection,
+            &CreateTopicAliasInput {
+                topic_id: topic.id,
+                alias: "历史名称".to_string(),
+                alias_type: "name".to_string(),
+            }
+        )
+        .is_err());
+
+        let entity = create_entity_dictionary_entry(
+            &connection,
+            &CreateEntityDictionaryInput {
+                canonical_name: "Microsoft".to_string(),
+                entity_type: "company".to_string(),
+                aliases: vec!["微软".to_string(), "MSFT".to_string()],
+                description: "公司实体".to_string(),
+            },
+        )
+        .expect("entity");
+        let entity = update_entity_dictionary_entry(
+            &connection,
+            &UpdateEntityDictionaryInput {
+                id: entity.id,
+                canonical_name: "Microsoft".to_string(),
+                entity_type: "company".to_string(),
+                aliases: vec!["微软".to_string()],
+                description: "更新后的公司实体".to_string(),
+            },
+        )
+        .expect("updated entity");
+        assert_eq!(entity.aliases, vec!["微软"]);
+
+        let rule = create_classification_rule(
+            &connection,
+            &CreateClassificationRuleInput {
+                rule_type: "keyword".to_string(),
+                pattern: "Azure".to_string(),
+                target_domain_id: Some(domain.id),
+                target_topic_id: Some(topic.id),
+                weight: 0.8,
+                priority: 5,
+                enabled: true,
+                config_json: "{}".to_string(),
+            },
+        )
+        .expect("rule");
+        let rule = update_classification_rule(
+            &connection,
+            &UpdateClassificationRuleInput {
+                id: rule.id,
+                rule_type: "negative_keyword".to_string(),
+                pattern: "招聘".to_string(),
+                target_domain_id: Some(domain.id),
+                target_topic_id: Some(topic.id),
+                weight: 0.6,
+                priority: 10,
+                enabled: false,
+                config_json: r#"{"reason":"排除招聘信息"}"#.to_string(),
+            },
+        )
+        .expect("updated rule");
+        assert_eq!(rule.rule_type, "negative_keyword");
+        assert!(!rule.enabled);
+        assert!(create_classification_rule(
+            &connection,
+            &CreateClassificationRuleInput {
+                rule_type: "keyword".to_string(),
+                pattern: String::new(),
+                target_domain_id: Some(domain.id),
+                target_topic_id: Some(topic.id),
+                weight: 2.0,
+                priority: 0,
+                enabled: true,
+                config_json: "[]".to_string(),
+            }
+        )
+        .is_err());
+
+        assert!(
+            delete_topic_alias(&connection, alias.id)
+                .expect("delete alias")
+                .deleted
+        );
+        assert!(
+            delete_entity_dictionary_entry(&connection, entity.id)
+                .expect("delete entity")
+                .deleted
+        );
+        assert!(
+            delete_classification_rule(&connection, rule.id)
+                .expect("delete rule")
+                .deleted
+        );
+    }
+
+    #[test]
+    fn classification_correction_is_saved_as_feedback_and_remains_undoable() {
+        let mut connection = database::open_memory_database().expect("database");
+        database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "需要纠正的来源".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: "实际属于软件开发".to_string(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("source");
+        let source_id = list_inbox(&connection, 20).expect("inbox")[0].id;
+        let domain = create_domain(
+            &connection,
+            &CreateKnowledgeDomainInput {
+                name: "纠正测试".to_string(),
+                description: String::new(),
+            },
+        )
+        .expect("domain");
+        let wrong = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "错误主题".to_string(),
+                description: String::new(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("wrong topic");
+        let correct = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "正确主题".to_string(),
+                description: String::new(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("correct topic");
+        let suggestions = save_classification_suggestions(
+            &mut connection,
+            &SaveKnowledgeSuggestionsInput {
+                source_item_id: source_id,
+                classifier_version: "local-rules-v1".to_string(),
+                suggestions: vec![
+                    KnowledgeSuggestionInput {
+                        topic_id: Some(wrong.id),
+                        score: 91.0,
+                        decision: "auto_eligible".to_string(),
+                        reasons: vec!["错误高分".to_string()],
+                        signal_scores_json: "{}".to_string(),
+                    },
+                    KnowledgeSuggestionInput {
+                        topic_id: Some(correct.id),
+                        score: 80.0,
+                        decision: "confirm".to_string(),
+                        reasons: vec!["正确候选".to_string()],
+                        signal_scores_json: "{}".to_string(),
+                    },
+                ],
+            },
+        )
+        .expect("suggestions");
+        let correct_suggestion_id = suggestions
+            .iter()
+            .find(|suggestion| suggestion.suggested_topic_id == Some(correct.id))
+            .expect("correct suggestion")
+            .id;
+        let result = confirm_classification(
+            &mut connection,
+            &ConfirmKnowledgeClassificationInput {
+                source_item_id: source_id,
+                topic_id: correct.id,
+                suggestion_id: Some(correct_suggestion_id),
+                confidence: 80.0,
+            },
+        )
+        .expect("corrected classification");
+        let reviewed =
+            list_classification_suggestions(&connection, source_id).expect("reviewed suggestions");
+        assert!(reviewed.iter().any(|item| {
+            item.suggested_topic_id == Some(wrong.id) && item.status == "modified"
+        }));
+        assert!(reviewed.iter().any(|item| {
+            item.suggested_topic_id == Some(correct.id) && item.status == "accepted"
+        }));
+        let after_json = connection
+            .query_row(
+                "SELECT after_json FROM operation_logs WHERE id = ?1",
+                [result.operation_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("feedback log");
+        assert!(after_json.contains("modified_suggestion"));
+        assert!(after_json.contains(&format!("\"chosenTopicId\":{}", correct.id)));
+
+        undo_classification(&mut connection, result.operation_id).expect("undo");
+        assert!(list_classification_suggestions(&connection, source_id)
+            .expect("undone suggestions")
+            .iter()
+            .filter(|item| matches!(item.suggested_topic_id, Some(id) if id == wrong.id || id == correct.id))
+            .all(|item| item.status == "undone" || item.status == "rejected"));
     }
 
     #[test]
