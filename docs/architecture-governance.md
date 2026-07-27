@@ -7,16 +7,16 @@
 | 概念 | 唯一产品含义 | 规则与持久化所有者 | 公开入口 | 主要消费者 | 禁止的平行规则 | 当前证据 |
 |---|---|---|---|---|---|---|
 | Domain | 稳定顶层领域 | `src/knowledge/domain.ts`、`src-tauri/src/knowledge/schema.rs`、`knowledge/repository.rs` | `KnowledgeRepository.createDomain/listDomains` | 主题浏览器、主题创建 | 页面用标签临时模拟领域 | 正式命令已接入；隔离 migration v3 已验证 |
-| Topic / Subtopic | 长期主题、唯一主路径和横向关系 | `knowledge/repository.rs` | `createTopic/listTopics/getTopicDetail` | 主题浏览器、整理工作台 | 用 Record 标题自动生成主题 | 正式仓库与 UI 已接入；别名重定向仍未实现 |
+| Topic / Subtopic | 长期主题、唯一主路径和横向关系 | `knowledge/repository.rs` | `createTopic/listTopics/getTopicDetail` | 主题浏览器、整理工作台 | 用 Record 标题自动生成主题 | 正式仓库与 UI 已接入；合并旧名称和旧路径写入 redirect 别名且撤销可逆 |
 | Source Item | 保真的导入来源和分类对象 | `importer.rs`、`knowledge/repository.rs` | `listInbox`、migration v3 legacy backfill | 收录箱、主题来源、证据 | 覆盖原件；把来源等同于笔记 | 901 条隔离副本幂等回填已验证 |
-| Note | 人工整理与补充说明 | `knowledge/schema.rs` | 当前无独立 CRUD | 未来主题知识页与导出 | 与原始来源共用可覆盖正文 | 表合同存在，独立生产用例未完成 |
+| Note | 人工整理与补充说明 | `knowledge/repository.rs` | `create/update/archive/list/getNote` | 主题知识页、研究上下文 | 与原始来源共用可覆盖正文 | 独立 CRUD、软归档、主题/来源关联和 FTS 同步已验证 |
 | Judgment Snapshot | 某时点判断、置信度和变化原因 | `knowledge/repository.rs` | `addTopicJudgment/getTopicDetail` | 主题页、时间线、上下文 | 覆盖旧判断冒充时间线 | 追加写入和读取已接入 |
-| Evidence | 支持/反驳关系和来源锚点 | `knowledge/repository.rs` | `addTopicEvidence/getTopicDetail` | 主题页、上下文 | 无来源证据；页面各自标强弱 | 正式命令已接入 |
+| Evidence | 支持/反驳关系和来源锚点 | `knowledge/repository.rs` | `addTopicEvidence/getTopicDetail` | 主题页、上下文 | 无来源证据；页面各自标强弱或保存任意 JSON | 立场/可信度/验证/有效状态分离；锚点按来源类型校验并规范化 |
 | Open Question | 待验证问题及状态 | `knowledge/repository.rs` | `addTopicQuestion/getTopicDetail` | 主题页、上下文 | 与普通待办混用 | 正式命令已接入 |
-| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 评分：`deterministicClassifier.ts`；持久化输入/确认：`knowledge/repository.rs` | `prepare/save/list/confirm/undoClassification` | 收录箱 | 分类器直接写库；页面复制评分规则 | SQLite 别名/实体规则、用户规则、历史确认和 FTS5/BM25 信号已通过统一输入命令接入；管理 CRUD 与纠正反馈仍待完成 |
-| Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 整理工作台、操作日志 | 无预览直接批量改外键 | 合并事务与撤销已实现；拆分仍只预览；别名重定向未实现 |
+| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 评分：`deterministicClassifier.ts`；持久化输入/确认：`knowledge/repository.rs` | `prepare/save/list/confirm/undoClassification` | 收录箱 | 分类器直接写库；页面复制评分规则 | 统一输入、个人目录确认、规则/别名/实体 CRUD 和纠正反馈均已接入 |
+| Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 整理工作台、操作日志 | 无预览直接批量改外键 | 合并、redirect 和撤销已实现；拆分按首版边界仍只预览 |
 | Research Context | 本地可审阅的研究上下文 | `knowledge/repository.rs` | `compileTopicContext` | 主题页、导出/后续 Codex 交换 | 调模型生成不透明摘要 | 本地确定性编译已接入 |
-| Proposition / Turning Point | 可复用命题与人工确认的判断转折 | 尚无独立生产所有者 | 无 | 未来判断演化 | 从展示文本临时推断身份 | 未实现，不能以判断文本替代 |
+| Proposition / Turning Point | 可复用命题与人工确认的判断转折 | `knowledge/repository.rs` | `create/update/supersedeProposition`、`createTurningPoint/getTopicDetail` | 主题页、判断演化、研究上下文 | 从展示文本临时推断身份；填写变化原因自动制造转折 | 命题独立生命周期和用户显式确认的前后判断转折已验证 |
 
 ### 运行与数据边界
 
@@ -35,7 +35,7 @@
 → 确定性分类建议
 → 人工确认或高置信接受
 → 主题/关系写入
-→ 判断、证据、问题读模型
+→ Note、命题、判断、证据、问题和关键转折读模型
 → 研究上下文编译
 ```
 

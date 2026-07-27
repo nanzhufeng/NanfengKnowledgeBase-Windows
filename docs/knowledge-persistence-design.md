@@ -15,7 +15,7 @@
 | 正式库只读复制与审计报告 | `src-tauri/src/knowledge/audit.rs` | 已实现，只输出到正式数据目录外 |
 | 隔离副本分类输入导出 | `src-tauri/src/knowledge/classification_input.rs` | 已实现，只读流式导出 |
 | legacy 内容分类预演 | `src/knowledge/legacyClassificationDryRun.ts` | 已实现，复用唯一分类器且零数据库写入 |
-| 正式知识仓库与用例 | `src-tauri/src/knowledge/repository.rs` | 已接入收录箱、主题、分类确认/撤销、判断、证据、问题、上下文、合并/撤销、拆分预览与关系 |
+| 正式知识仓库与用例 | `src-tauri/src/knowledge/repository.rs` | 已接入收录箱、主题、分类/反馈、个人目录、治理 CRUD、Note、Proposition、Turning Point、精确证据锚点、问题、上下文、合并/撤销、拆分预览与关系 |
 | 正式 migration 与兼容读模型 | `src-tauri/src/database.rs` | 901 条隔离副本通过；正式库未执行 |
 | 正式知识 UI | `src/components/KnowledgeWorkspace.tsx` | 已替代假数据入口；真实桌面链路待验收 |
 

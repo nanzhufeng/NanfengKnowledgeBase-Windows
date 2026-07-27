@@ -129,5 +129,6 @@ classifySource(context: ClassificationContext): ClassificationResult
 - `src-tauri/src/knowledge/legacy_preview.rs`：旧 `Record` 的只读映射预演；标签仅作候选，标题不自动升格为主题。
 - `src/prototypes/knowledge-evolution/`：历史假数据设计/测试资产，不是生产入口。
 - 已在 901 条隔离副本验证 migration v3 和幂等回填；正式 `D:\南枫知识库` 尚未升级。
-- 尚未实现生产 FTS5/BM25 分类适配器、主题别名/旧路径重定向、独立 Note CRUD、Proposition 和 Turning Point 生产用例。
-- Topic 合并已实现预览、事务提交和撤销，但别名/重定向未完成；拆分仍按首版规则只提供预览。
+- 生产 FTS5/BM25、历史确认、主题别名/实体/用户规则已进入统一分类输入；个人目录、管理 CRUD 与分类纠正反馈已接入。
+- Topic 合并已实现预览、redirect 别名、事务提交和撤销；拆分仍按首版规则只提供预览。
+- 独立 Note CRUD、Proposition 和用户明确确认的 Turning Point 已接入；Evidence 锚点由 Rust 按来源类型校验，页面不直接保存任意定位 JSON。

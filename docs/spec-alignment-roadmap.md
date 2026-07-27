@@ -74,28 +74,31 @@
 - 不连接生产仓库，不迁移数据。
 - 产物：`src/prototypes/knowledge-evolution/`。
 
-### P0-B：对象与迁移设计（当前：合同与只读预演已实现）
+### P0-B：对象与迁移设计（代码与隔离迁移已完成，正式数据待授权）
 
 - 确认 Topic、Source Item、Note、Judgment Snapshot、Evidence、Question、Operation Log 的职责和表约束。
 - 设计 legacy Record 到 Source/Note/Topic 的兼容映射。
 - 所有迁移先在线备份，支持旧版本只读回退，不直接改正式库。
-- 当前已有内存 schema contract 和 legacy Record 只读 dry-run；尚未建立正式 migration、兼容读模型或隔离数据副本迁移。
+- migration v3、兼容读模型、隔离副本迁移、完整恢复和失败回滚均已验证；正式 `D:\南枫知识库` 尚未获专项授权执行。
 
-### P0-C：确定性分类器（领域内核已实现，持久化用例待建）
+### P0-C：确定性分类器（生产闭环已接入）
 
 - 固定五层评分和阈值。
 - 建立中文别名、实体、规则和 FTS5/BM25 组合。
 - 提供 dry-run、解释、批量确认、操作日志和撤销。
+- SQLite 规则、别名、实体、历史确认和 FTS5/BM25 已通过统一输入进入评分；管理 CRUD、个人目录确认和纠正反馈已接入。
 
-### P0-D：结构治理与上下文
+### P0-D：结构治理与上下文（首版代码已完成）
 
 - 合并 preview/commit/undo、别名、重定向和快照。
 - 拆分只提供建议和内容归属预览。
 - 主题页、判断时间线、证据锚点、问题状态和本地上下文编译。
+- 合并 redirect、独立 Note、Proposition 和用户确认的 Turning Point 已进入正式主题页；拆分仍按首版边界只预览。
 
-### P1
+### P1（后续增强，不阻塞本轮正式升级）
 
-- Proposition、Hypothesis、证据过期、字幕时间锚点、笔记拆分/合并。
+- Proposition 与来源类型感知的证据锚点已完成首版生产用例。
+- Hypothesis、证据过期提醒、笔记拆分/合并继续作为后续增强。
 
 ### P2
 

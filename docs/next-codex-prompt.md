@@ -1,37 +1,31 @@
 # 下一轮可直接使用的提示词
 
 ```text
-继续开发“南枫知识库”。
+继续“南枫知识库”正式升级门槛。
 
 仓库：C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence
 当前分支：codex/nanfeng-knowledge-production-checkpoint-20260727
-代码 checkpoint：482397e
+代码 checkpoint：fad79b4
 
 先完整读取项目根 AGENTS.md 和 docs/CURRENT_HANDOFF.md，再运行：
 git status --short
-git log -3 --oneline --decorate
+git log -5 --oneline --decorate
 
-不要先扫描全部历史审计、旧原型或整段聊天记录。先用简短状态报告确认：
+不要扫描全部历史审计、旧原型或整段聊天记录。先简短确认：
 1. 当前分支、HEAD 和工作区；
-2. SQLite 主题、别名/实体规则、用户规则、历史确认和 FTS5/BM25 已经通过统一命令进入 `classifySource`；
-3. 分类规则/别名/实体管理和个人主题目录仍未形成生产闭环；
-4. 正式数据 migration v3 仍未执行。
+2. 个人目录确认、分类治理/反馈、合并 redirect、独立 Note、Proposition、用户确认的 Turning Point 和精确 Evidence 锚点已经进入正式代码；
+3. 自动验证为前端 52/52、Rust 62/62、Sites 4/4、无界面 E2E 16/16，TypeScript 与生产构建通过；
+4. 上述证明代码与隔离合同，不证明正式 D:\南枫知识库 已升级或可见桌面已验收。
 
-随后执行唯一任务：
-实现“可审阅的个人主题目录提案 → 用户明确确认后一次性写入 → 分类规则、主题别名和实体词典 CRUD → 分类纠正保存反馈”的正式闭环。所有写入继续由 Rust/SQLite 仓库统一持有，页面不得直接复制规则。
-
-最小验证：
-- 内存或新建 `.runtime-qa` 隔离数据库证明提案预览不写库、确认幂等且不会覆盖已有主题；
-- CRUD 的校验、重复、禁用和读取合同通过；
-- 分类纠正生成明确反馈，并继续可撤销；
-- 前端入口、TypeScript、Rust、Vite、Sites 和无界面 Playwright 回归通过。
+当前没有默认代码扩展任务。只有当南烛枫在当前对话中单独、明确授权正式数据升级时，才执行唯一任务：
+对 D:\南枫知识库 做升级前只读核对和完整迁移备份，执行正式 migration，记录数据库 SHA-256、migration、完整性、外键和关键计数的前后证据；任何失败立即停止并按既有回滚协议恢复。
 
 边界：
-- 不打开可见窗口，不占用用户屏幕。
-- 不读写 D:\南枫知识库 或 D:\南枫情报台。
-- 不生成安装包、不发布 GitHub、不切回 main。
-- 不实现拆分提交、Note、Proposition、Turning Point 或其他后续项。
-- 保护现有工作区，不 reset/clean/stash/覆盖未知改动。
-
-达到上述闭环后更新 CURRENT_HANDOFF，再进入下一项。正式 migration v3 仍需南烛枫专项授权；不得把本提示词本身视为正式数据写入授权。
+- 本提示词本身不是正式数据写入授权。
+- 未获专项授权时只报告门槛，不读写正式数据。
+- 不删除或覆盖 D:\南枫情报台。
+- 不切回 main。
+- 不生成安装包、不发布 GitHub。
+- 可见 BAT 长时间交互与优雅退出是正式迁移后的独立用户验收，不在无界面迁移任务中冒充完成。
+- 保护工作区，不 reset/clean/stash/覆盖未知改动。
 ```
