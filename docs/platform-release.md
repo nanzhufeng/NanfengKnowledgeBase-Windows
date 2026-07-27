@@ -3,7 +3,7 @@
 ## 当前正式目标
 
 - 正式验收平台：Windows 10/11 x64。
-- 当前交付顺序：源码与自动化验证 → BAT 测试版 → 用户明确确认 → Windows 安装包。
+- 当前交付顺序：源码与自动化验证 → BAT 测试版 → 本地 Windows 安装生命周期验收 → 用户明确要求上传后再同步 GitHub 正式 Release。
 - 默认数据目录为 `D:\南枫知识库`；可通过 `NANFENG_KNOWLEDGE_BASE_DATA_DIR` 指向隔离目录。旧环境变量 `NANFENG_INTELLIGENCE_DATA_DIR` 仅为兼容历史自动化而保留。
 - 安装、升级和重装不得清空受控数据目录。
 
@@ -19,15 +19,18 @@
 1. TypeScript、Vitest、Rust、Sites、Vite、Playwright 全部通过。
 2. Tauri release `--no-bundle` 通过，并在隔离的 282 条数据副本上启动。
 3. 第二实例安全退出；退出后隔离数据库 `integrity_check=ok`。
-4. BAT 测试版由用户完成真实使用确认。
-5. 只有第 4 项确认后才生成、安装和验证安装包。
+4. BAT 测试版完成可见真实路径验收；性能优化版仍等待南烛枫主观流畅度确认。
+5. 本地安装包完成全新安装、旧版升级、运行中保护、正式数据只读启动和卸载保留数据验证。
+6. GitHub 正式 Release 必须再次获得明确“上传”授权。
 
 ## 当前安装器实现
 
 - 当前仓库使用 Tauri 2 官方 NSIS x64 目标，配置位于 `src-tauri/tauri.conf.json`。
 - 发布资产统一使用 `Nanfeng-Knowledge-Base-Windows-v<版本>-Setup.exe`，GitHub Release 只保留这一份公开安装资产。
-- 构建机未安装 Inno Setup 7；本版沿用已经过项目配置和 Tauri 构建验证的 NSIS 链路，不创建伪 PyInstaller spec，也不临时安装额外系统级打包工具。
+- 构建机未安装 Inno Setup 7；南烛枫已明确暂缓安装，本版沿用已经过项目配置和完整生命周期验证的 NSIS 链路，不创建伪 PyInstaller spec，也不临时安装额外系统级打包工具。
+- 产品从“南枫情报台”改名为“南枫知识库”后，NSIS 默认会形成两个卸载项；`src-tauri/installer-hooks.nsh` 在安装前检测旧进程，旧版运行时安全终止安装，旧版关闭后静默移除旧程序再安装新版。
 - 安装程序只部署应用文件；正式数据库、附件、导入原件和完整迁移备份均在独立受控数据目录，升级与卸载不应清空 `D:\南枫知识库` 或旧版 `D:\南枫情报台`。
+- 2026-07-27 本地验证已覆盖全新安装、`0.1.0 → 0.2.0` 升级、旧版运行中拒绝升级、新版启动、卸载和数据保留；尚未上传 GitHub。
 
 ## macOS 后续发布门槛
 

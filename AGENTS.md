@@ -9,7 +9,7 @@
 ## 当前阶段边界
 
 - 当前阶段是正式知识生产链路接入。假数据原型不再作为应用入口；收录箱、主题、分类确认、撤销、判断、证据、问题和上下文必须通过 Rust/SQLite 正式仓库。
-- 南烛枫已于 2026-07-27 单独授权并完成正式 `D:\南枫知识库` migration v3；完整备份、复开幂等、完整性和外键证据见 `docs/CURRENT_HANDOFF.md`。该授权不延续为新的正式数据写入授权，也不允许重复 migration、自动打开可见窗口或扩大到安装包和发布。
+- 南烛枫已于 2026-07-27 分别授权并完成正式 `D:\南枫知识库` migration v3、可见 BAT 与本地 NSIS 安装生命周期验收；完整备份、复开幂等、完整性、外键和数据保留证据见 `docs/CURRENT_HANDOFF.md`。这些授权不延续为新的正式数据写入、重复 migration、后续安装或发布授权。
 - `src-tauri/src/knowledge/legacy_preview.rs` 继续只负责只读 dry-run；生产写入统一由 `src-tauri/src/knowledge/repository.rs` 和 `database::apply_migrations` 负责。
 - 桌面技术栈为 Tauri 2 + React/TypeScript + Rust + SQLite；来源档案经 `src/services/recordRepository.ts`，知识结构经 `src/services/knowledgeRepository.ts`，数据库规则由 `src-tauri/src/database.rs` 与 `src-tauri/src/knowledge/repository.rs` 共同持有。
 - 允许修改：`src/`、`src-tauri/`、项目文档、测试、构建与安装配置。
