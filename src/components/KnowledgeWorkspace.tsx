@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowRight,
   Check,
@@ -7,10 +8,12 @@ import {
   Inbox,
   Link2,
   Layers3,
+  Maximize2,
   Merge,
   Plus,
   Scissors,
   Sparkles,
+  X,
 } from "lucide-react";
 import { CLASSIFIER_ALGORITHM_VERSION, classifySource } from "../knowledge/deterministicClassifier";
 import {
@@ -66,6 +69,58 @@ function limitReadableMessages(
     if (truncated) break;
   }
   return visible;
+}
+
+function KnowledgeSourceDialog({
+  title,
+  messages,
+  fullText,
+  onClose,
+}: {
+  title: string;
+  messages: ReadableSourceMessage[];
+  fullText: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="prototype-dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="prototype-dialog elevated-card source-content-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="prototype-dialog-heading">
+          <div><span>来源详情</span><h2>{title}</h2></div>
+          <button className="icon-button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        </div>
+        <div className="source-content-body">
+          {messages.length ? (
+            messages.map((message, index) => (
+              <ReadableMessageContent
+                key={`${message.role}-${message.createdAt ?? index}-${index}`}
+                message={message}
+              />
+            ))
+          ) : (
+            <MarkdownContent value={fullText || "来源正文为空"} className="source-plain-text" />
+          )}
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
 }
 
 function topicPath(topic: KnowledgeTopicRow, topics: KnowledgeTopicRow[]): string[] {
@@ -127,7 +182,7 @@ export function KnowledgeWorkspace({
     sourceItemId: number;
     text: string;
   } | null>(null);
-  const [expandedSourceId, setExpandedSourceId] = useState<number | null>(null);
+  const [sourceDetailOpen, setSourceDetailOpen] = useState(false);
   const sourceTextRequestSequence = useRef(0);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>([]);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>([]);
@@ -209,8 +264,7 @@ export function KnowledgeWorkspace({
     ? loadedSourceText.text
     : null;
   const sourcePreviewIsTruncated = selectedOriginalText !== null
-    && selectedOriginalText.length > SOURCE_PREVIEW_LIMIT
-    && expandedSourceId !== selectedId;
+    && selectedOriginalText.length > SOURCE_PREVIEW_LIMIT;
   const sourcePreviewText = sourcePreviewIsTruncated
     ? selectedOriginalText.slice(0, SOURCE_PREVIEW_LIMIT)
     : selectedOriginalText;
@@ -229,6 +283,14 @@ export function KnowledgeWorkspace({
       ? selectedReadableContent.fullText.slice(0, SOURCE_PREVIEW_LIMIT)
       : selectedReadableContent.fullText
     : sourcePreviewText;
+  const currentPendingSuggestions = suggestions.filter(
+    (item) => item.status === "pending"
+      && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
+  );
+  const hasStalePendingSuggestions = suggestions.some(
+    (item) => item.status === "pending"
+      && item.classifierVersion !== CLASSIFIER_ALGORITHM_VERSION,
+  );
 
   const reload = async () => {
     let catalogBootstrapped = false;
@@ -326,7 +388,10 @@ export function KnowledgeWorkspace({
       .then((items) => {
         if (cancelled) return;
         setSuggestions(items);
-        setSelectedTopicId(items.find((item) => item.status === "pending")?.suggestedTopicId ?? null);
+        setSelectedTopicId(items.find(
+          (item) => item.status === "pending"
+            && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
+        )?.suggestedTopicId ?? null);
       })
       .catch(() => {
         if (!cancelled) setSuggestions([]);
@@ -353,6 +418,7 @@ export function KnowledgeWorkspace({
 
   useEffect(() => {
     const sequence = ++sourceTextRequestSequence.current;
+    setSourceDetailOpen(false);
     if (!selectedId || mode !== "inbox") {
       setLoadedSourceText(null);
       return;
@@ -781,10 +847,18 @@ export function KnowledgeWorkspace({
     }
     setBusy(true);
     try {
+      const proposal = await repository.getPersonalCatalogProposal();
+      if (proposal) await repository.applyPersonalCatalog(proposal.version);
       const persisted = await computeAndSaveSuggestions(selected.id);
+      await reload();
       setSuggestions(persisted);
       setSelectedTopicId(persisted[0]?.suggestedTopicId ?? null);
-      onNotify("已生成并保存本地确定性分类建议");
+      onNotify(
+        persisted.length
+          ? "已按可读正文重新计算并保存证据充分的分类建议"
+          : "没有找到证据充分的主题，已清除旧的不可靠建议；可手动选择或新建主题",
+        { durationMs: persisted.length ? 6_000 : 10_000 },
+      );
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "分类失败，来源仍保留在收录箱");
     } finally {
@@ -803,7 +877,7 @@ export function KnowledgeWorkspace({
       );
       await reload();
       onNotify(
-        `自动整理完成：分析 ${result.analyzedCount} 条，自动归类 ${result.autoClassifiedCount} 条，待确认 ${result.awaitingConfirmationCount} 条${result.failures.length ? `，${result.failures.length} 条保留在收录箱` : ""}`,
+        `自动整理完成：分析 ${result.analyzedCount} 条，自动归类 ${result.autoClassifiedCount} 条，待确认 ${result.awaitingConfirmationCount} 条，无充分证据 ${result.unmatchedCount} 条${result.failures.length ? `，${result.failures.length} 条处理失败并保留` : ""}`,
         {
           durationMs: 12_000,
           actionLabel: result.operationIds.length ? "撤销自动归类" : undefined,
@@ -1728,6 +1802,7 @@ export function KnowledgeWorkspace({
   }
 
   return (
+    <>
     <main className="knowledge-page knowledge-inbox-page">
       <header className="knowledge-page-header">
         <div><span>来源先归档，再分类</span><h1>收录箱</h1><p>已加载 {inbox.length} 条待确认来源；分类失败不会丢失来源。</p></div>
@@ -1775,14 +1850,23 @@ export function KnowledgeWorkspace({
             <>
               <div className="knowledge-detail-heading">
                 <div><span>{selected.sourceType}</span><h2>{selected.title}</h2></div>
-                <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
-                  <Sparkles size={16} />
-                  {autoSuggestingSourceId === selected.id
-                    ? "自动整理中…"
-                    : suggestions.some((item) => item.status === "pending")
-                      ? "重新计算建议"
-                      : "生成分类建议"}
-                </button>
+                <div className="knowledge-detail-actions">
+                  {selectedOriginalText ? (
+                    <button onClick={() => setSourceDetailOpen(true)}>
+                      <Maximize2 size={16} />查看详情
+                    </button>
+                  ) : null}
+                  <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
+                    <Sparkles size={16} />
+                    {autoSuggestingSourceId === selected.id
+                      ? "自动整理中…"
+                      : currentPendingSuggestions.length
+                        ? "重新计算建议"
+                        : hasStalePendingSuggestions
+                          ? "按新版重新计算"
+                          : "生成分类建议"}
+                  </button>
+                </div>
               </div>
               <div className="knowledge-source-preview">
                 {selectedReadableContent === null
@@ -1804,23 +1888,11 @@ export function KnowledgeWorkspace({
                         className="source-plain-text"
                       />
                     )}
-                    {sourcePreviewIsTruncated ? (
-                      <div className="knowledge-source-preview-limit">
-                        <span>正文较长，已先显示前 {SOURCE_PREVIEW_LIMIT.toLocaleString("zh-CN")} 字，避免切换时卡顿。</span>
-                        <button onClick={() => setExpandedSourceId(selectedId)}>查看完整正文</button>
-                      </div>
-                    ) : selectedOriginalText !== null
-                      && selectedOriginalText.length > SOURCE_PREVIEW_LIMIT ? (
-                      <div className="knowledge-source-preview-limit">
-                        <span>当前正在显示完整长正文。</span>
-                        <button onClick={() => setExpandedSourceId(null)}>恢复流畅预览</button>
-                      </div>
-                    ) : null}
                   </>}
               </div>
               <div className="knowledge-suggestion-panel">
                 <h3>主题归属</h3>
-                {suggestions.filter((item) => item.status === "pending").map((suggestion) => {
+                {currentPendingSuggestions.map((suggestion) => {
                   const topic = topics.find((candidate) => candidate.id === suggestion.suggestedTopicId);
                   if (!topic) return null;
                   return (
@@ -1831,6 +1903,13 @@ export function KnowledgeWorkspace({
                     </label>
                   );
                 })}
+                {!currentPendingSuggestions.length ? (
+                  <p className="knowledge-suggestion-empty">
+                    {hasStalePendingSuggestions
+                      ? "旧版建议已隐藏，请按新版重新计算；不会自动采用旧结果。"
+                      : "当前没有证据充分的自动建议。可手动选择，或到主题浏览器新建更准确的主题。"}
+                  </p>
+                ) : null}
                 <label className="knowledge-manual-topic">
                   <span>手动选择主题</span>
                   <select value={selectedTopicId ?? ""} onChange={(event) => setSelectedTopicId(event.target.value ? Number(event.target.value) : null)}>
@@ -1847,5 +1926,14 @@ export function KnowledgeWorkspace({
         </div>
       </section>
     </main>
+    {sourceDetailOpen && selected && selectedReadableContent ? (
+      <KnowledgeSourceDialog
+        title={selected.title}
+        messages={selectedReadableContent.messages}
+        fullText={selectedReadableContent.fullText}
+        onClose={() => setSourceDetailOpen(false)}
+      />
+    ) : null}
+    </>
   );
 }

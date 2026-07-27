@@ -3,5 +3,6 @@ pub mod classification_input;
 #[allow(dead_code)]
 pub(crate) mod legacy_preview;
 pub(crate) mod personal_catalog;
+pub(crate) mod readable_text;
 pub(crate) mod repository;
 pub(crate) mod schema;

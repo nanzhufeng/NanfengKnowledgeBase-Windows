@@ -21,6 +21,7 @@ export type KnowledgeAutoOrganizationResult = {
   analyzedCount: number;
   autoClassifiedCount: number;
   awaitingConfirmationCount: number;
+  unmatchedCount: number;
   catalogBootstrapped: boolean;
   operationIds: number[];
   failures: string[];
@@ -29,15 +30,13 @@ export type KnowledgeAutoOrganizationResult = {
 async function ensureEditableTopicCatalog(
   repository: AutoOrganizationRepository,
 ): Promise<{ catalogBootstrapped: boolean; hasTopics: boolean }> {
-  if ((await repository.listTopics()).length) {
-    return { catalogBootstrapped: false, hasTopics: true };
-  }
+  const existingTopics = await repository.listTopics();
   const proposal = await repository.getPersonalCatalogProposal();
-  if (!proposal) return { catalogBootstrapped: false, hasTopics: false };
-  await repository.applyPersonalCatalog(proposal.version);
+  if (proposal) await repository.applyPersonalCatalog(proposal.version);
+  const topics = proposal ? await repository.listTopics() : existingTopics;
   return {
-    catalogBootstrapped: true,
-    hasTopics: (await repository.listTopics()).length > 0,
+    catalogBootstrapped: existingTopics.length === 0 && topics.length > 0,
+    hasTopics: topics.length > 0,
   };
 }
 
@@ -56,6 +55,7 @@ export async function autoOrganizeImportedSources(
     analyzedCount: 0,
     autoClassifiedCount: 0,
     awaitingConfirmationCount: 0,
+    unmatchedCount: 0,
     catalogBootstrapped: false,
     operationIds: [],
     failures: [],
@@ -75,10 +75,6 @@ export async function autoOrganizeImportedSources(
       const context = await repository.prepareClassificationContext(sourceItemId);
       const classification = classifySource(context);
       const top = classification.suggestions[0];
-      if (!top) {
-        result.failures.push(`来源 ${sourceItemId} 没有可用分类候选`);
-        continue;
-      }
       const persisted = await repository.saveSuggestions({
         sourceItemId,
         classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
@@ -91,6 +87,10 @@ export async function autoOrganizeImportedSources(
         })),
       });
       result.analyzedCount += 1;
+      if (!top) {
+        result.unmatchedCount += 1;
+        continue;
+      }
       if (top.action === "auto_eligible") {
         const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
         const operation = await repository.confirmClassification({

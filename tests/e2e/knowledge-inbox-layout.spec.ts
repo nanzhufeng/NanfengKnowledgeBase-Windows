@@ -71,7 +71,7 @@ test("收录箱仅滚动左侧列表并使用统一正文卡片", async ({ page 
           }
           if (command === "get_personal_topic_catalog_proposal") {
             return {
-              version: "nanzhufeng-personal-catalog-v1",
+              version: "nanzhufeng-personal-catalog-v2",
               status: "proposal",
               title: "个人主题目录提案",
               note: "仅预览",
@@ -95,7 +95,7 @@ test("收录箱仅滚动左侧列表并使用统一正文卡片", async ({ page 
                 {
                   sender: "assistant",
                   created_at: now,
-                  text: "## 核心结论\n\n- 使用统一 Markdown 排版\n- 保留来源层级\n\n正文继续展示。".repeat(12),
+                  text: "## 核心结论\n\n- 使用统一 Markdown 排版\n- 保留来源层级\n\n正文继续展示。".repeat(500),
                 },
               ],
             });
@@ -125,6 +125,12 @@ test("收录箱仅滚动左侧列表并使用统一正文卡片", async ({ page 
   await expect(page.getByRole("heading", { name: "收录箱" })).toBeVisible();
   await expect(page.locator(".source-message.assistant")).toBeVisible();
   await expect(page.getByRole("heading", { name: "主题归属" })).toBeVisible();
+  await expect(page.locator(".knowledge-source-preview-limit")).toHaveCount(0);
+  await page.getByRole("button", { name: "查看详情" }).click();
+  await expect(page.getByRole("dialog", { name: "测试来源 01" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "测试来源 01" }).locator(".source-message.assistant")).toBeVisible();
+  await page.getByRole("dialog", { name: "测试来源 01" }).getByRole("button", { name: "关闭" }).click();
+  await expect(page.getByRole("dialog", { name: "测试来源 01" })).toHaveCount(0);
 
   const layout = await page.evaluate(() => {
     const header = document.querySelector(".knowledge-page-header") as HTMLElement;

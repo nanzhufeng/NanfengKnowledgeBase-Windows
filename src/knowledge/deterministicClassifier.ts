@@ -1,5 +1,6 @@
 import {
   classificationSignalWeights,
+  classificationThresholds,
   decideClassificationAction,
   type ClassificationContext,
   type ClassificationResult,
@@ -11,7 +12,7 @@ import {
   type KnowledgeTopicCandidate,
 } from "./domain";
 
-export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v1";
+export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v2";
 
 type SignalEvaluation = {
   normalizedScore: number;
@@ -268,6 +269,21 @@ function scoreTopic(context: ClassificationContext, topic: KnowledgeTopicCandida
   };
 }
 
+function hasSufficientTopicEvidence(suggestion: ClassificationSuggestion): boolean {
+  if (suggestion.confidence < classificationThresholds.candidates) return false;
+  const scores = Object.fromEntries(
+    suggestion.signalScores.map((signal) => [signal.key, signal.normalizedScore]),
+  ) as Partial<Record<ClassificationSignalKey, number>>;
+
+  // 历史活跃度和相对全文排名只能增强已有语义证据，不能单独制造主题候选。
+  return (scores.explicit_rules ?? 0) >= 0.55
+    || (scores.aliases_entities ?? 0) >= 0.44
+    || (
+      (scores.full_text ?? 0) >= 0.65
+      && (scores.set_similarity ?? 0) >= 0.12
+    );
+}
+
 export function classifySource(
   context: ClassificationContext,
   generatedAt = context.source.importedAt,
@@ -298,6 +314,7 @@ export function classifySource(
     suggestions: context.topics
       .filter((topic) => topic.status !== "archived")
       .map((topic) => scoreTopic(context, topic))
+      .filter(hasSufficientTopicEvidence)
       .sort((left, right) => {
         if (right.confidence !== left.confidence) return right.confidence - left.confidence;
         return left.topicId.localeCompare(right.topicId);

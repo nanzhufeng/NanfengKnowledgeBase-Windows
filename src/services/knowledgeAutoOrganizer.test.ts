@@ -99,4 +99,31 @@ describe("autoOrganizeImportedSources", () => {
     });
     expect(repository.confirmClassification.mock.calls[0][0].confidence).toBeGreaterThanOrEqual(90);
   });
+
+  it("refreshes the managed catalog and clears unsupported old suggestions", async () => {
+    const unsupportedContext = context(33, 0);
+    unsupportedContext.source.title = "未命名导入记录 205";
+    unsupportedContext.source.text = "";
+    unsupportedContext.searchSignals = [];
+    const repository = {
+      listTopics: vi.fn().mockResolvedValue([{ id: 7 }]),
+      getPersonalCatalogProposal: vi.fn().mockResolvedValue({ version: "catalog-v2" }),
+      applyPersonalCatalog: vi.fn().mockResolvedValue({}),
+      prepareClassificationContext: vi.fn().mockResolvedValue(unsupportedContext),
+      saveSuggestions: vi.fn().mockResolvedValue([]),
+      confirmClassification: vi.fn(),
+    };
+
+    const result = await autoOrganizeImportedSources([33], repository as never);
+
+    expect(repository.applyPersonalCatalog).toHaveBeenCalledWith("catalog-v2");
+    expect(repository.saveSuggestions).toHaveBeenCalledWith(expect.objectContaining({
+      sourceItemId: 33,
+      suggestions: [],
+    }));
+    expect(result.analyzedCount).toBe(1);
+    expect(result.unmatchedCount).toBe(1);
+    expect(result.awaitingConfirmationCount).toBe(0);
+    expect(result.failures).toEqual([]);
+  });
 });

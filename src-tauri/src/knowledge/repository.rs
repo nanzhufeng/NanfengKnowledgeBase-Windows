@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::knowledge::personal_catalog;
+use crate::knowledge::{personal_catalog, readable_text};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -861,6 +861,21 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
          WHERE source.organization_state = 'inbox' AND source.status = 'active'
+           AND length(trim(source.original_text)) > 0
+           AND (
+             CASE
+               WHEN json_valid(source.original_text) THEN
+                 CASE
+                   WHEN json_type(source.original_text, '$.chat_messages') = 'array'
+                     AND json_array_length(source.original_text, '$.chat_messages') = 0
+                     AND length(trim(COALESCE(json_extract(source.original_text, '$.name'), ''))) = 0
+                     AND length(trim(COALESCE(json_extract(source.original_text, '$.summary'), ''))) = 0
+                   THEN 0
+                   ELSE 1
+                 END
+               ELSE 1
+             END
+           ) = 1
          GROUP BY source.id
          ORDER BY COALESCE(source.original_at, source.imported_at) DESC, source.id DESC
          LIMIT ?1",
@@ -950,7 +965,7 @@ pub fn prepare_classification_context(
     let (
         public_id,
         title,
-        text,
+        original_text,
         source_type,
         platform,
         local_path,
@@ -1029,7 +1044,7 @@ pub fn prepare_classification_context(
     let source = ClassificationSourceContext {
         id: public_id,
         title,
-        text,
+        text: readable_text::classification_text(&original_text),
         kind: source_type,
         platform: (!platform.trim().is_empty()).then_some(platform),
         file_name,
@@ -1053,13 +1068,13 @@ pub fn prepare_classification_context(
             .collect::<Vec<_>>();
         let mut entities = topic_rules
             .iter()
-            .filter(|rule| rule.field == "text" && rule.id.starts_with("entity:"))
+            .filter(|rule| rule.enabled && rule.field == "text" && rule.id.starts_with("entity:"))
             .map(|rule| rule.value.clone())
             .collect::<Vec<_>>();
         expand_entities(&mut entities, &entity_dictionary);
         let mut keywords = topic_rules
             .iter()
-            .filter(|rule| rule.field == "text")
+            .filter(|rule| rule.enabled && rule.field == "text")
             .map(|rule| rule.value.clone())
             .collect::<Vec<_>>();
         keywords.extend(split_search_terms(&topic.description));
@@ -1122,6 +1137,39 @@ pub fn apply_personal_catalog(
     let proposal = personal_catalog::personal_catalog_proposal();
     let transaction = connection.transaction()?;
     let now = Utc::now().to_rfc3339();
+    let mut managed_rule_ids = HashSet::new();
+    for topic in &proposal.topics {
+        for (rule_type, count) in [
+            ("exact_alias", topic.aliases.len()),
+            ("entity", topic.entities.len()),
+            ("keyword", topic.keywords.len()),
+        ] {
+            for index in 0..count {
+                managed_rule_ids.insert(format!("catalog-rule-{}-{rule_type}-{index}", topic.key));
+            }
+        }
+    }
+    let existing_managed_rules = {
+        let mut statement = transaction.prepare(
+            "SELECT public_id
+             FROM classification_rules
+             WHERE public_id LIKE 'catalog-rule-%' AND enabled <> 0",
+        )?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    for public_id in existing_managed_rules {
+        if !managed_rule_ids.contains(&public_id) {
+            transaction.execute(
+                "UPDATE classification_rules
+                 SET enabled = 0, updated_at = ?2
+                 WHERE public_id = ?1 AND enabled <> 0",
+                params![public_id, now],
+            )?;
+        }
+    }
     let mut result = ApplyPersonalCatalogResult {
         version: proposal.version.clone(),
         created_domains: 0,
@@ -1255,31 +1303,42 @@ pub fn apply_personal_catalog(
             ("keyword", &topic.keywords, 0.75_f64),
         ] {
             for (index, pattern) in patterns.iter().enumerate() {
-                let exists = transaction.query_row(
-                    "SELECT EXISTS(
-                       SELECT 1 FROM classification_rules
-                       WHERE rule_type = ?1 AND pattern = ?2 AND target_topic_id = ?3
-                     )",
-                    params![rule_type, pattern, topic_id],
-                    |row| row.get::<_, i64>(0),
-                )? != 0;
-                if exists {
+                let public_id = format!("catalog-rule-{}-{rule_type}-{index}", topic.key);
+                let existing_id = transaction
+                    .query_row(
+                        "SELECT id FROM classification_rules WHERE public_id = ?1",
+                        [public_id.as_str()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                if existing_id.is_some() {
+                    transaction.execute(
+                        "UPDATE classification_rules
+                         SET rule_type = ?2, pattern = ?3, target_domain_id = ?4,
+                             target_topic_id = ?5, weight = ?6, priority = 0,
+                             enabled = 1,
+                             config_json = '{\"managedBy\":\"personal-catalog-v2\"}',
+                             updated_at = ?7
+                         WHERE public_id = ?1
+                           AND (
+                             rule_type <> ?2 OR pattern <> ?3
+                             OR target_domain_id IS NOT ?4 OR target_topic_id IS NOT ?5
+                             OR weight <> ?6 OR priority <> 0 OR enabled <> 1
+                             OR config_json <> '{\"managedBy\":\"personal-catalog-v2\"}'
+                           )",
+                        params![public_id, rule_type, pattern, domain_id, topic_id, weight, now],
+                    )?;
                     continue;
                 }
                 transaction.execute(
                     "INSERT INTO classification_rules(
                        public_id, rule_type, pattern, target_domain_id, target_topic_id,
                        weight, priority, enabled, config_json, created_at, updated_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 1, '{}', ?7, ?7)",
-                    params![
-                        format!("catalog-rule-{}-{rule_type}-{index}", topic.key),
-                        rule_type,
-                        pattern,
-                        domain_id,
-                        topic_id,
-                        weight,
-                        now,
-                    ],
+                     ) VALUES (
+                       ?1, ?2, ?3, ?4, ?5, ?6, 0, 1,
+                       '{\"managedBy\":\"personal-catalog-v2\"}', ?7, ?7
+                     )",
+                    params![public_id, rule_type, pattern, domain_id, topic_id, weight, now,],
                 )?;
                 result.created_rules += 1;
             }
@@ -3554,6 +3613,11 @@ fn read_persisted_classification_rules(
             _ => ("text", "contains"),
         };
         let value = row.get::<_, String>(2)?;
+        let reason = if public_id.starts_with("catalog-rule-") {
+            format!("目录主题短语命中「{value}」")
+        } else {
+            format!("用户规则命中「{value}」")
+        };
         Ok(ClassificationRuleContext {
             id: format!("{rule_type}:{public_id}"),
             topic_id: row.get::<_, i64>(3)?.to_string(),
@@ -3567,7 +3631,7 @@ fn read_persisted_classification_rules(
             value: value.clone(),
             json_field: None,
             strength: row.get::<_, f64>(4)?.clamp(0.0, 1.0),
-            reason: format!("用户规则命中「{value}」"),
+            reason,
             enabled: row.get::<_, i64>(5)? != 0,
         })
     })?;
@@ -4443,6 +4507,50 @@ mod tests {
     }
 
     #[test]
+    fn inbox_hides_structurally_empty_conversations_without_deleting_them() {
+        let mut connection = database::open_memory_database().expect("database");
+        let empty_json = serde_json::json!({
+            "account": "",
+            "uuid": "6c472386-2875-4e9f-a804-0ee16303efa5",
+            "chat_messages": [],
+            "name": "",
+            "summary": ""
+        })
+        .to_string();
+        let record = database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "未命名导入记录 205".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: empty_json,
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("record");
+        sync_legacy_record(&mut connection, record.id).expect("sync");
+
+        assert!(list_inbox(&connection, 20).expect("inbox").is_empty());
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM source_items", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("source count"),
+            1
+        );
+    }
+
+    #[test]
     fn classification_confirmation_is_persisted_and_undoable() {
         let mut connection = database::open_memory_database().expect("database");
         let record = database::create_record(
@@ -4730,6 +4838,20 @@ mod tests {
         assert_eq!(proposal.version, personal_catalog::PERSONAL_CATALOG_VERSION);
         assert!(!proposal.domains.is_empty());
         assert!(!proposal.topics.is_empty());
+        for required_topic in [
+            "A股与基金市场",
+            "海外账号体系",
+            "海外银行与支付",
+            "海外通信与号码",
+            "新能源车与二手车",
+            "血型与输血",
+            "艺术与设计升学",
+        ] {
+            assert!(proposal
+                .topics
+                .iter()
+                .any(|topic| topic.name == required_topic));
+        }
         assert_eq!(
             connection
                 .query_row("SELECT COUNT(*) FROM domains", [], |row| row
@@ -4755,11 +4877,30 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .expect("topic count");
+        let (domain_id, topic_id) = connection
+            .query_row(
+                "SELECT domain_id, id FROM topics ORDER BY id LIMIT 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("managed topic");
+        connection
+            .execute(
+                "INSERT INTO classification_rules(
+                   public_id, rule_type, pattern, target_domain_id, target_topic_id,
+                   weight, priority, enabled, config_json, created_at, updated_at
+                 ) VALUES (
+                   'catalog-rule-v1-obsolete-entity-9', 'entity', 'Claude',
+                   ?1, ?2, 0.9, 0, 1, '{}', '2026-07-27', '2026-07-27'
+                 )",
+                params![domain_id, topic_id],
+            )
+            .expect("obsolete v1 rule");
 
         let second = apply_personal_catalog(
             &mut connection,
             &ApplyPersonalCatalogInput {
-                version: proposal.version,
+                version: proposal.version.clone(),
             },
         )
         .expect("second apply");
@@ -4775,6 +4916,35 @@ mod tests {
                 .expect("stable topic count"),
             topic_count
         );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT enabled FROM classification_rules
+                     WHERE public_id = 'catalog-rule-v1-obsolete-entity-9'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("obsolete rule state"),
+            0
+        );
+        for unsafe_pattern in [
+            "ChatGPT", "Claude", "Google", "Apple", "SRT", "ACES", "GPU", "价格", "视频", "动画",
+            "配置", "支付",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM classification_rules
+                         WHERE enabled <> 0 AND pattern = ?1
+                           AND public_id LIKE 'catalog-rule-%'",
+                        [unsafe_pattern],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .expect("unsafe managed rule count"),
+                0,
+                "不应保留宽泛托管规则：{unsafe_pattern}"
+            );
+        }
     }
 
     #[test]
