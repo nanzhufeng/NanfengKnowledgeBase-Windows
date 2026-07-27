@@ -89,7 +89,7 @@ classifySource(context: ClassificationContext): ClassificationResult
 | `45–69.99` | `candidates`：展示多个候选，不自动选择 |
 | `<45` | `manual`：建议新建主题或人工分类 |
 
-`auto_eligible` 不等于分类器直接写库。分类器始终只返回建议；接受、修改、撤销由未来的 Classification Use Case 统一执行。
+`auto_eligible` 不等于分类器直接写库。分类器始终只返回建议；接受和撤销由 `KnowledgeRepository` 对应的 Rust 持久化用例统一执行并记录操作日志。
 
 ### 确定性
 
@@ -119,10 +119,15 @@ classifySource(context: ClassificationContext): ClassificationResult
 
 ## 当前实现边界
 
-- `src/knowledge/domain.ts`：领域数据合同，未连接 SQLite。
+- `src/knowledge/domain.ts`：前端领域数据合同和运行时校验。
 - `src/knowledge/deterministicClassifier.ts`：纯本地、无副作用的分类建议内核。
 - `src/knowledge/classificationFixtures.ts`：固定验收数据，不是生产词典。
-- `src/prototypes/knowledge-evolution/`：消费真实分类器结果的假数据 UI。
-- `src-tauri/src/knowledge/schema.rs`：未来知识表、约束和 FTS5 的隔离持久化合同；只在内存库测试中创建，没有挂到启动迁移。
+- `src/services/knowledgeRepository.ts`：正式 WebView 到 Tauri 知识命令的唯一前端适配器。
+- `src/components/KnowledgeWorkspace.tsx`：正式收录箱、主题浏览器和整理工作台入口。
+- `src-tauri/src/knowledge/schema.rs`：正式知识表、约束和 FTS5 合同，已由 migration v3 接入。
+- `src-tauri/src/knowledge/repository.rs`：正式知识仓库，负责 Source Item 回填、分类确认/撤销、主题详情、判断、证据、问题、上下文、合并和关系。
 - `src-tauri/src/knowledge/legacy_preview.rs`：旧 `Record` 的只读映射预演；标签仅作候选，标题不自动升格为主题。
-- 尚未实现 Classification Use Case、TopicRepository、正式数据库 migration、真实 FTS/BM25 分类适配器和操作日志写入用例。
+- `src/prototypes/knowledge-evolution/`：历史假数据设计/测试资产，不是生产入口。
+- 已在 901 条隔离副本验证 migration v3 和幂等回填；正式 `D:\南枫知识库` 尚未升级。
+- 尚未实现生产 FTS5/BM25 分类适配器、主题别名/旧路径重定向、独立 Note CRUD、Proposition 和 Turning Point 生产用例。
+- Topic 合并已实现预览、事务提交和撤销，但别名/重定向未完成；拆分仍按首版规则只提供预览。
