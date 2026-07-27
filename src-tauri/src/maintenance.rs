@@ -2,7 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -50,6 +50,23 @@ pub struct KnowledgeMigrationMaintenanceReport {
     pub integrity_check: String,
     pub foreign_key_violations: i64,
     pub migration_backup: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeInspectionMaintenanceReport {
+    pub data_root: String,
+    pub database: String,
+    pub schema_versions: Vec<i64>,
+    pub active_records: i64,
+    pub source_items: i64,
+    pub inbox_sources: i64,
+    pub notes: i64,
+    pub propositions: i64,
+    pub evidence: i64,
+    pub turning_points: i64,
+    pub integrity_check: String,
+    pub foreign_key_violations: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -163,6 +180,51 @@ pub fn migrate_isolated_knowledge_copy(
         integrity_check,
         foreign_key_violations,
         migration_backup: migration_backup.to_string_lossy().into_owned(),
+    })
+}
+
+pub fn inspect_isolated_knowledge_copy(
+    data_root: impl AsRef<Path>,
+) -> AppResult<KnowledgeInspectionMaintenanceReport> {
+    let data_root = require_isolated_root(data_root.as_ref(), "隔离检查目录")?;
+    require_isolated_marker(&data_root)?;
+    let database = data_root.join("data").join("app.db");
+    if !database.is_file() {
+        return Err(AppError::NotFound(format!(
+            "隔离数据库不存在：{}",
+            database.display()
+        )));
+    }
+    let connection = Connection::open_with_flags(
+        &database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let integrity_check = database::integrity_check(&connection)?;
+    let foreign_key_violations =
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    let schema_versions = {
+        let mut statement =
+            connection.prepare("SELECT version FROM schema_migrations ORDER BY version")?;
+        let versions = statement
+            .query_map([], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        versions
+    };
+    Ok(KnowledgeInspectionMaintenanceReport {
+        data_root: data_root.to_string_lossy().into_owned(),
+        database: database.to_string_lossy().into_owned(),
+        schema_versions,
+        active_records: count_where(&connection, "records", "is_deleted = 0")?,
+        source_items: count_where(&connection, "source_items", "1 = 1")?,
+        inbox_sources: count_where(&connection, "source_items", "organization_state = 'inbox'")?,
+        notes: count_where(&connection, "notes", "1 = 1")?,
+        propositions: count_where(&connection, "propositions", "1 = 1")?,
+        evidence: count_where(&connection, "evidence", "1 = 1")?,
+        turning_points: count_where(&connection, "turning_points", "1 = 1")?,
+        integrity_check,
+        foreign_key_violations,
     })
 }
 

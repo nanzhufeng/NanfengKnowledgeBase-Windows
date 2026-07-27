@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "南枫知识库隐藏验收",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "visible": false,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}
