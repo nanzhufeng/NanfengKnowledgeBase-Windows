@@ -828,6 +828,7 @@ export function KnowledgeWorkspace({
                   <span>{mergePreview.evidenceToMove} 条证据</span>
                   <span>{mergePreview.questionsToMove} 个问题</span>
                   <span>{mergePreview.relationsToRewrite} 条关系</span>
+                  <span>{mergePreview.redirectAliases.length} 个旧名称/路径重定向</span>
                 </div>
                 {mergePreview.duplicateSourceLinks ? <p>其中 {mergePreview.duplicateSourceLinks} 条来源已在目标主题，将去重保留。</p> : null}
                 {mergePreview.blockers.map((blocker) => <p className="knowledge-blocker" key={blocker}>{blocker}</p>)}

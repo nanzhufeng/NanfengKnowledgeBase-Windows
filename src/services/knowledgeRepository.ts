@@ -230,6 +230,7 @@ const topicMergePreviewSchema = z.object({
   evidenceToMove: z.number().int(),
   questionsToMove: z.number().int(),
   relationsToRewrite: z.number().int(),
+  redirectAliases: z.array(z.string()),
   blockers: z.array(z.string()),
 });
 

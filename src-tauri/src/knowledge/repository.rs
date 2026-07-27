@@ -326,6 +326,7 @@ pub struct TopicMergePreview {
     pub evidence_to_move: i64,
     pub questions_to_move: i64,
     pub relations_to_rewrite: i64,
+    pub redirect_aliases: Vec<String>,
     pub blockers: Vec<String>,
 }
 
@@ -450,6 +451,8 @@ struct MergeInverse {
     rule_ids: Vec<i64>,
     original_relations: Vec<MergeRelationSnapshot>,
     inserted_relations: Vec<MergeRelationSnapshot>,
+    #[serde(default)]
+    inserted_redirect_alias_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1547,6 +1550,10 @@ pub fn preview_topic_merge(
         params![source_topic_id, target_topic_id],
         |row| row.get::<_, i64>(0),
     )?;
+    let mut redirect_aliases = read_topic_aliases(connection, source_topic_id)?;
+    redirect_aliases.insert(0, source_topic.name.clone());
+    redirect_aliases.push(topic_path(connection, source_topic_id)?.join(" / "));
+    deduplicate_strings(&mut redirect_aliases);
     Ok(TopicMergePreview {
         source_topic,
         target_topic,
@@ -1561,6 +1568,7 @@ pub fn preview_topic_merge(
             [source_topic_id],
             |row| row.get(0),
         )?,
+        redirect_aliases,
         blockers,
     })
 }
@@ -1760,6 +1768,18 @@ pub fn merge_topics(
         }
     }
     let now = Utc::now().to_rfc3339();
+    let mut inserted_redirect_alias_ids = Vec::new();
+    for alias in &preview.redirect_aliases {
+        let changed = transaction.execute(
+            "INSERT OR IGNORE INTO topic_aliases(
+               topic_id, alias, normalized_alias, alias_type, created_at
+             ) VALUES (?1, ?2, ?3, 'redirect', ?4)",
+            params![input.target_topic_id, alias, normalize_name(alias), now],
+        )?;
+        if changed == 1 {
+            inserted_redirect_alias_ids.push(transaction.last_insert_rowid());
+        }
+    }
     transaction.execute(
         "UPDATE topics SET status = 'merged', updated_at = ?1 WHERE id = ?2",
         params![now, input.source_topic_id],
@@ -1783,6 +1803,7 @@ pub fn merge_topics(
         rule_ids,
         original_relations,
         inserted_relations,
+        inserted_redirect_alias_ids,
     };
     transaction.execute(
         "INSERT INTO operation_logs(
@@ -1906,6 +1927,12 @@ pub fn undo_topic_merge(
         &inverse.suggestion_ids,
         inverse.source_topic_id,
     )?;
+    for alias_id in &inverse.inserted_redirect_alias_ids {
+        transaction.execute(
+            "DELETE FROM topic_aliases WHERE id = ?1 AND topic_id = ?2",
+            params![alias_id, inverse.target_topic_id],
+        )?;
+    }
     restore_topic_ids_by_column(
         &transaction,
         "classification_rules",
@@ -4053,6 +4080,15 @@ mod tests {
             },
         )
         .expect("source topic");
+        create_topic_alias(
+            &connection,
+            &CreateTopicAliasInput {
+                topic_id: source_topic.id,
+                alias: "旧知识库名称".to_string(),
+                alias_type: "name".to_string(),
+            },
+        )
+        .expect("source alias");
         let target_topic = create_topic(
             &connection,
             &CreateKnowledgeTopicInput {
@@ -4142,6 +4178,12 @@ mod tests {
             preview_topic_merge(&connection, source_topic.id, target_topic.id).expect("preview");
         assert!(preview.blockers.is_empty());
         assert_eq!(preview.source_links_to_move, 2);
+        assert!(preview
+            .redirect_aliases
+            .contains(&"旧知识库名称".to_string()));
+        assert!(preview
+            .redirect_aliases
+            .contains(&"知识管理 / 知识库".to_string()));
         let merged = merge_topics(
             &mut connection,
             &MergeTopicsInput {
@@ -4164,6 +4206,14 @@ mod tests {
                 .status,
             "merged"
         );
+        let redirected_aliases =
+            list_topic_aliases(&connection, Some(target_topic.id)).expect("redirect aliases");
+        assert!(redirected_aliases.iter().any(|alias| {
+            alias.alias == "旧知识库名称" && alias.alias_type == "redirect"
+        }));
+        assert!(redirected_aliases.iter().any(|alias| {
+            alias.alias == "知识管理 / 知识库" && alias.alias_type == "redirect"
+        }));
         undo_topic_merge(&mut connection, merged.operation_id).expect("undo merge");
         let source_detail = get_topic_detail(&connection, source_topic.id).expect("source detail");
         assert_eq!(source_detail.sources.len(), 2);
@@ -4177,5 +4227,8 @@ mod tests {
                 .len(),
             0
         );
+        assert!(list_topic_aliases(&connection, Some(target_topic.id))
+            .expect("redirect aliases after undo")
+            .is_empty());
     }
 }
