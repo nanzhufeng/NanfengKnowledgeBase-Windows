@@ -12,6 +12,8 @@
     "test:e2e": "playwright test",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:sites": "node --test tests/sites-worker.test.mjs",
+    "audit:classification": "node scripts/run-knowledge-classification-dry-run.mjs",
+    "audit:merge-chatgpt": "node scripts/merge-chatgpt-classification-input.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"

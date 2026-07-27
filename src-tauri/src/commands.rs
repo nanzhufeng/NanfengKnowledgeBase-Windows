@@ -1,5 +1,5 @@
 use std::net::TcpListener;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::{Connection, OptionalExtension};
 use tauri::State;
@@ -20,7 +20,7 @@ use crate::transfer::{
 };
 
 pub struct AppState {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
     paths: AppPaths,
     _instance_guard: TcpListener,
 }
@@ -28,7 +28,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(connection: Connection, paths: AppPaths, instance_guard: TcpListener) -> Self {
         Self {
-            connection: Mutex::new(connection),
+            connection: Arc::new(Mutex::new(connection)),
             paths,
             _instance_guard: instance_guard,
         }
@@ -43,6 +43,10 @@ impl AppState {
 
 fn command<T>(result: AppResult<T>) -> Result<T, CommandError> {
     result.map_err(CommandError::from)
+}
+
+fn background_task_error(error: impl std::fmt::Display) -> CommandError {
+    CommandError::from(AppError::Conflict(format!("后台文件任务异常结束：{error}")))
 }
 
 #[tauri::command]
@@ -62,6 +66,234 @@ pub fn open_data_directory(state: State<'_, AppState>) -> Result<(), CommandErro
         open::that(&state.paths.root)
             .map_err(|error| AppError::Io(std::io::Error::other(error.to_string()))),
     )
+}
+
+#[tauri::command]
+pub fn list_knowledge_inbox(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeInboxItem>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_inbox(
+        &connection,
+        limit.unwrap_or(500),
+    ))
+}
+
+#[tauri::command]
+pub fn list_knowledge_domains(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeDomainRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_domains(&connection))
+}
+
+#[tauri::command]
+pub fn list_knowledge_topics(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeTopicRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_topics(&connection))
+}
+
+#[tauri::command]
+pub fn create_knowledge_domain(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateKnowledgeDomainInput,
+) -> Result<crate::knowledge::repository::KnowledgeDomainRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_domain(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_topic(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateKnowledgeTopicInput,
+) -> Result<crate::knowledge::repository::KnowledgeTopicRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_topic(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn save_knowledge_classification_suggestions(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::SaveKnowledgeSuggestionsInput,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeClassificationSuggestionRow>, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::save_classification_suggestions(&mut connection, &input))
+}
+
+#[tauri::command]
+pub fn list_knowledge_classification_suggestions(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeClassificationSuggestionRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(
+        crate::knowledge::repository::list_classification_suggestions(&connection, source_item_id),
+    )
+}
+
+#[tauri::command]
+pub fn confirm_knowledge_classification(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::ConfirmKnowledgeClassificationInput,
+) -> Result<crate::knowledge::repository::KnowledgeOperationResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::confirm_classification(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn undo_knowledge_classification(
+    state: State<'_, AppState>,
+    operation_id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeOperationResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::undo_classification(
+        &mut connection,
+        operation_id,
+    ))
+}
+
+#[tauri::command]
+pub fn get_knowledge_topic_detail(
+    state: State<'_, AppState>,
+    topic_id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeTopicDetail, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::get_topic_detail(
+        &connection,
+        topic_id,
+    ))
+}
+
+#[tauri::command]
+pub fn add_knowledge_topic_judgment(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::AddTopicJudgmentInput,
+) -> Result<crate::knowledge::repository::TopicJudgmentRow, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::add_topic_judgment(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn add_knowledge_topic_evidence(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::AddTopicEvidenceInput,
+) -> Result<crate::knowledge::repository::TopicEvidenceRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::add_topic_evidence(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn add_knowledge_topic_question(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::AddTopicQuestionInput,
+) -> Result<crate::knowledge::repository::TopicQuestionRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::add_topic_question(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn compile_knowledge_topic_context(
+    state: State<'_, AppState>,
+    topic_id: i64,
+) -> Result<String, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::compile_topic_context(
+        &connection,
+        topic_id,
+    ))
+}
+
+#[tauri::command]
+pub fn preview_knowledge_topic_merge(
+    state: State<'_, AppState>,
+    source_topic_id: i64,
+    target_topic_id: i64,
+) -> Result<crate::knowledge::repository::TopicMergePreview, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::preview_topic_merge(
+        &connection,
+        source_topic_id,
+        target_topic_id,
+    ))
+}
+
+#[tauri::command]
+pub fn merge_knowledge_topics(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::MergeTopicsInput,
+) -> Result<crate::knowledge::repository::TopicMergeResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::merge_topics(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn undo_knowledge_topic_merge(
+    state: State<'_, AppState>,
+    operation_id: i64,
+) -> Result<crate::knowledge::repository::TopicMergeResult, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::undo_topic_merge(
+        &mut connection,
+        operation_id,
+    ))
+}
+
+#[tauri::command]
+pub fn preview_knowledge_topic_split(
+    state: State<'_, AppState>,
+    topic_id: i64,
+) -> Result<crate::knowledge::repository::TopicSplitPreview, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::preview_topic_split(
+        &connection,
+        topic_id,
+    ))
+}
+
+#[tauri::command]
+pub fn suggest_knowledge_topic_relations(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::knowledge::repository::TopicRelationSuggestion>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::suggest_topic_relations(
+        &connection,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_topic_relation(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateTopicRelationInput,
+) -> Result<crate::knowledge::repository::TopicRelationRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_topic_relation(
+        &connection,
+        &input,
+    ))
 }
 
 #[tauri::command]
@@ -286,7 +518,11 @@ pub fn confirm_import(
     input: ConfirmImportInput,
 ) -> Result<ImportResult, CommandError> {
     let mut connection = command(state.connection())?;
-    command(crate::importer::confirm_import(&mut connection, &input))
+    command(crate::importer::confirm_import(
+        &mut connection,
+        &state.paths,
+        &input,
+    ))
 }
 
 #[tauri::command]
@@ -362,64 +598,104 @@ pub fn export_records(
 }
 
 #[tauri::command]
-pub fn create_backup(state: State<'_, AppState>) -> Result<String, CommandError> {
-    let connection = command(state.connection())?;
-    command(
-        crate::transfer::create_backup(&connection, &state.paths, "手动备份")
-            .map(|path| path.to_string_lossy().into_owned()),
-    )
+pub async fn create_backup(state: State<'_, AppState>) -> Result<String, CommandError> {
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::transfer::create_backup(&connection, &paths, "手动备份")
+            .map(|path| path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn restore_backup(
+pub async fn restore_backup(
     state: State<'_, AppState>,
     source_path: String,
 ) -> Result<RestoreResult, CommandError> {
-    let mut connection = command(state.connection())?;
-    command(crate::transfer::restore_backup(
-        &mut connection,
-        &state.paths,
-        source_path,
-    ))
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::transfer::restore_backup(&mut connection, &paths, source_path)
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn inspect_backup(source_path: String) -> Result<BackupPreview, CommandError> {
-    command(crate::transfer::inspect_backup(source_path))
+pub async fn inspect_backup(source_path: String) -> Result<BackupPreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || crate::transfer::inspect_backup(source_path))
+        .await
+        .map_err(background_task_error)?
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn create_portable_backup(
+pub async fn create_portable_backup(
     state: State<'_, AppState>,
     preferences_json: String,
 ) -> Result<PortableBackupResult, CommandError> {
-    let connection = command(state.connection())?;
-    command(crate::transfer::create_portable_backup(
-        &connection,
-        &state.paths,
-        &preferences_json,
-        "南枫知识库_完整迁移备份",
-    ))
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::transfer::create_portable_backup(
+            &connection,
+            &paths,
+            &preferences_json,
+            "南枫知识库_完整迁移备份",
+        )
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn inspect_portable_backup(source_path: String) -> Result<PortableBackupPreview, CommandError> {
-    command(crate::transfer::inspect_portable_backup(source_path))
+pub async fn inspect_portable_backup(
+    source_path: String,
+) -> Result<PortableBackupPreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::transfer::inspect_portable_backup(source_path)
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn restore_portable_backup(
+pub async fn restore_portable_backup(
     state: State<'_, AppState>,
     source_path: String,
     current_preferences_json: String,
 ) -> Result<PortableRestoreResult, CommandError> {
-    let mut connection = command(state.connection())?;
-    command(crate::transfer::restore_portable_backup(
-        &mut connection,
-        &state.paths,
-        source_path,
-        &current_preferences_json,
-    ))
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::transfer::restore_portable_backup(
+            &mut connection,
+            &paths,
+            source_path,
+            &current_preferences_json,
+        )
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -485,6 +761,7 @@ pub fn open_attachment(state: State<'_, AppState>, attachment_id: i64) -> Result
     let connection = command(state.connection())?;
     command(crate::attachments::open_attachment(
         &connection,
+        &state.paths,
         attachment_id,
     ))
 }

@@ -377,6 +377,7 @@ export function isGenericImportedTitle(title: string): boolean {
     .replace(/^[#>*_`~\-\s]+|[*_`~\s]+$/g, "")
     .replace(/\s+/g, " ")
     .toLocaleLowerCase();
+  const isConversationFileStem = /^(?:conversation|conversations)(?:[-_]\d+)?$/.test(normalized);
 
   return [
     "conversation overview",
@@ -386,7 +387,9 @@ export function isGenericImportedTitle(title: string): boolean {
     "new conversation",
     "无标题",
     "未命名",
-  ].includes(normalized) || /^未命名导入记录(?:\s+\d+)?$/.test(normalized);
+  ].includes(normalized)
+    || isConversationFileStem
+    || /^未命名导入记录(?:\s+\d+)?$/.test(normalized);
 }
 
 export function resolveImportedTitle(title: string, sourceText: string): string {

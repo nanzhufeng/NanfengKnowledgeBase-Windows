@@ -2,17 +2,20 @@
 
 - 默认使用简体中文，称呼用户“南烛枫”，结论在前。
 - 项目根目录：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`。
-- 核心任务：把研究判断、证据、待验证问题、行动和版本放入同一条本地可追溯记录。
+- 核心任务：把零散来源经过可解释、可确认、可撤销的分类，沉淀为有主题层级、关系、证据和判断时间线的长期知识结构。
 - 通用架构遵循 `C:\Users\Administrator\Documents\软件开发\docs\app-development\architecture-baseline.md`，项目只记录自身事实和明确例外。
-- 每轮开始先读 `docs/CURRENT_HANDOFF.md`；产品边界读 `docs/product-brief.md`；概念所有权读 `docs/architecture-governance.md`。
+- 每轮开始先读 `docs/CURRENT_HANDOFF.md`；最高产品规格读 `docs/南枫知识库_产品定义与自动分类主规格.md`；产品边界读 `docs/product-brief.md`；概念所有权读 `docs/architecture-governance.md`。
 
 ## 当前阶段边界
 
-- 阶段 1 视觉与交互契约已经用户确认并冻结；当前进入本地优先桌面 MVP 实施。
-- 桌面技术栈为 Tauri 2 + React/TypeScript + Rust + SQLite；`src/services/recordRepository.ts` 是前端唯一数据入口，`src-tauri/src/database.rs` 是数据库规则所有者。
+- 当前阶段是正式知识生产链路接入。假数据原型不再作为应用入口；收录箱、主题、分类确认、撤销、判断、证据、问题和上下文必须通过 Rust/SQLite 正式仓库。
+- 用户已于 2026-07-27 授权落实主规格和审计问题，允许修改正式 migration 代码并在隔离数据库副本执行迁移验证。仍不得在本轮后台验证中启动桌面窗口或直接运行 `D:\南枫知识库` 的 migration；正式数据升级必须在隔离迁移、回滚和完整性检查通过后单独报告。
+- `src-tauri/src/knowledge/legacy_preview.rs` 继续只负责只读 dry-run；生产写入统一由 `src-tauri/src/knowledge/repository.rs` 和 `database::apply_migrations` 负责。
+- 桌面技术栈为 Tauri 2 + React/TypeScript + Rust + SQLite；来源档案经 `src/services/recordRepository.ts`，知识结构经 `src/services/knowledgeRepository.ts`，数据库规则由 `src-tauri/src/database.rs` 与 `src-tauri/src/knowledge/repository.rs` 共同持有。
 - 允许修改：`src/`、`src-tauri/`、项目文档、测试、构建与安装配置。
 - 不引入云同步、模型 API、遥测或未经确认的外部联网；导入先归档原文件再解析，恢复前必须先保护当前数据库。
 - 浏览器仓库只用于视觉与组件契约验证，不代表桌面生产数据真相。
+- 现有 `Record` 聚合保留为来源档案兼容层，不扩充为全部知识概念；新建和导入后由数据库唯一入口同步生成独立 `Source Item`。
 - `.openai/hosting.json`、`worker/index.js`、`scripts/prepare-sites-build.mjs`、`tests/sites-worker.test.mjs` 是原型运行时文件，除非交付链路变化，否则保持完整。
 
 ## 已确认视觉契约

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import MarkdownContent, {
   calloutToneFromText,
+  isSafeEmbeddedImageSource,
   prepareObsidianMarkdown,
 } from "./MarkdownContent";
 
@@ -41,5 +42,18 @@ describe("MarkdownContent", () => {
     expect(prepared).toContain("❓ 待确认");
     expect(calloutToneFromText("✅ 已完成")).toBe("success");
     expect(calloutToneFromText("❝ 原话")).toBe("quote");
+  });
+
+  it("blocks remote tracking images while preserving local and embedded images", () => {
+    expect(isSafeEmbeddedImageSource("https://tracker.example/pixel.png")).toBe(false);
+    expect(isSafeEmbeddedImageSource("//tracker.example/pixel.png")).toBe(false);
+    expect(isSafeEmbeddedImageSource("data:image/png;base64,AAAA")).toBe(true);
+    expect(isSafeEmbeddedImageSource("./attachments/local.png")).toBe(true);
+
+    const html = renderToStaticMarkup(
+      <MarkdownContent value="![远程图](https://tracker.example/pixel.png)" />,
+    );
+    expect(html).toContain("远程图片已阻止自动加载");
+    expect(html).not.toContain("<img");
   });
 });

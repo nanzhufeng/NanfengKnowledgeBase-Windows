@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::Manager;
 
+use crate::database;
 use crate::error::{AppError, AppResult};
 use crate::models::{DataLocation, StorageStats};
-use rusqlite::backup::Backup;
 use rusqlite::Connection;
 
 #[derive(Debug, Clone)]
@@ -256,9 +255,7 @@ fn backup_database(source_path: &Path, target_path: &Path) -> AppResult<()> {
     let source =
         Connection::open_with_flags(source_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let mut target = Connection::open(target_path)?;
-    let backup = Backup::new(&source, &mut target)?;
-    backup.run_to_completion(16, Duration::from_millis(20), None)?;
-    drop(backup);
+    database::copy_database(&source, &mut target)?;
     let integrity: String = target.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
     if integrity != "ok" {
         return Err(AppError::Conflict(format!(

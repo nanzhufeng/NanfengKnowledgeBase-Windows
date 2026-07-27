@@ -5,6 +5,8 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await expect(page.getByText("南枫知识库", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /来源档案/ }).click();
+  await expect(page.locator(".records-workspace")).toBeVisible();
 });
 
 test("搜索、选择、收藏和长详情按需展示保持可操作", async ({ page }) => {
@@ -36,6 +38,7 @@ test("当前判断自动保存并在刷新后恢复", async ({ page }) => {
   await expect(page.getByText("正在保存草稿…")).toBeVisible();
   await expect(page.getByText("本地草稿已保存")).toBeVisible({ timeout: 5_000 });
   await page.reload();
+  await page.getByRole("button", { name: /来源档案/ }).click();
   await expect(page.getByText(value)).toBeVisible();
 });
 
@@ -47,6 +50,7 @@ test("异常刷新前的未提交判断从本机草稿恢复", async ({ page }) 
   await page.locator(".judgment-card textarea").fill(value);
   await expect(page.getByText("正在保存草稿…")).toBeVisible();
   await page.reload();
+  await page.getByRole("button", { name: /来源档案/ }).click();
   await expect(page.getByText(value)).toBeVisible();
   await expect(page.getByText("本地草稿", { exact: true })).toBeVisible();
   await expect(page.getByText(/已恢复异常退出前的本地草稿/).first()).toBeVisible();
@@ -170,6 +174,7 @@ test("完整编辑器保留并可管理多来源", async ({ page }) => {
 test("1366x768 主工作区无页面级横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.reload();
+  await page.getByRole("button", { name: /来源档案/ }).click();
   await expect(page.locator(".records-workspace")).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     viewport: window.innerWidth,
@@ -194,6 +199,8 @@ test("100%、150%、200% DPI 与常见桌面尺寸保持布局边界", async ({ 
     const page = await context.newPage();
     await page.goto("/");
     await expect(page.getByText("南枫知识库", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /来源档案/ }).click();
+    await expect(page.locator(".records-workspace")).toBeVisible();
     const overflow = await page.evaluate(() => ({
       body: document.body.scrollWidth - document.body.clientWidth,
       root: document.documentElement.scrollWidth - document.documentElement.clientWidth,

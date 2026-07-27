@@ -2,10 +2,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
+use rusqlite::backup::Backup;
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension, Transaction};
 
 use crate::error::{AppError, AppResult};
+use crate::knowledge;
 use crate::models::{
     AppendVersionInput, CreateRecordInput, CreateTagInput, DeleteVersionInput, EvidenceItem,
     FavoriteUpdate, IntelligenceRecord, PatchRecordInput, PermanentDeleteInput, RecordMutation,
@@ -17,6 +19,9 @@ const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_initial.sql");
 const INITIAL_MIGRATION_VERSION: i64 = 1;
 const ORIGINAL_AT_MIGRATION: &str = include_str!("../migrations/0002_original_at.sql");
 const ORIGINAL_AT_MIGRATION_VERSION: i64 = 2;
+const KNOWLEDGE_MIGRATION_VERSION: i64 = 3;
+const BACKUP_PAGES_PER_STEP: i32 = 512;
+const BACKUP_PAUSE: Duration = Duration::from_millis(1);
 
 struct RecordRow {
     id: i64,
@@ -49,8 +54,15 @@ pub fn open_database(path: &Path) -> AppResult<Connection> {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     configure_connection(&connection)?;
+    create_pre_knowledge_migration_backup(&connection, path)?;
     apply_migrations(&mut connection)?;
     Ok(connection)
+}
+
+pub(crate) fn copy_database(source: &Connection, target: &mut Connection) -> AppResult<()> {
+    let backup = Backup::new(source, target)?;
+    backup.run_to_completion(BACKUP_PAGES_PER_STEP, BACKUP_PAUSE, None)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -91,6 +103,59 @@ pub(crate) fn apply_migrations(connection: &mut Connection) -> AppResult<()> {
     )?;
     if original_at_added {
         backfill_original_dates(connection)?;
+    }
+    apply_migration(
+        connection,
+        KNOWLEDGE_MIGRATION_VERSION,
+        knowledge::schema::KNOWLEDGE_SCHEMA_SQL,
+    )?;
+    knowledge::repository::backfill_legacy_records(connection)?;
+    Ok(())
+}
+
+fn create_pre_knowledge_migration_backup(connection: &Connection, path: &Path) -> AppResult<()> {
+    let has_migration_table = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM sqlite_master
+           WHERE type = 'table' AND name = 'schema_migrations'
+         )",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    if !has_migration_table {
+        return Ok(());
+    }
+    let already_applied = connection
+        .query_row(
+            "SELECT 1 FROM schema_migrations WHERE version = ?1",
+            [KNOWLEDGE_MIGRATION_VERSION],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if already_applied {
+        return Ok(());
+    }
+    let data_directory = path
+        .parent()
+        .ok_or_else(|| AppError::Validation("数据库路径缺少数据目录".to_string()))?;
+    let root = data_directory
+        .parent()
+        .ok_or_else(|| AppError::Validation("数据库路径缺少知识库根目录".to_string()))?;
+    let backup_directory = root.join("backups");
+    std::fs::create_dir_all(&backup_directory)?;
+    let destination = backup_directory.join(format!(
+        "知识结构迁移前自动备份_{}.db",
+        Utc::now().format("%Y%m%d-%H%M%S-%3f")
+    ));
+    let mut target = Connection::open(&destination)?;
+    copy_database(connection, &mut target)?;
+    let integrity: String = target.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if integrity != "ok" {
+        let _ = std::fs::remove_file(&destination);
+        return Err(AppError::Conflict(format!(
+            "知识结构迁移前自动备份完整性检查失败：{integrity}"
+        )));
     }
     Ok(())
 }
@@ -412,6 +477,7 @@ pub fn create_record(
     let record = load_record(&transaction, record_id)?;
     insert_version(&transaction, &record, "初始版本", "创建记录", Some(1))?;
     transaction.commit()?;
+    knowledge::repository::sync_legacy_record(connection, record_id)?;
     load_record(connection, record_id)
 }
 
@@ -1356,23 +1422,33 @@ fn normalize_original_date_string(text: &str) -> Option<String> {
     None
 }
 
-fn resolve_summary_title(title: &str, source_text: &str, source_title: &str) -> String {
+pub(crate) fn is_generic_record_title(title: &str) -> bool {
     let normalized = title.trim().trim_matches('*').trim();
-    let generic = normalized.eq_ignore_ascii_case("conversation overview")
-        || normalized.eq_ignore_ascii_case("untitled")
+    crate::importer::is_generic_title(title)
         || matches!(normalized, "未命名导入记录" | "未命名记录")
         || normalized.chars().all(|character| character == '-')
-        || (normalized.contains('<') && normalized.contains('>'));
-    if !generic || source_text.is_empty() {
+        || (normalized.contains('<') && normalized.contains('>'))
+}
+
+pub(crate) fn resolve_summary_title(title: &str, source_text: &str, source_title: &str) -> String {
+    if !is_generic_record_title(title) || source_text.is_empty() {
         return title.to_string();
     }
-    first_user_text(source_text)
+    serde_json::from_str::<serde_json::Value>(source_text)
+        .ok()
+        .and_then(|value| {
+            let object = value.as_object()?;
+            crate::importer::title_from_chat_messages(object)
+                .or_else(|| crate::importer::title_from_chatgpt_mapping(object))
+        })
+        .or_else(|| first_user_text(source_text))
         .map(|value| {
             let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
             compact.chars().take(48).collect::<String>()
         })
         .filter(|value| !value.is_empty())
         .or_else(|| crate::importer::readable_markdown_title(source_text, Some(source_title)))
+        .filter(|value| !is_generic_record_title(value))
         .unwrap_or_else(|| title.to_string())
 }
 

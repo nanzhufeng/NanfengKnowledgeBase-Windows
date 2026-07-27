@@ -288,6 +288,9 @@ describe("readImportedContent", () => {
     expect(resolveImportedTitle("**Conversation Overview**", source)).toBe(
       "我的 MAC Air 是 8G 内存，Mac Pro 是 32G 内存，为什么占用差这么多？",
     );
+    expect(resolveImportedTitle("conversations-004", source)).toBe(
+      "我的 MAC Air 是 8G 内存，Mac Pro 是 32G 内存，为什么占用差这么多？",
+    );
   });
 
   it("keeps a meaningful original title unchanged", () => {

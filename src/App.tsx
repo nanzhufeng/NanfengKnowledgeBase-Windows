@@ -19,9 +19,11 @@ import {
   FileDown,
   Folder,
   FolderOpen,
+  FolderTree,
   HardDrive,
   History,
   Image as ImageIcon,
+  Inbox,
   Keyboard,
   LayoutGrid,
   MoreHorizontal,
@@ -126,7 +128,17 @@ migrateLegacyPreferences();
 import { versionDifferences } from "./domain/versionDiff";
 import { connectionOpacity } from "./connectionGeometry";
 
-type Page = "records" | "favorites" | "tracking" | "updates" | "import" | "trash" | "settings";
+type Page =
+  | "inbox"
+  | "topics"
+  | "organize"
+  | "records"
+  | "favorites"
+  | "tracking"
+  | "updates"
+  | "import"
+  | "trash"
+  | "settings";
 type ImportStep = "empty" | "preview" | "mapping";
 type SaveState = "idle" | "saving" | "saved" | "draft" | "error";
 type Notice = {
@@ -145,7 +157,7 @@ type ConnectionMetrics = {
   opacity: number;
 };
 type NavItem = {
-  id: "records" | "favorites" | "tracking" | "updates" | "import";
+  id: Exclude<Page, "trash" | "settings">;
   label: string;
   count?: number;
   icon: React.ComponentType<{ size?: number }>;
@@ -184,7 +196,10 @@ const iconMap: Record<RecordIconKey, React.ComponentType<{ size?: number }>> = {
 };
 
 const navItems: NavItem[] = [
-  { id: "records", label: "全部记录", icon: Files },
+  { id: "inbox", label: "收录箱", icon: Inbox },
+  { id: "topics", label: "主题浏览器", icon: FolderTree },
+  { id: "organize", label: "整理工作台", icon: Sparkles },
+  { id: "records", label: "来源档案", icon: Files },
   { id: "favorites", label: "我的收藏", icon: Star },
   { id: "tracking", label: "持续跟踪", icon: RadioTower },
   { id: "updates", label: "判断更新", icon: FileCheck2, tone: "danger" },
@@ -357,6 +372,8 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 const LazyMarkdownContent = lazy(() => import("./components/MarkdownContent"));
 const LazyAssistantMessageContent = lazy(() =>
   import("./components/MarkdownContent").then((module) => ({ default: module.AssistantMessageContent })));
+const LazyKnowledgeWorkspace = lazy(() =>
+  import("./components/KnowledgeWorkspace").then((module) => ({ default: module.KnowledgeWorkspace })));
 
 function MarkdownContent(props: { value: string; className?: string }) {
   return <Suspense fallback={<div className="markdown-loading">正在渲染内容…</div>}><LazyMarkdownContent {...props} /></Suspense>;
@@ -1249,10 +1266,23 @@ function ConversationMessage({
   onOpenAttachment: (attachmentId: number) => void;
   onAddAttachment: () => void;
 }) {
-  const attachmentByName = useMemo(
-    () => new Map(attachments.map((item) => [item.fileName.trim().toLocaleLowerCase(), item])),
-    [attachments],
-  );
+  const attachmentIndex = useMemo(() => {
+    const index = new Map<string, AttachmentItem>();
+    const add = (key: string | null | undefined, item: AttachmentItem) => {
+      const normalized = key
+        ?.trim()
+        .replace(/^[a-z-]+:\/\//i, "")
+        .replace(/\.dat$/i, "")
+        .toLocaleLowerCase();
+      if (normalized) index.set(normalized, item);
+    };
+    attachments.forEach((item) => {
+      add(item.fileName, item);
+      add(item.originalPath?.split("#").at(-1), item);
+      add(item.storedPath.split(/[\\/]/).at(-1)?.split("__")[0], item);
+    });
+    return index;
+  }, [attachments]);
 
   return (
     <section className={`source-message ${message.role === "用户" ? "human" : "assistant"} ${compact ? "compact" : ""}`}>
@@ -1268,7 +1298,15 @@ function ConversationMessage({
       {message.assets.length ? (
         <div className="source-assets">
           {message.assets.map((asset, index) => {
-            const attachment = attachmentByName.get(asset.fileName.trim().toLocaleLowerCase());
+            const attachment = (asset.fileUuid
+              ? attachmentIndex.get(
+                asset.fileUuid
+                  .replace(/^[a-z-]+:\/\//i, "")
+                  .replace(/\.dat$/i, "")
+                  .toLocaleLowerCase(),
+              )
+              : undefined)
+              ?? attachmentIndex.get(asset.fileName.trim().toLocaleLowerCase());
             const key = asset.fileUuid ?? `${asset.fileName}-${index}`;
             if (asset.kind === "image" && attachment) {
               return (
@@ -1874,11 +1912,13 @@ function ExportCenter({
   selectedRecordId,
   currentSearch,
   onNotify,
+  onStorageChanged,
 }: {
   repository: RecordRepository;
   selectedRecordId: number | null;
   currentSearch: string;
   onNotify: Notify;
+  onStorageChanged: (storage: StorageStats) => void;
 }) {
   const [scope, setScope] = useState<"all" | "current" | "favorites" | "filtered" | "manual">("all");
   const [format, setFormat] = useState<"json" | "md" | "vault">("vault");
@@ -2030,6 +2070,7 @@ function ExportCenter({
             setBackingUp(true);
             try {
               const result = await repository.createPortableBackup(collectAppPreferences());
+              onStorageChanged(await repository.getStorageStats());
               onNotify(
                 `完整迁移备份已创建：${result.recordCount} 条记录，${formatFileSize(result.totalBytes)}；${result.folderPath}`,
                 {
@@ -2064,6 +2105,7 @@ function ImportCenter({
   onNotify,
   selectedRecordId,
   currentSearch,
+  onStorageChanged,
 }: {
   step: ImportStep;
   setStep: (step: ImportStep) => void;
@@ -2072,6 +2114,7 @@ function ImportCenter({
   onNotify: Notify;
   selectedRecordId: number | null;
   currentSearch: string;
+  onStorageChanged: (storage: StorageStats) => void;
 }) {
   const [mode, setMode] = useState<"import" | "export">("import");
   const [dragActive, setDragActive] = useState(false);
@@ -2217,8 +2260,8 @@ function ImportCenter({
       multiple: true,
       directory: false,
       filters: [{
-        name: "研究资料",
-        extensions: ["json", "md", "markdown", "txt", "html", "htm"],
+        name: "知识库资料与 ChatGPT 完整导出",
+        extensions: ["zip", "json", "md", "markdown", "txt", "html", "htm"],
       }],
     });
     const paths = Array.isArray(selected) ? selected : typeof selected === "string" ? [selected] : [];
@@ -2346,6 +2389,7 @@ function ImportCenter({
           selectedRecordId={selectedRecordId}
           currentSearch={currentSearch}
           onNotify={onNotify}
+          onStorageChanged={onStorageChanged}
         />
       ) : <>
       {!("__TAURI_INTERNALS__" in window) ? (
@@ -2368,8 +2412,8 @@ function ImportCenter({
               {!queue.length ? (
                 <>
                   <div className="drop-icon"><Upload size={26} /></div>
-                  <strong>拖入一个或多个 JSON、Markdown、TXT 或 HTML 文件</strong>
-                  <span>支持批量拖拽；单文件上限 200 MB，文件会依次归档和识别。</span>
+                  <strong>拖入 ChatGPT 完整导出 ZIP，或一个或多个 JSON、Markdown、TXT、HTML 文件</strong>
+                  <span>普通文件上限 200 MB，ChatGPT 完整导出 ZIP 上限 2 GB；文件会依次归档和识别。</span>
                   <button className="primary-button" disabled={loading} onClick={() => void chooseFile()}>
                     <FolderOpen size={18} />{loading ? "正在归档与解析…" : "选择多个文件"}
                   </button>
@@ -3390,6 +3434,14 @@ function SettingsPage({
                 <div><span>备份大小</span><strong>{formatFileSize(portableRestorePreview.totalBytes)}</strong></div>
                 <div><span>应用版本</span><strong>{portableRestorePreview.appVersion}</strong></div>
                 <div><span>完整性</span><strong>{portableRestorePreview.integrityCheck}</strong></div>
+                <div>
+                  <span>文件校验</span>
+                  <strong>
+                    {portableRestorePreview.contentIntegrity === "verified_sha256"
+                      ? "SHA-256 全量通过"
+                      : "旧版仅数据库"}
+                  </strong>
+                </div>
               </div>
             ) : portableRestoreError ? (
               <div className="form-error"><AlertCircle size={16} />{portableRestoreError}</div>
@@ -3400,7 +3452,7 @@ function SettingsPage({
               <button className="secondary-button" onClick={() => setPortableRestoreCandidate(null)}>取消</button>
               <button
                 className="danger-button"
-                disabled={portableRestoring || !portableRestorePreview}
+                disabled={portableRestoring || !portableRestorePreview?.restorable}
                 onClick={async () => {
                   setPortableRestoring(true);
                   try {
@@ -3433,7 +3485,7 @@ function SettingsPage({
 
 export function App() {
   const repository = useMemo(() => getRecordRepository(), []);
-  const [page, setPage] = useState<Page>("records");
+  const [page, setPage] = useState<Page>("inbox");
   const [allRecords, setAllRecords] = useState<RecordSummary[]>([]);
   const [visibleRecords, setVisibleRecords] = useState<RecordSummary[]>([]);
   const [trashRecords, setTrashRecords] = useState<RecordSummary[]>([]);
@@ -3910,7 +3962,13 @@ export function App() {
             onNotify={notify}
             selectedRecordId={selectedId}
             currentSearch={recordSearch}
+            onStorageChanged={setStorageStats}
           />
+        ) : null}
+        {page === "inbox" || page === "topics" || page === "organize" ? (
+          <Suspense fallback={<div className="page-loading"><span className="save-spinner" />正在加载知识工作台…</div>}>
+            <LazyKnowledgeWorkspace mode={page} onNotify={notify} />
+          </Suspense>
         ) : null}
         {page === "trash" ? (
           <TrashPage

@@ -77,6 +77,14 @@ async function openExternalLink(href: string) {
   window.open(href, "_blank", "noopener,noreferrer");
 }
 
+export function isSafeEmbeddedImageSource(src: string | undefined): boolean {
+  if (!src) return false;
+  const normalized = src.trim();
+  if (!normalized || normalized.startsWith("//")) return false;
+  if (/^https?:/i.test(normalized)) return false;
+  return /^(?:data:image\/|blob:|asset:|https?:\/\/asset\.localhost\/|\/|\.{0,2}\/|[^:]+$)/i.test(normalized);
+}
+
 export default function MarkdownContent({
   value,
   className = "",
@@ -119,9 +127,27 @@ export default function MarkdownContent({
               {children}
             </a>
           ),
-          img: ({ src, alt, ...props }) => (
-            <img {...props} src={src} alt={alt ?? ""} loading="lazy" />
-          ),
+          img: ({ src, alt, ...props }) => {
+            if (!isSafeEmbeddedImageSource(src)) {
+              return (
+                <span className="markdown-remote-image-blocked" role="note">
+                  远程图片已阻止自动加载
+                  {src && /^https?:/i.test(src) ? (
+                    <a
+                      href={src}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void openExternalLink(src);
+                      }}
+                    >
+                      手动打开
+                    </a>
+                  ) : null}
+                </span>
+              );
+            }
+            return <img {...props} src={src} alt={alt ?? ""} loading="lazy" />;
+          },
         }}
       >
         {prepareObsidianMarkdown(value)}

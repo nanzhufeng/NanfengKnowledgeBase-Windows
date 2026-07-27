@@ -156,6 +156,8 @@ export const portableBackupPreviewSchema = z.object({
   preferenceCount: z.number().int(),
   fileCount: z.number(),
   totalBytes: z.number(),
+  contentIntegrity: z.enum(["verified_sha256", "legacy_database_only"]),
+  restorable: z.boolean(),
 });
 export type PortableBackupPreview = z.infer<typeof portableBackupPreviewSchema>;
 

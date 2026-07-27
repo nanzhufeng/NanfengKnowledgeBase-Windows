@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 use chrono::Utc;
@@ -18,6 +19,7 @@ use crate::paths::AppPaths;
 
 const LARGE_IMPORT_WARNING_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_IMPORT_BYTES: u64 = 200 * 1024 * 1024;
+const MAX_CHATGPT_EXPORT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_PREVIEW_RECORDS: usize = 32;
 const MAX_PREVIEW_SOURCE_CHARS: usize = 32_000;
 const MAX_DUPLICATE_CANDIDATES: usize = 200;
@@ -142,7 +144,6 @@ pub fn prepare_import(
         return Err(AppError::NotFound("选择的导入文件不存在".to_string()));
     }
     let metadata = source_path.metadata()?;
-    validate_import_size(metadata.len())?;
 
     let source_file_name = source_path
         .file_name()
@@ -154,51 +155,100 @@ pub fn prepare_import(
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    let is_chatgpt_export = file_kind == "zip";
+    validate_import_size(metadata.len(), is_chatgpt_export)?;
     if !matches!(
         file_kind.as_str(),
-        "json" | "md" | "markdown" | "txt" | "html" | "htm"
+        "json" | "md" | "markdown" | "txt" | "html" | "htm" | "zip"
     ) {
         return Err(AppError::Unsupported(
-            "仅支持 JSON、Markdown、TXT 和 HTML 文件".to_string(),
+            "仅支持 ChatGPT 完整导出 ZIP、JSON、Markdown、TXT 和 HTML 文件".to_string(),
         ));
     }
 
-    let bytes = fs::read(source_path)?;
-    let sha256 = hex::encode(Sha256::digest(&bytes));
+    let zip_inspection = if is_chatgpt_export {
+        Some(
+            crate::chatgpt_export::inspect_chatgpt_export(source_path)
+                .map_err(chatgpt_export_error)?,
+        )
+    } else {
+        None
+    };
+    let bytes = if is_chatgpt_export {
+        None
+    } else {
+        Some(fs::read(source_path)?)
+    };
+    let sha256 = zip_inspection
+        .as_ref()
+        .map(|inspection| inspection.source_zip_sha256.to_ascii_lowercase())
+        .unwrap_or_else(|| hex::encode(Sha256::digest(bytes.as_deref().unwrap_or_default())));
     let safe_name = sanitize_file_name(&source_file_name);
     let stored_path = paths
         .imports_raw
         .join(format!("{}_{}", &sha256[..16], safe_name));
-    if !stored_path.exists() {
-        fs::copy(source_path, &stored_path)?;
-    }
+    archive_source_file(source_path, &stored_path, &sha256)?;
 
     let hash_duplicate = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM import_jobs WHERE sha256 = ?1 AND status = 'completed')",
         params![sha256],
         |row| row.get::<_, i64>(0),
     )? != 0;
-    let (decoded, used_gbk) = decode_text(&bytes);
-    drop(bytes);
     let mut warnings = Vec::new();
     if metadata.len() > LARGE_IMPORT_WARNING_BYTES {
         warnings.push("文件超过 50 MB，归档和解析可能需要更长时间".to_string());
-    }
-    if used_gbk {
-        warnings.push("文件不是 UTF-8，已按 GBK/GB18030 兼容方式解码".to_string());
     }
     if hash_duplicate {
         warnings.push("检测到相同 SHA-256 的已完成导入；默认阻止重复写入".to_string());
     }
 
     let archived = stored_path.to_string_lossy().into_owned();
-    let full_records = parse_records(
-        &decoded,
-        &file_kind,
-        &source_file_name,
-        &archived,
-        &mut warnings,
-    )?;
+    let (full_records, raw_preview, boundary_options) = if let Some(inspection) = zip_inspection {
+        warnings.push(format!(
+            "完整导出包包含 {} 条会话、{} 个附件实体；确认导入后将恢复附件扩展名并保存消息映射清单",
+            inspection.conversation_count,
+            inspection.assets.len()
+        ));
+        warnings.push(format!(
+            "{} 个附件由消息直接关联，{} 个文件库资产将作为未直接关联原件一并保留",
+            inspection.linked_asset_count, inspection.unlinked_asset_count
+        ));
+        let records = parse_chatgpt_export_records(
+            &stored_path,
+            &source_file_name,
+            &archived,
+            &mut warnings,
+        )?;
+        let preview = serde_json::to_string_pretty(&serde_json::json!({
+            "kind": "chatgpt_export",
+            "conversationShards": inspection.conversation_shard_count,
+            "conversations": inspection.conversation_count,
+            "attachmentEntities": inspection.assets.len(),
+            "linkedAttachments": inspection.linked_asset_count,
+            "unlinkedAssets": inspection.unlinked_asset_count,
+            "sourceZipSha256": inspection.source_zip_sha256,
+        }))?;
+        (records, preview, Vec::new())
+    } else {
+        let bytes = bytes.unwrap_or_default();
+        let (decoded, used_gbk) = decode_text(&bytes);
+        if used_gbk {
+            warnings.push("文件不是 UTF-8，已按 GBK/GB18030 兼容方式解码".to_string());
+        }
+        let boundary_options = detect_boundary_options(&decoded, &file_kind);
+        let records = parse_records(
+            &decoded,
+            &file_kind,
+            &source_file_name,
+            &archived,
+            &mut warnings,
+        )?;
+        (
+            records,
+            decoded.chars().take(16_000).collect(),
+            boundary_options,
+        )
+    };
     let mut duplicate_candidates = detect_duplicate_candidates(connection, &full_records)?;
     if !duplicate_candidates.is_empty() {
         warnings.push(format!(
@@ -214,7 +264,6 @@ pub fn prepare_import(
     }
     let duplicate = hash_duplicate || !duplicate_candidates.is_empty();
     let record_count = full_records.len();
-    let boundary_options = detect_boundary_options(&decoded, &file_kind);
     let records = full_records
         .iter()
         .take(MAX_PREVIEW_RECORDS)
@@ -245,7 +294,7 @@ pub fn prepare_import(
         file_kind,
         size_bytes: metadata.len(),
         duplicate,
-        raw_preview: decoded.chars().take(16_000).collect(),
+        raw_preview,
         record_count,
         records,
         boundary_options,
@@ -395,17 +444,25 @@ fn title_similarity(left: &str, right: &str) -> f64 {
     }
 }
 
-fn validate_import_size(size_bytes: u64) -> AppResult<()> {
-    if size_bytes > MAX_IMPORT_BYTES {
-        return Err(AppError::Validation(
-            "单个导入文件不能超过 200 MB".to_string(),
-        ));
+fn validate_import_size(size_bytes: u64, is_chatgpt_export: bool) -> AppResult<()> {
+    let limit = if is_chatgpt_export {
+        MAX_CHATGPT_EXPORT_BYTES
+    } else {
+        MAX_IMPORT_BYTES
+    };
+    if size_bytes > limit {
+        return Err(AppError::Validation(if is_chatgpt_export {
+            "ChatGPT 完整导出 ZIP 不能超过 2 GB".to_string()
+        } else {
+            "单个导入文件不能超过 200 MB".to_string()
+        }));
     }
     Ok(())
 }
 
 pub fn confirm_import(
     connection: &mut Connection,
+    paths: &AppPaths,
     input: &ConfirmImportInput,
 ) -> AppResult<ImportResult> {
     let job = connection
@@ -435,24 +492,27 @@ pub fn confirm_import(
             "归档原文件不存在，已停止导入以避免不完整数据".to_string(),
         ));
     }
-    let archived_bytes = fs::read(archived_path)?;
-    validate_import_size(archived_bytes.len() as u64)?;
-    let (decoded, _) = decode_text(&archived_bytes);
-    drop(archived_bytes);
     let file_kind = Path::new(&job.3)
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
     let mut parse_warnings = Vec::new();
-    let mut records = parse_records_for_confirmation(
-        &decoded,
-        &file_kind,
-        &job.3,
-        &job.1,
-        &input.mapping,
-        &mut parse_warnings,
-    )?;
+    validate_import_size(archived_path.metadata()?.len(), file_kind == "zip")?;
+    let mut records = if file_kind == "zip" {
+        parse_chatgpt_export_records(archived_path, &job.3, &job.1, &mut parse_warnings)?
+    } else {
+        let archived_bytes = fs::read(archived_path)?;
+        let (decoded, _) = decode_text(&archived_bytes);
+        parse_records_for_confirmation(
+            &decoded,
+            &file_kind,
+            &job.3,
+            &job.1,
+            &input.mapping,
+            &mut parse_warnings,
+        )?
+    };
     if records.is_empty() {
         return Err(AppError::Validation("没有可导入的记录".to_string()));
     }
@@ -486,6 +546,22 @@ pub fn confirm_import(
             errors: Vec::new(),
         });
     }
+    let chatgpt_assets = if file_kind == "zip" {
+        let asset_directory = paths
+            .attachments
+            .join(format!("chatgpt-export-{}", input.job_id));
+        let manifest_path = asset_directory.join("attachment-manifest.json");
+        Some(
+            crate::chatgpt_export::materialize_chatgpt_assets(
+                archived_path,
+                &asset_directory,
+                &manifest_path,
+            )
+            .map_err(chatgpt_export_error)?,
+        )
+    } else {
+        None
+    };
     let duplicate_item_indices = if default_strategy == "skip" {
         detect_duplicate_candidates(connection, &records)?
             .into_iter()
@@ -498,6 +574,7 @@ pub fn confirm_import(
     let mut imported_count = 0usize;
     let mut first_imported_record = None;
     let mut imported_title_samples = Vec::new();
+    let mut imported_conversation_ids = std::collections::HashMap::<String, i64>::new();
     let mut errors = Vec::new();
     let mut skipped_count = 0usize;
     for (index, original) in records.drain(..).enumerate() {
@@ -573,6 +650,14 @@ pub fn confirm_import(
                         title: record.title.clone(),
                     });
                 }
+                if let Some(external_id) = record_input
+                    .sources
+                    .iter()
+                    .find_map(|source| source.external_id.as_deref())
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    imported_conversation_ids.insert(external_id.to_string(), record.id);
+                }
                 imported_count += 1;
                 if imported_title_samples.len() < 100 {
                     imported_title_samples.push(record.title);
@@ -595,6 +680,22 @@ pub fn confirm_import(
             }
         }
     }
+    let linked_attachment_count = if let Some(assets) = &chatgpt_assets {
+        match register_chatgpt_assets(
+            connection,
+            archived_path,
+            assets,
+            &imported_conversation_ids,
+        ) {
+            Ok(count) => count,
+            Err(error) => {
+                errors.push(format!("附件映射写入失败：{error}"));
+                0
+            }
+        }
+    } else {
+        0
+    };
 
     let status = if errors.is_empty() {
         "completed"
@@ -617,6 +718,9 @@ pub fn confirm_import(
                 "recordTitleSamples": imported_title_samples,
                 "recordTitleSamplesTruncated": imported_count > 100,
                 "parseWarnings": parse_warnings,
+                "chatGptAttachmentManifest": chatgpt_assets.as_ref().map(|assets| &assets.manifest_path),
+                "chatGptAttachmentCount": chatgpt_assets.as_ref().map(|assets| assets.asset_count),
+                "chatGptLinkedAttachmentRows": linked_attachment_count,
             }))?,
             status,
             imported_count as i64,
@@ -646,6 +750,85 @@ fn import_item_audit_json(record: &CreateRecordInput) -> AppResult<String> {
         "sourceTextBytes": record.source_text.len(),
         "sourceTextSha256": hex::encode(Sha256::digest(record.source_text.as_bytes())),
     }))?)
+}
+
+fn register_chatgpt_assets(
+    connection: &Connection,
+    archived_zip: &Path,
+    materialization: &crate::chatgpt_export::ChatGptAssetMaterialization,
+    imported_conversation_ids: &std::collections::HashMap<String, i64>,
+) -> AppResult<usize> {
+    let mut inserted = 0_usize;
+    let created_at = Utc::now().to_rfc3339();
+    for asset in &materialization.assets {
+        let mut record_ids = std::collections::BTreeSet::new();
+        for conversation_id in asset
+            .message_links
+            .iter()
+            .map(|link| link.conversation_id.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(record_id) = imported_conversation_ids.get(conversation_id) {
+                record_ids.insert(*record_id);
+                continue;
+            }
+            let existing = connection
+                .query_row(
+                    "SELECT record_id FROM sources
+                     WHERE external_id = ?1
+                     ORDER BY id DESC LIMIT 1",
+                    [conversation_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            if let Some(record_id) = existing {
+                record_ids.insert(record_id);
+            }
+        }
+        if record_ids.is_empty() {
+            continue;
+        }
+        let file_name = asset
+            .original_file_name
+            .as_deref()
+            .unwrap_or(&asset.stored_file_name);
+        let original_path = format!(
+            "{}#{}",
+            archived_zip.to_string_lossy(),
+            asset.original_dat_entry_name
+        );
+        for record_id in record_ids {
+            let exists = connection.query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM attachments
+                   WHERE record_id = ?1 AND sha256 = ?2
+                 )",
+                params![record_id, asset.sha256.to_ascii_lowercase()],
+                |row| row.get::<_, i64>(0),
+            )? != 0;
+            if exists {
+                continue;
+            }
+            connection.execute(
+                "INSERT INTO attachments(
+                   record_id, file_name, stored_path, original_path, mime_type,
+                   size_bytes, sha256, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    record_id,
+                    file_name,
+                    asset.stored_file_path,
+                    original_path,
+                    asset.detected_mime,
+                    asset.size_bytes as i64,
+                    asset.sha256.to_ascii_lowercase(),
+                    created_at,
+                ],
+            )?;
+            inserted += 1;
+        }
+    }
+    Ok(inserted)
 }
 
 pub fn cancel_import(connection: &Connection, job_id: &str) -> AppResult<()> {
@@ -970,6 +1153,29 @@ fn parse_records(
     }
 }
 
+fn parse_chatgpt_export_records(
+    archived_path: &Path,
+    file_name: &str,
+    archived_path_text: &str,
+    warnings: &mut Vec<String>,
+) -> AppResult<Vec<CreateRecordInput>> {
+    let conversations = crate::chatgpt_export::read_chatgpt_conversations(archived_path)
+        .map_err(chatgpt_export_error)?;
+    let text = serde_json::to_string(&conversations)?;
+    let source = RecordSourceInput {
+        source_type: "chatgpt_export".to_string(),
+        title: file_name.to_string(),
+        url: None,
+        local_path: Some(archived_path_text.to_string()),
+        external_id: None,
+    };
+    parse_json_records(&text, source, warnings)
+}
+
+fn chatgpt_export_error(error: crate::chatgpt_export::ChatGptExportError) -> AppError {
+    AppError::Validation(format!("ChatGPT 完整导出包无效：{error}"))
+}
+
 fn parse_json_records(
     text: &str,
     source: RecordSourceInput,
@@ -1076,8 +1282,17 @@ fn parse_json_records(
         }
         sources[0].external_id = string_value(
             object,
-            &["externalId", "external_id", "sourceId", "source_id"],
+            &[
+                "conversation_id",
+                "externalId",
+                "external_id",
+                "sourceId",
+                "source_id",
+            ],
         );
+        if sources[0].external_id.is_none() && object.get("mapping").is_some() {
+            sources[0].external_id = string_value(object, &["id"]);
+        }
         records.push(CreateRecordInput {
             title,
             original_at: database::derive_original_at(&serde_json::to_string(value)?),
@@ -1332,7 +1547,7 @@ fn string_array(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Vec<S
         .unwrap_or_default()
 }
 
-fn title_from_chat_messages(object: &serde_json::Map<String, Value>) -> Option<String> {
+pub(crate) fn title_from_chat_messages(object: &serde_json::Map<String, Value>) -> Option<String> {
     object
         .get("chat_messages")
         .and_then(Value::as_array)?
@@ -1367,7 +1582,9 @@ fn title_from_chat_messages(object: &serde_json::Map<String, Value>) -> Option<S
         })
 }
 
-fn title_from_chatgpt_mapping(object: &serde_json::Map<String, Value>) -> Option<String> {
+pub(crate) fn title_from_chatgpt_mapping(
+    object: &serde_json::Map<String, Value>,
+) -> Option<String> {
     let mapping = object.get("mapping")?.as_object()?;
     let mut current = object
         .get("current_node")
@@ -1408,7 +1625,7 @@ fn title_from_chatgpt_mapping(object: &serde_json::Map<String, Value>) -> Option
     })
 }
 
-fn is_generic_title(title: &str) -> bool {
+pub(crate) fn is_generic_title(title: &str) -> bool {
     let normalized = title
         .trim()
         .trim_matches(|character: char| {
@@ -1419,6 +1636,19 @@ fn is_generic_title(title: &str) -> bool {
         .collect::<Vec<_>>()
         .join(" ")
         .to_ascii_lowercase();
+    let is_conversation_file_stem = matches!(normalized.as_str(), "conversation" | "conversations")
+        || [
+            "conversation-",
+            "conversations-",
+            "conversation_",
+            "conversations_",
+        ]
+        .iter()
+        .any(|prefix| {
+            normalized
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
+        });
 
     matches!(
         normalized.as_str(),
@@ -1429,9 +1659,12 @@ fn is_generic_title(title: &str) -> bool {
             | "new conversation"
             | "无标题"
             | "未命名"
-    ) || normalized
-        .strip_prefix("未命名导入记录")
-        .is_some_and(|suffix| suffix.trim().is_empty() || suffix.trim().parse::<usize>().is_ok())
+    ) || is_conversation_file_stem
+        || normalized
+            .strip_prefix("未命名导入记录")
+            .is_some_and(|suffix| {
+                suffix.trim().is_empty() || suffix.trim().parse::<usize>().is_ok()
+            })
 }
 
 fn title_from_text(text: &str) -> Option<String> {
@@ -1476,6 +1709,50 @@ fn sanitize_file_name(name: &str) -> String {
         .collect()
 }
 
+fn archive_source_file(source: &Path, destination: &Path, expected_sha256: &str) -> AppResult<()> {
+    if destination.exists() {
+        if sha256_path(destination)?.eq_ignore_ascii_case(expected_sha256) {
+            return Ok(());
+        }
+        return Err(AppError::Conflict(format!(
+            "导入归档中已有同名但内容不一致的文件，已停止覆盖：{}",
+            destination.display()
+        )));
+    }
+    let temporary = destination.with_extension(format!("partial-{}", Uuid::new_v4()));
+    let result = (|| -> AppResult<()> {
+        let copied = fs::copy(source, &temporary)?;
+        if copied != source.metadata()?.len() {
+            return Err(AppError::Conflict("导入原件归档大小不一致".to_string()));
+        }
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&temporary)?
+            .sync_all()?;
+        fs::rename(&temporary, destination)?;
+        Ok(())
+    })();
+    if result.is_err() && temporary.is_file() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn sha256_path(path: &Path) -> AppResult<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 fn html_to_text(html: &str) -> String {
     let mut result = String::new();
     let mut inside_tag = false;
@@ -1509,15 +1786,143 @@ fn html_to_text(html: &str) -> String {
 mod tests {
     use super::*;
     use crate::database;
+    use std::io::Write as _;
     use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
 
     #[test]
     fn import_size_policy_allows_200_mb_and_rejects_larger_files() {
-        assert!(validate_import_size(MAX_IMPORT_BYTES).is_ok());
-        let error = validate_import_size(MAX_IMPORT_BYTES + 1)
+        assert!(validate_import_size(MAX_IMPORT_BYTES, false).is_ok());
+        let error = validate_import_size(MAX_IMPORT_BYTES + 1, false)
             .expect_err("files larger than 200 MB must be rejected");
         assert!(matches!(error, AppError::Validation(message) if message.contains("200 MB")));
+        assert!(validate_import_size(MAX_CHATGPT_EXPORT_BYTES, true).is_ok());
         assert!(LARGE_IMPORT_WARNING_BYTES < MAX_IMPORT_BYTES);
+    }
+
+    #[test]
+    fn chatgpt_zip_import_preserves_original_assets_and_message_mapping() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let source = directory.path().join("chatgpt-export.zip");
+        let file = fs::File::create(&source).expect("zip");
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        zip.start_file("conversations-000.json", options)
+            .expect("conversations");
+        zip.write_all(
+            serde_json::to_string(&serde_json::json!([{
+                "id": "conversation-1",
+                "title": "带图片的完整对话",
+                "create_time": 1_700_000_000.0,
+                "mapping": {
+                    "node": {
+                        "message": {
+                            "id": "message-1",
+                            "author": {"role": "user"},
+                            "content": {
+                                "content_type": "multimodal_text",
+                                "parts": [
+                                    "请分析这张图片",
+                                    {"asset_pointer": "sediment://file_image"}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }]))
+            .expect("json")
+            .as_bytes(),
+        )
+        .expect("conversation bytes");
+        zip.start_file("conversation_asset_file_names.json", options)
+            .expect("names");
+        zip.write_all(r#"{"file_image.dat":"原始截图.jpeg"}"#.as_bytes())
+            .expect("name bytes");
+        zip.start_file("library_files.json", options)
+            .expect("library");
+        zip.write_all(
+            r#"[{"file_id":"file_image","file_name":"原始截图.jpeg","file_extension":"jpeg","mime_type":"image/jpeg"}]"#
+                .as_bytes(),
+        )
+        .expect("library bytes");
+        zip.start_file("file_image.dat", options).expect("asset");
+        zip.write_all(b"\x89PNG\r\n\x1a\nimage")
+            .expect("asset bytes");
+        zip.finish().expect("finish");
+
+        let preview = prepare_import(&connection, &paths, &source).expect("preview");
+        assert_eq!(preview.file_kind, "zip");
+        assert_eq!(preview.record_count, 1);
+        assert_eq!(
+            preview.records[0].sources[0].external_id.as_deref(),
+            Some("conversation-1")
+        );
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("1 个附件实体")));
+
+        let result = confirm_import(
+            &mut connection,
+            &paths,
+            &ConfirmImportInput {
+                job_id: preview.job_id.clone(),
+                records: preview.records,
+                allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({}),
+            },
+        )
+        .expect("confirm");
+        assert_eq!(result.imported_count, 1);
+
+        let mapping: Value = serde_json::from_str(
+            &connection
+                .query_row(
+                    "SELECT mapping_json FROM import_jobs WHERE id = ?1",
+                    [&preview.job_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("mapping"),
+        )
+        .expect("mapping json");
+        let manifest = Path::new(
+            mapping["chatGptAttachmentManifest"]
+                .as_str()
+                .expect("manifest path"),
+        );
+        assert!(manifest.is_file());
+        let manifest_json: Value =
+            serde_json::from_slice(&fs::read(manifest).expect("manifest")).expect("manifest json");
+        assert_eq!(manifest_json["assetCount"], 1);
+        assert_eq!(manifest_json["assets"][0]["detectedExtension"], "png");
+        assert_eq!(
+            manifest_json["assets"][0]["messageLinks"][0]["conversationId"],
+            "conversation-1"
+        );
+        assert!(Path::new(
+            manifest_json["assets"][0]["storedFilePath"]
+                .as_str()
+                .expect("stored path")
+        )
+        .is_file());
+        let imported_record_id = result
+            .first_imported_record
+            .as_ref()
+            .expect("imported record")
+            .id;
+        let attachment = crate::attachments::list_attachments(&connection, imported_record_id)
+            .expect("linked attachments");
+        assert_eq!(attachment.len(), 1);
+        assert_eq!(attachment[0].file_name, "原始截图.jpeg");
+        assert!(attachment[0]
+            .original_path
+            .as_deref()
+            .is_some_and(|value| value.ends_with("#file_image.dat")));
     }
 
     #[test]
@@ -1760,6 +2165,19 @@ mod tests {
     }
 
     #[test]
+    fn conversation_source_file_stems_are_generic_titles() {
+        for title in [
+            "conversation",
+            "conversations",
+            "conversation-004",
+            "conversations_004",
+        ] {
+            assert!(is_generic_title(title), "{title} 应被视为通用文件名");
+        }
+        assert!(!is_generic_title("对话导入与自动分类设计"));
+    }
+
+    #[test]
     fn json_import_archives_previews_and_writes_records() {
         let directory = tempdir().expect("tempdir");
         let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
@@ -1778,6 +2196,7 @@ mod tests {
 
         let result = confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: preview.job_id,
                 records: preview.records,
@@ -1810,6 +2229,7 @@ mod tests {
         let first = prepare_import(&connection, &paths, &source).expect("first preview");
         confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: first.job_id,
                 records: first.records,
@@ -1828,6 +2248,7 @@ mod tests {
             .any(|candidate| candidate.reason == "标题相同"));
         let error = confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: second.job_id,
                 records: second.records,
@@ -1852,6 +2273,7 @@ mod tests {
         let first = prepare_import(&connection, &paths, &first_file).expect("first preview");
         confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: first.job_id,
                 records: first.records,
@@ -1873,6 +2295,7 @@ mod tests {
         assert!(batch.duplicate);
         let result = confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: batch.job_id,
                 records: batch.records,
@@ -1929,6 +2352,7 @@ mod tests {
 
         let result = confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: preview.job_id,
                 records: preview.records,
@@ -1977,6 +2401,7 @@ mod tests {
         let first = prepare_import(&connection, &paths, &source).expect("first preview");
         let first_result = confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: first.job_id,
                 records: first.records,
@@ -2001,6 +2426,7 @@ mod tests {
         let second = prepare_import(&connection, &paths, &source).expect("second preview");
         let second_result = confirm_import(
             &mut connection,
+            &paths,
             &ConfirmImportInput {
                 job_id: second.job_id,
                 records: second.records,

@@ -168,14 +168,13 @@ pub fn add_attachment(
     commit_attachment(connection, record_id, prepared)
 }
 
-pub fn open_attachment(connection: &Connection, attachment_id: i64) -> AppResult<()> {
+pub fn open_attachment(
+    connection: &Connection,
+    paths: &AppPaths,
+    attachment_id: i64,
+) -> AppResult<()> {
     let attachment = get_attachment(connection, attachment_id)?;
-    let path = PathBuf::from(&attachment.stored_path);
-    if !path.is_file() {
-        return Err(AppError::NotFound(
-            "附件归档文件不存在，可从原始路径重新添加".to_string(),
-        ));
-    }
+    let path = controlled_attachment_file(paths, &attachment.stored_path)?;
     open::that(path).map_err(|error| AppError::Io(std::io::Error::other(error.to_string())))
 }
 
@@ -185,11 +184,15 @@ pub fn remove_attachment(
     attachment_id: i64,
 ) -> AppResult<()> {
     let attachment = get_attachment(connection, attachment_id)?;
-    let stored_path = PathBuf::from(&attachment.stored_path);
-    if !stored_path.starts_with(&paths.attachments) {
-        return Err(AppError::Conflict(
-            "附件路径不在受控目录中，已停止删除".to_string(),
-        ));
+    let stored_path = controlled_attachment_file(paths, &attachment.stored_path)?;
+    let shared_reference_count = connection.query_row(
+        "SELECT COUNT(*) FROM attachments WHERE stored_path = ?1",
+        [attachment.stored_path.as_str()],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if shared_reference_count > 1 {
+        connection.execute("DELETE FROM attachments WHERE id = ?1", [attachment_id])?;
+        return Ok(());
     }
     let staged_path = stored_path.with_extension(format!("deleting-{}", Uuid::new_v4()));
     if stored_path.is_file() {
@@ -252,6 +255,24 @@ fn sanitize_file_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn controlled_attachment_file(paths: &AppPaths, stored_path: &str) -> AppResult<PathBuf> {
+    let root = paths.attachments.canonicalize().map_err(|error| {
+        AppError::Io(std::io::Error::other(format!(
+            "无法核对附件受控目录：{error}"
+        )))
+    })?;
+    let path = PathBuf::from(stored_path);
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| AppError::NotFound("附件归档文件不存在，可从原始路径重新添加".to_string()))?;
+    if !canonical.is_file() || !canonical.starts_with(&root) {
+        return Err(AppError::Conflict(
+            "附件路径不在受控目录中，已阻止访问".to_string(),
+        ));
+    }
+    Ok(canonical)
 }
 
 fn cleanup_prepared(prepared: &PreparedAttachment) {
@@ -348,5 +369,115 @@ mod tests {
             .expect("spawn worker")
             .join()
             .expect("worker should not overflow");
+    }
+
+    #[test]
+    fn removing_one_shared_attachment_link_keeps_the_physical_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let create = |connection: &mut Connection, title: &str| {
+            database::create_record(
+                connection,
+                &CreateRecordInput {
+                    title: title.to_string(),
+                    original_at: None,
+                    summary: String::new(),
+                    status: Default::default(),
+                    tags: Vec::new(),
+                    current_judgment: String::new(),
+                    confirmed_facts: Vec::new(),
+                    key_evidence: Vec::new(),
+                    open_questions: Vec::new(),
+                    next_actions: Vec::new(),
+                    notes: String::new(),
+                    source_text: String::new(),
+                    sources: Vec::new(),
+                    is_favorite: false,
+                },
+            )
+            .expect("record")
+        };
+        let first_record = create(&mut connection, "共享附件一");
+        let second_record = create(&mut connection, "共享附件二");
+        let source = directory.path().join("共享证据.txt");
+        fs::write(&source, "共享附件证据").expect("source");
+        let first =
+            add_attachment(&connection, &paths, first_record.id, &source).expect("first link");
+        connection
+            .execute(
+                "INSERT INTO attachments(
+                   record_id, file_name, stored_path, original_path, mime_type,
+                   size_bytes, sha256, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    second_record.id,
+                    first.file_name,
+                    first.stored_path,
+                    first.original_path,
+                    first.mime_type,
+                    first.size_bytes,
+                    first.sha256,
+                    first.created_at,
+                ],
+            )
+            .expect("second link");
+        let second_id = connection.last_insert_rowid();
+
+        remove_attachment(&mut connection, &paths, first.id).expect("remove first link");
+        assert!(Path::new(&first.stored_path).is_file());
+        remove_attachment(&mut connection, &paths, second_id).expect("remove last link");
+        assert!(!Path::new(&first.stored_path).exists());
+    }
+
+    #[test]
+    fn restored_database_cannot_open_or_delete_an_arbitrary_local_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let record = database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "恶意恢复附件路径".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: String::new(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("record");
+        let outside = directory.path().join("outside.txt");
+        fs::write(&outside, "不可访问").expect("outside");
+        connection
+            .execute(
+                "INSERT INTO attachments(
+                   record_id, file_name, stored_path, original_path, mime_type,
+                   size_bytes, sha256, created_at
+                 ) VALUES (?1, 'outside.txt', ?2, NULL, 'text/plain', 8, 'bad', ?3)",
+                params![
+                    record.id,
+                    outside.to_string_lossy(),
+                    Utc::now().to_rfc3339()
+                ],
+            )
+            .expect("insert malicious path");
+        let attachment_id = connection.last_insert_rowid();
+
+        let open_error = open_attachment(&connection, &paths, attachment_id)
+            .expect_err("outside path must not open");
+        assert!(open_error.to_string().contains("受控目录"));
+        let remove_error = remove_attachment(&mut connection, &paths, attachment_id)
+            .expect_err("outside path must not delete");
+        assert!(remove_error.to_string().contains("受控目录"));
+        assert!(outside.is_file());
     }
 }

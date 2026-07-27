@@ -1,11 +1,12 @@
+use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use chrono::Utc;
-use rusqlite::backup::Backup;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::database;
 use crate::error::{AppError, AppResult};
@@ -14,6 +15,16 @@ use crate::paths::AppPaths;
 
 const PORTABLE_BACKUP_FORMAT: &str = "nanfeng-knowledge-base-portable-backup";
 const LEGACY_PORTABLE_BACKUP_FORMAT: &str = "nanfeng-intelligence-portable-backup";
+const PORTABLE_BACKUP_FORMAT_VERSION: i64 = 2;
+const HASH_BUFFER_BYTES: usize = 256 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct PortableFileManifestEntry {
+    path: String,
+    size_bytes: u64,
+    sha256: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +99,8 @@ pub struct PortableBackupPreview {
     pub preference_count: usize,
     pub file_count: u64,
     pub total_bytes: u64,
+    pub content_integrity: String,
+    pub restorable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -357,6 +370,26 @@ pub fn create_portable_backup(
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
     let folder_name = format!("{}_{}", sanitize_file_name(prefix), timestamp);
     let destination = paths.backups.join(&folder_name);
+    let database_bytes = paths
+        .database
+        .metadata()
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let (_, imports_bytes) = directory_inventory(&paths.imports_raw)?;
+    let (_, attachment_bytes) = directory_inventory(&paths.attachments)?;
+    let estimated_bytes = database_bytes
+        .saturating_add(imports_bytes)
+        .saturating_add(attachment_bytes)
+        .saturating_add(preferences_json.len() as u64);
+    let required_bytes = estimated_bytes.saturating_add(estimated_bytes / 10);
+    let available_bytes = fs2::available_space(&paths.backups)?;
+    if available_bytes < required_bytes {
+        return Err(AppError::Validation(format!(
+            "备份空间不足：预计至少需要 {:.2} GB，当前可用 {:.2} GB",
+            required_bytes as f64 / 1_073_741_824_f64,
+            available_bytes as f64 / 1_073_741_824_f64,
+        )));
+    }
     let stage = paths
         .backups
         .join(format!(".{folder_name}.building-{}", std::process::id()));
@@ -377,9 +410,10 @@ pub fn create_portable_backup(
         let record_count = connection.query_row("SELECT COUNT(*) FROM records", [], |row| {
             row.get::<_, i64>(0)
         })?;
+        let files = portable_file_manifest(&stage)?;
         let manifest = serde_json::json!({
             "format": PORTABLE_BACKUP_FORMAT,
-            "formatVersion": 1,
+            "formatVersion": PORTABLE_BACKUP_FORMAT_VERSION,
             "appVersion": env!("CARGO_PKG_VERSION"),
             "createdAt": created_at,
             "database": "data/app.db",
@@ -388,6 +422,7 @@ pub fn create_portable_backup(
             "preferences": "preferences.json",
             "preferenceCount": preference_count,
             "recordCount": record_count,
+            "files": files,
         });
         atomic_write(
             &stage.join("manifest.json"),
@@ -423,18 +458,31 @@ pub fn inspect_portable_backup(source_path: impl AsRef<Path>) -> AppResult<Porta
     let manifest_path = source_path.join("manifest.json");
     let manifest = serde_json::from_slice::<serde_json::Value>(&fs::read(&manifest_path)?)?;
     let format = manifest.get("format").and_then(serde_json::Value::as_str);
+    let format_version = manifest
+        .get("formatVersion")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_default();
     if !matches!(
         format,
         Some(PORTABLE_BACKUP_FORMAT) | Some(LEGACY_PORTABLE_BACKUP_FORMAT)
-    ) || manifest
-        .get("formatVersion")
-        .and_then(serde_json::Value::as_i64)
-        != Some(1)
+    ) || !matches!(format_version, 1 | PORTABLE_BACKUP_FORMAT_VERSION)
     {
         return Err(AppError::Validation(
             "所选文件夹不是受支持的南枫知识库完整迁移备份".to_string(),
         ));
     }
+    let (content_integrity, restorable) = if format_version == PORTABLE_BACKUP_FORMAT_VERSION {
+        let expected = serde_json::from_value::<Vec<PortableFileManifestEntry>>(
+            manifest
+                .get("files")
+                .cloned()
+                .ok_or_else(|| AppError::Validation("迁移备份缺少逐文件校验清单".to_string()))?,
+        )?;
+        verify_portable_file_manifest(source_path, &expected)?;
+        ("verified_sha256".to_string(), true)
+    } else {
+        ("legacy_database_only".to_string(), false)
+    };
     let database_path = source_path.join("data").join("app.db");
     let integrity_check = validate_database_file(&database_path)?;
     let connection =
@@ -475,6 +523,8 @@ pub fn inspect_portable_backup(source_path: impl AsRef<Path>) -> AppResult<Porta
         preference_count,
         file_count,
         total_bytes,
+        content_integrity,
+        restorable,
     })
 }
 
@@ -486,6 +536,12 @@ pub fn restore_portable_backup(
 ) -> AppResult<PortableRestoreResult> {
     let source_path = source_path.as_ref();
     let preview = inspect_portable_backup(source_path)?;
+    if !preview.restorable {
+        return Err(AppError::Validation(
+            "这是旧版完整迁移备份，只能验证数据库，无法证明附件和导入原件未被篡改；请先在原设备重新创建新版完整备份"
+                .to_string(),
+        ));
+    }
     let safety_backup = create_portable_backup(
         connection,
         paths,
@@ -622,6 +678,102 @@ fn directory_inventory(path: &Path) -> AppResult<(u64, u64)> {
     Ok((file_count, total_bytes))
 }
 
+fn portable_file_manifest(root: &Path) -> AppResult<Vec<PortableFileManifestEntry>> {
+    let mut files = Vec::new();
+    collect_portable_files(root, root, &mut files)?;
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(files)
+}
+
+fn collect_portable_files(
+    root: &Path,
+    current: &Path,
+    output: &mut Vec<PortableFileManifestEntry>,
+) -> AppResult<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            return Err(AppError::Validation(
+                "完整迁移备份中不允许符号链接".to_string(),
+            ));
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_portable_files(root, &path, output)?;
+            continue;
+        }
+        if !file_type.is_file()
+            || path.file_name().and_then(|name| name.to_str()) == Some("manifest.json")
+        {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| AppError::Validation("备份文件路径越过根目录".to_string()))?;
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        output.push(PortableFileManifestEntry {
+            path: relative,
+            size_bytes: entry.metadata()?.len(),
+            sha256: sha256_file(&path)?,
+        });
+    }
+    Ok(())
+}
+
+fn verify_portable_file_manifest(
+    root: &Path,
+    expected: &[PortableFileManifestEntry],
+) -> AppResult<()> {
+    let actual = portable_file_manifest(root)?;
+    let to_map =
+        |items: &[PortableFileManifestEntry]| -> AppResult<BTreeMap<String, (u64, String)>> {
+            let mut result = BTreeMap::new();
+            for item in items {
+                if item.path.is_empty()
+                    || item.path.starts_with('/')
+                    || item.path.contains("../")
+                    || item.path.contains("..\\")
+                {
+                    return Err(AppError::Validation(
+                        "迁移备份校验清单包含危险路径".to_string(),
+                    ));
+                }
+                if result
+                    .insert(item.path.clone(), (item.size_bytes, item.sha256.clone()))
+                    .is_some()
+                {
+                    return Err(AppError::Validation(
+                        "迁移备份校验清单包含重复文件".to_string(),
+                    ));
+                }
+            }
+            Ok(result)
+        };
+    let expected = to_map(expected)?;
+    let actual = to_map(&actual)?;
+    if expected != actual {
+        return Err(AppError::Validation(
+            "完整迁移备份的附件、导入原件或设置文件校验失败，已停止恢复".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> AppResult<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; HASH_BUFFER_BYTES];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 pub fn restore_backup(
     connection: &mut Connection,
     paths: &AppPaths,
@@ -718,9 +870,7 @@ pub fn open_export_directory(paths: &AppPaths) -> AppResult<()> {
 
 fn backup_connection(source: &Connection, destination: &Path) -> AppResult<()> {
     let mut target = Connection::open(destination)?;
-    let backup = Backup::new(source, &mut target)?;
-    backup.run_to_completion(8, Duration::from_millis(20), None)?;
-    drop(backup);
+    database::copy_database(source, &mut target)?;
     target.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     Ok(())
 }
@@ -728,8 +878,7 @@ fn backup_connection(source: &Connection, destination: &Path) -> AppResult<()> {
 fn restore_connection_from_path(target: &mut Connection, source_path: &Path) -> AppResult<()> {
     let source =
         Connection::open_with_flags(source_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let backup = Backup::new(&source, target)?;
-    backup.run_to_completion(8, Duration::from_millis(20), None)?;
+    database::copy_database(&source, target)?;
     Ok(())
 }
 
@@ -1055,22 +1204,31 @@ mod tests {
             .join("attachments/证据.txt")
             .is_file());
         let manifest_path = Path::new(&backup.folder_path).join("manifest.json");
+        let original_manifest = fs::read(&manifest_path).expect("original manifest");
         let mut legacy_manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(&manifest_path).expect("manifest"))
-                .expect("manifest json");
+            serde_json::from_slice(&original_manifest).expect("manifest json");
         legacy_manifest["format"] =
             serde_json::Value::String(LEGACY_PORTABLE_BACKUP_FORMAT.to_string());
+        legacy_manifest["formatVersion"] = serde_json::Value::from(1);
+        legacy_manifest
+            .as_object_mut()
+            .expect("manifest object")
+            .remove("files");
         fs::write(
             &manifest_path,
             serde_json::to_vec_pretty(&legacy_manifest).expect("legacy manifest"),
         )
         .expect("write legacy manifest");
-        assert_eq!(
-            inspect_portable_backup(&backup.folder_path)
-                .expect("legacy backup remains readable")
-                .record_count,
-            1
+        let legacy_preview =
+            inspect_portable_backup(&backup.folder_path).expect("legacy backup remains readable");
+        assert_eq!(legacy_preview.record_count, 1);
+        assert!(!legacy_preview.restorable);
+        assert_eq!(legacy_preview.content_integrity, "legacy_database_only");
+        assert!(
+            restore_portable_backup(&mut connection, &paths, &backup.folder_path, preferences,)
+                .is_err()
         );
+        fs::write(&manifest_path, original_manifest).expect("restore current manifest");
 
         database::move_to_trash(&connection, record.id).expect("mutate database");
         fs::write(paths.imports_raw.join("原始记录.md"), "已修改").expect("mutate import");
@@ -1103,6 +1261,27 @@ mod tests {
         );
         assert!(Path::new(&restored.safety_backup).is_dir());
         assert!(Path::new(&restored.log_path).is_file());
+    }
+
+    #[test]
+    fn portable_backup_rejects_tampered_files_before_restore() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        fs::write(paths.attachments.join("证据.txt"), "原始内容").expect("attachment");
+        let backup = create_portable_backup(&connection, &paths, "{}", "校验备份").expect("backup");
+        fs::write(
+            Path::new(&backup.folder_path).join("attachments/证据.txt"),
+            "被篡改",
+        )
+        .expect("tamper");
+
+        let error =
+            inspect_portable_backup(&backup.folder_path).expect_err("tampered backup must fail");
+        assert!(error.to_string().contains("校验失败"));
+        assert!(
+            restore_portable_backup(&mut connection, &paths, &backup.folder_path, "{}",).is_err()
+        );
     }
 
     #[test]

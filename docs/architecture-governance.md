@@ -1,6 +1,49 @@
 # 架构所有权
 
-项目遵循根级 `docs/app-development/architecture-baseline.md`。阶段 1 UI 契约已冻结，以下所有者同时约束浏览器适配器与 Tauri/SQLite 生产链路。
+项目遵循根级 `docs/app-development/architecture-baseline.md`。当前最高产品规格已把核心从“记录管理”升级为“知识演化”。下表描述当前代码事实；正式 `D:\南枫知识库` 是否完成 migration v3 必须单独报告，不能由“代码已接入”推断。
+
+## 知识生产模型（正式代码已接入，正式数据尚未升级）
+
+| 概念 | 唯一产品含义 | 规则与持久化所有者 | 公开入口 | 主要消费者 | 禁止的平行规则 | 当前证据 |
+|---|---|---|---|---|---|---|
+| Domain | 稳定顶层领域 | `src/knowledge/domain.ts`、`src-tauri/src/knowledge/schema.rs`、`knowledge/repository.rs` | `KnowledgeRepository.createDomain/listDomains` | 主题浏览器、主题创建 | 页面用标签临时模拟领域 | 正式命令已接入；隔离 migration v3 已验证 |
+| Topic / Subtopic | 长期主题、唯一主路径和横向关系 | `knowledge/repository.rs` | `createTopic/listTopics/getTopicDetail` | 主题浏览器、整理工作台 | 用 Record 标题自动生成主题 | 正式仓库与 UI 已接入；别名重定向仍未实现 |
+| Source Item | 保真的导入来源和分类对象 | `importer.rs`、`knowledge/repository.rs` | `listInbox`、migration v3 legacy backfill | 收录箱、主题来源、证据 | 覆盖原件；把来源等同于笔记 | 901 条隔离副本幂等回填已验证 |
+| Note | 人工整理与补充说明 | `knowledge/schema.rs` | 当前无独立 CRUD | 未来主题知识页与导出 | 与原始来源共用可覆盖正文 | 表合同存在，独立生产用例未完成 |
+| Judgment Snapshot | 某时点判断、置信度和变化原因 | `knowledge/repository.rs` | `addTopicJudgment/getTopicDetail` | 主题页、时间线、上下文 | 覆盖旧判断冒充时间线 | 追加写入和读取已接入 |
+| Evidence | 支持/反驳关系和来源锚点 | `knowledge/repository.rs` | `addTopicEvidence/getTopicDetail` | 主题页、上下文 | 无来源证据；页面各自标强弱 | 正式命令已接入 |
+| Open Question | 待验证问题及状态 | `knowledge/repository.rs` | `addTopicQuestion/getTopicDetail` | 主题页、上下文 | 与普通待办混用 | 正式命令已接入 |
+| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 评分：`deterministicClassifier.ts`；持久化/确认：`knowledge/repository.rs` | `save/list/confirm/undoClassification` | 收录箱 | 分类器直接写库；页面复制评分规则 | 建议持久化、人工确认和撤销已接入；FTS5/BM25 生产信号未接入 |
+| Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 整理工作台、操作日志 | 无预览直接批量改外键 | 合并事务与撤销已实现；拆分仍只预览；别名重定向未实现 |
+| Research Context | 本地可审阅的研究上下文 | `knowledge/repository.rs` | `compileTopicContext` | 主题页、导出/后续 Codex 交换 | 调模型生成不透明摘要 | 本地确定性编译已接入 |
+| Proposition / Turning Point | 可复用命题与人工确认的判断转折 | 尚无独立生产所有者 | 无 | 未来判断演化 | 从展示文本临时推断身份 | 未实现，不能以判断文本替代 |
+
+### 运行与数据边界
+
+- `database::apply_migrations` 已接入 migration v3：先创建迁移前 SQLite 安全备份，再创建知识表并幂等回填 legacy Record。
+- `src/services/knowledgeRepository.ts` 是 WebView 到 Rust 知识命令的唯一前端适配器；浏览器无 Tauri 桥接时只显示诚实空状态。
+- `legacy_preview.rs`、`audit.rs` 和 `classification_input.rs` 继续承担只读审计与隔离预演，不是第二套生产写入口。
+- 当前只在 `.runtime-qa/knowledge-v3-20260727-qa1/` 的 901 条隔离副本执行过 migration v3；正式 `D:\南枫知识库` 尚未执行 v3。
+- 正式数据升级、完整迁移备份恢复演练和真实桌面命令桥验收均需独立授权及可恢复验证，不得由单元测试或隔离迁移替代。
+
+目标数据链路固定为：
+
+```text
+原件归档
+→ 内容提取与标准化
+→ 来源读取模型
+→ 确定性分类建议
+→ 人工确认或高置信接受
+→ 主题/关系写入
+→ 判断、证据、问题读模型
+→ 研究上下文编译
+```
+
+任何真实实现都不得把分类提前到内容提取之前。
+
+## 记录型生产模型（兼容基础设施）
+
+以下所有者描述当前已运行的记录型生产链路。它们仍要维护，但不是知识模型；不得继续用新增字段扩大 `Record` 聚合职责。
 
 | 概念 | 产品含义 | 唯一所有者 | 公开入口 | 当前消费者 | 禁止的平行规则 | 最小验证 | 状态 |
 |---|---|---|---|---|---|---|---|
@@ -9,6 +52,7 @@
 | 记录列表读取模型 | 搜索、筛选和列表只消费轻量摘要，详情正文按选择加载 | `database::list_record_summaries` | `RecordRepository.listRecordSummaries` | 全部记录、收藏、跟踪、更新、回收站 | 列表加载完整正文；前端二次删除后端搜索命中 | 1000 条性能合同 + 正文命中搜索 + E2E | 已实现 |
 | 页面导航状态 | 全部记录、我的收藏、导入、回收站和设置的当前位置 | `App` 的 `page` | `Sidebar.onNavigate` | 主区域页面选择 | 各页面自行修改侧栏状态 | 导航与可见页面一致 | 已实现 |
 | 文件导入 | 单个或批量文件的原件归档、哈希、限量预览、可编辑映射、去重策略和完整写入 | `src-tauri/src/importer.rs` / `domain/importMapping.ts` / `domain/importQueue.ts` | `RecordRepository.prepareImport/confirmImport/cancelImport` | 批量拖拽队列、文件选择、单文件映射、自动批量确认、导入日志 | 并发解析全部大文件；一个失败中止整批；完整正文跨 IPC；前端样本充当最终数据 | 队列顺序/去重/错误隔离合同 + 32 条有界样本 + 后端重读原件 | 已实现 |
+| ChatGPT 完整导出附件 | ZIP 原件、会话分片、消息附件引用、`.dat` 实体、原文件名、格式和受控落盘路径 | `src-tauri/src/chatgpt_export.rs` | `importer::prepare_import/confirm_import` | ZIP 导入预览、记录来源、角色消息附件、附件卡、完整备份 | 只导入 conversations JSON；按扩展名猜 `.dat`；整包读入内存；页面解析 ZIP；丢弃未关联文件库资产 | 真实 ZIP 只读审计 + 合成 ZIP 端到端 + 路径穿越/大小上限 + 字节哈希 | 已实现 |
 | 导入会话展示 | 从保真的 Claude `chat_messages` 或 ChatGPT `mapping/current_node` 中提取当前分支的用户可见文本，隐藏 thinking、reasoning recap、工具调用与废弃分支 | `src/domain/importedContent.ts` / `src-tauri/src/importer.rs` | `readImportedContent` / 导入标题回退 | 详情预览、完整内容弹窗、完整导出、通用标题回退 | 依赖 Codex 临时改正文；按语言删除正文；改写原始 JSON；页面各自解析会话 | 两类结构契约 + 分支/日期/资源回归 + 真实会话弹窗 | 已实现 |
 | 会话资源展示 | 保留消息中的图片/文件引用，并只从当前记录受控附件目录解析真实二进制 | `src/domain/importedContent.ts` / `src-tauri/src/attachments.rs` | `ReadableSourceMessage.assets` / `RecordRepository` | 详情角色卡、完整内容弹窗、附件卡 | 从任意本机路径直接渲染；把 UUID 当作已有图片；并发复制全部大附件 | 引用解析契约 + 受控 asset scope + 同名关联 | 已实现 |
 | 交互反馈 | 收藏、复制、菜单、设置等按钮操作的统一可见结果 | `App` 的 `notice` | `onNotify` | 顶部菜单、记录操作、标签和详情 | 各按钮自行生成风格不一的临时提示 | 受影响按钮点击后产生一致反馈且自动消退 | 已实现 |
@@ -30,7 +74,7 @@
 |---|---|---|---|---|
 | 新建、复制、永久删除 | 是 | 受影响 | `RecordRepository` | CRUD、回收站与一次明确确认 |
 | 编辑当前判断与完整记录 | 是 | 受影响 | 局部补丁命令 / `DetailPanel` / `EditRecordDialog` | 650/800 ms 自动保存、失败草稿、重启重读 |
-| JSON/Markdown/TXT/HTML 文件批量拖拽与选择导入 | 是 | 受影响且原件保真 | `domain/importQueue.ts` → `RecordRepository` → `src-tauri/src/importer.rs` | 多路径接收、队列去重、顺序归档、单项错误隔离、单独映射/自动批量确认 |
+| ChatGPT ZIP/JSON/Markdown/TXT/HTML 文件批量拖拽与选择导入 | 是 | 受影响且原件保真 | `domain/importQueue.ts` → `RecordRepository` → `src-tauri/src/importer.rs`；ZIP 附件由 `chatgpt_export.rs` | 多路径接收、队列去重、顺序归档、ZIP 分片/附件映射、单项错误隔离、单独映射/自动批量确认 |
 | 列表、详情、搜索 | 是 | 受影响 | `RecordRepository` | 搜索与选中、重启后一致 |
 | 筛选、排序、收藏、复制导出、菜单 | 是 | 受影响 | `RecordList` / `RecordsWorkspace` / `App.onNotify` | 按钮逐项操作与状态同步 |
 | 历史版本 | 是 | 受影响 | `RecordRepository` | 追加、整行打开、删除单个快照、恢复为新版本 |

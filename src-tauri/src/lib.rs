@@ -1,8 +1,11 @@
 mod attachments;
+pub mod chatgpt_export;
 mod commands;
 mod database;
 mod error;
 mod importer;
+pub mod knowledge;
+pub mod maintenance;
 mod models;
 mod paths;
 mod transfer;
@@ -54,6 +57,26 @@ pub fn run() {
             commands::get_data_location,
             commands::get_storage_stats,
             commands::open_data_directory,
+            commands::list_knowledge_inbox,
+            commands::list_knowledge_domains,
+            commands::list_knowledge_topics,
+            commands::create_knowledge_domain,
+            commands::create_knowledge_topic,
+            commands::save_knowledge_classification_suggestions,
+            commands::list_knowledge_classification_suggestions,
+            commands::confirm_knowledge_classification,
+            commands::undo_knowledge_classification,
+            commands::get_knowledge_topic_detail,
+            commands::add_knowledge_topic_judgment,
+            commands::add_knowledge_topic_evidence,
+            commands::add_knowledge_topic_question,
+            commands::compile_knowledge_topic_context,
+            commands::preview_knowledge_topic_merge,
+            commands::merge_knowledge_topics,
+            commands::undo_knowledge_topic_merge,
+            commands::preview_knowledge_topic_split,
+            commands::suggest_knowledge_topic_relations,
+            commands::create_knowledge_topic_relation,
             commands::list_records,
             commands::list_record_summaries,
             commands::get_record,
