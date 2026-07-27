@@ -24,6 +24,7 @@
 - `src/services/knowledgeRepository.ts` 是 WebView 到 Rust 知识命令的唯一前端适配器；浏览器无 Tauri 桥接时只显示诚实空状态。
 - `legacy_preview.rs`、`audit.rs` 和 `classification_input.rs` 继续承担只读审计与隔离预演，不是第二套生产写入口。
 - `.runtime-qa/knowledge-v3-20260727-qa1/` 已验证 901 条隔离 migration v3；`.runtime-qa/portable-recovery-20260727-qa4/` 已验证完整恢复和失败自动回滚；`.runtime-qa/hidden-tauri-bridge-20260727-qa1/` 已验证隐藏 Tauri/WebView2 正式命令桥和强制进程重启后的持久化。
+- `.runtime-qa/hidden-knowledge-production-20260727-qa4/` 进一步验证 Note、Proposition、Evidence、Judgment 和 Turning Point 经真实隐藏 IPC 写入并在强制重启后按 ID 读回，外键违规为 0。
 - 正式 `D:\南枫知识库` 尚未执行 v3。正式升级、正式数据上的完整恢复、可见桌面长时间交互和优雅退出仍需独立授权与验证，不得由当前隔离证据替代。
 
 目标数据链路固定为：

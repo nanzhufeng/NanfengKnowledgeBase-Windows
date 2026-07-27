@@ -4,7 +4,7 @@
 > 项目：南枫知识库 `0.2.0`
 > 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 > 当前分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
-> 代码 checkpoint：`52d9ad0`
+> 代码 checkpoint：`08ddaec`
 > 恢复验收 checkpoint：`fbe4c15`
 > 当前工作区：P1 知识生产能力代码与交接文档已更新
 > 远端状态：本分支无 upstream，未推送；`origin/main` 不包含本轮知识生产链路
@@ -120,16 +120,19 @@
 
 - 完整恢复根：`.runtime-qa/portable-recovery-20260727-qa4`
 - 隐藏 Tauri 根：`.runtime-qa/hidden-tauri-bridge-20260727-qa1`
+- 最新知识生产隐藏 IPC 根：`.runtime-qa/hidden-knowledge-production-20260727-qa4`
 - 完整备份 manifest：6 个受校验文件，653,213,880 字节，`verified_sha256`
 - 成功恢复、故障自动回滚和数据库重开均保持 901 Record、901 Source Item、446 附件登记、migration 1/2/3、`integrity_check=ok`、外键 0。
 - 脱敏合成导入原件、附件和界面偏好在恢复后哈希一致；故障回滚后的受保护文件哈希精确一致。
 - 实际隐藏 Tauri/WebView2 经正式 IPC 创建脱敏 Domain/Topic；强制结束后第二次隐藏启动仍读到相同 ID，收录箱 901、完整性 `ok`。
+- 最新隐藏 IPC 又经正式命令创建并重启读回 Source、Note、Proposition、Evidence、两个 Judgment 和 Turning Point；migration 1/2/3、对象计数、精确锚点、`integrity_check=ok`、外键 0 均通过。
 - capability 不允许 WebView 自行关闭窗口，因此只验证了强制进程重启后的 SQLite 恢复与持久化，未验证优雅退出。
 - 脱敏摘要：`docs/audits/2026-07-27-portable-recovery-hidden-tauri/summary.md`
+- 最新知识生产 IPC 摘要：`docs/audits/2026-07-27-hidden-knowledge-production-ipc/summary.md`
 
 ## 四、最新验证等级
 
-当前 P1 知识生产代码对应 checkpoint `52d9ad0`：
+当前 P1 知识生产代码与隐藏 IPC 工具对应 checkpoint `08ddaec`：
 
 | 验证层级 | 结果 |
 |---|---|
@@ -143,7 +146,7 @@
 | 901 条隔离 migration v3 | 通过 |
 | 完整迁移备份创建/检查/恢复 | 隔离 qa4 通过 |
 | 故障注入后的自动回滚 | 隔离 qa4 通过 |
-| 最新知识 UI 的真实 Tauri 命令桥 | 隐藏 WebView2 IPC 通过 |
+| 最新知识生产命令的真实 Tauri 桥 | 隐藏 WebView2 IPC 通过；新对象写入与强制重启读回通过 |
 | 重启持久化 | 强制进程重启后通过；优雅退出未验证 |
 | 正式数据 migration v3 | 未执行 |
 | 当前版本安装包/升级覆盖 | 未执行 |
@@ -198,7 +201,7 @@
 - 当前成果位于本地 `codex/nanfeng-knowledge-production-checkpoint-20260727`，不要误回到 `main`。
 - 不执行 `reset --hard`、`clean`、`stash` 或覆盖未知改动。
 - 本分支未推送；不要把“本地 checkpoint”描述成“GitHub 已更新”。
-- 当前代码 HEAD 为 `52d9ad0`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
+- 当前代码 HEAD 为 `08ddaec`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
 
 ## 九、下一件事
 

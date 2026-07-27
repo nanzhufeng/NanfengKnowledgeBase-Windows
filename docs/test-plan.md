@@ -42,6 +42,7 @@
 14. Proposition 是独立对象；Turning Point 只由用户明确选择前后判断后创建，变化原因本身不能自动升格。
 15. Evidence 锚点按来源类型校验；可信度、验证状态和有效状态分开持久化。
 16. 无界面桥接用例实际操作 Note、Proposition、时间码 Evidence 和 Turning Point，并核对 UI 发往 Tauri 的主题、来源、锚点和前后判断 ID。
+17. 隐藏真实 Tauri/WebView2 在隔离根写入新知识对象，强制重启后按原 ID 读回，并以只读检查器确认 migration、计数、完整性和外键。
 
 ## migration v3 合同
 
