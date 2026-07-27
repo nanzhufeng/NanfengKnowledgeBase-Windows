@@ -35,6 +35,7 @@ import MarkdownContent from "./MarkdownContent";
 
 type Mode = "inbox" | "topics" | "organize";
 const INITIAL_INBOX_LIMIT = 120;
+const SOURCE_PREVIEW_LIMIT = 20_000;
 
 function topicPath(topic: KnowledgeTopicRow, topics: KnowledgeTopicRow[]): string[] {
   const result = [topic.name];
@@ -91,7 +92,11 @@ export function KnowledgeWorkspace({
   const repository = useMemo(() => new KnowledgeRepository(), []);
   const [inbox, setInbox] = useState<KnowledgeInboxItem[]>([]);
   const [inboxLimit, setInboxLimit] = useState(INITIAL_INBOX_LIMIT);
-  const [selectedOriginalText, setSelectedOriginalText] = useState<string | null>(null);
+  const [loadedSourceText, setLoadedSourceText] = useState<{
+    sourceItemId: number;
+    text: string;
+  } | null>(null);
+  const [expandedSourceId, setExpandedSourceId] = useState<number | null>(null);
   const sourceTextRequestSequence = useRef(0);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>([]);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>([]);
@@ -160,6 +165,15 @@ export function KnowledgeWorkspace({
   const [ruleEnabled, setRuleEnabled] = useState(true);
 
   const selected = inbox.find((item) => item.id === selectedId) ?? null;
+  const selectedOriginalText = loadedSourceText?.sourceItemId === selectedId
+    ? loadedSourceText.text
+    : null;
+  const sourcePreviewIsTruncated = selectedOriginalText !== null
+    && selectedOriginalText.length > SOURCE_PREVIEW_LIMIT
+    && expandedSourceId !== selectedId;
+  const sourcePreviewText = sourcePreviewIsTruncated
+    ? selectedOriginalText.slice(0, SOURCE_PREVIEW_LIMIT)
+    : selectedOriginalText;
 
   const reload = async () => {
     const [
@@ -222,19 +236,18 @@ export function KnowledgeWorkspace({
   useEffect(() => {
     const sequence = ++sourceTextRequestSequence.current;
     if (!selectedId || mode !== "inbox") {
-      setSelectedOriginalText(null);
+      setLoadedSourceText(null);
       return;
     }
-    setSelectedOriginalText(null);
     void repository.getSourceOriginalText(selectedId)
       .then((originalText) => {
         if (sequence === sourceTextRequestSequence.current) {
-          setSelectedOriginalText(originalText);
+          setLoadedSourceText({ sourceItemId: selectedId, text: originalText });
         }
       })
       .catch((error) => {
         if (sequence === sourceTextRequestSequence.current) {
-          setSelectedOriginalText("");
+          setLoadedSourceText({ sourceItemId: selectedId, text: "" });
           onNotify(error instanceof Error ? error.message : "来源正文读取失败");
         }
       });
@@ -1558,9 +1571,23 @@ export function KnowledgeWorkspace({
                 <button onClick={() => void generateSuggestions()} disabled={busy || !topics.length}><Sparkles size={16} />{busy ? "计算中…" : "生成分类建议"}</button>
               </div>
               <div className="knowledge-source-preview">
-                {selectedOriginalText === null
+                {sourcePreviewText === null
                   ? <div className="page-loading"><span className="save-spinner" />正在读取当前来源正文…</div>
-                  : <MarkdownContent value={selectedOriginalText || "来源正文为空"} />}
+                  : <>
+                    <MarkdownContent value={sourcePreviewText || "来源正文为空"} />
+                    {sourcePreviewIsTruncated ? (
+                      <div className="knowledge-source-preview-limit">
+                        <span>正文较长，已先显示前 {SOURCE_PREVIEW_LIMIT.toLocaleString("zh-CN")} 字，避免切换时卡顿。</span>
+                        <button onClick={() => setExpandedSourceId(selectedId)}>查看完整正文</button>
+                      </div>
+                    ) : selectedOriginalText !== null
+                      && selectedOriginalText.length > SOURCE_PREVIEW_LIMIT ? (
+                      <div className="knowledge-source-preview-limit">
+                        <span>当前正在显示完整长正文。</span>
+                        <button onClick={() => setExpandedSourceId(null)}>恢复流畅预览</button>
+                      </div>
+                    ) : null}
+                  </>}
               </div>
               <div className="knowledge-suggestion-panel">
                 <h3>主题归属</h3>

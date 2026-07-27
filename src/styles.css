@@ -3878,6 +3878,34 @@ textarea:focus-visible,
   background: #f6f8fb;
 }
 
+.knowledge-source-preview-limit {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 14px -4px -2px;
+  padding: 10px 12px;
+  border: 1px solid #d7deea;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .96);
+  color: #66748a;
+  font-size: 12px;
+  box-shadow: 0 -8px 20px -18px rgba(11, 45, 91, .55);
+}
+
+.knowledge-source-preview-limit button {
+  flex: none;
+  padding: 7px 10px;
+  border: 1px solid #f1b58c;
+  border-radius: 7px;
+  background: #fff7f1;
+  color: #c6530b;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .knowledge-suggestion-panel {
   margin-top: 16px;
 }
