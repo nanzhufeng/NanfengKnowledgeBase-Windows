@@ -1137,6 +1137,7 @@ pub fn apply_personal_catalog(
     let proposal = personal_catalog::personal_catalog_proposal();
     let transaction = connection.transaction()?;
     let now = Utc::now().to_rfc3339();
+    let managed_config = serde_json::json!({ "managedBy": proposal.version }).to_string();
     let mut managed_rule_ids = HashSet::new();
     for topic in &proposal.topics {
         for (rule_type, count) in [
@@ -1300,7 +1301,9 @@ pub fn apply_personal_catalog(
         for (rule_type, patterns, weight) in [
             ("exact_alias", &topic.aliases, 0.8_f64),
             ("entity", &topic.entities, 0.9_f64),
-            ("keyword", &topic.keywords, 0.75_f64),
+            // 目录关键词均为能独立说明主题的短语；一次明确命中需要在
+            // 可见正文搜索信号佐证后越过 45 分候选线，但仍不会自动确认。
+            ("keyword", &topic.keywords, 0.9_f64),
         ] {
             for (index, pattern) in patterns.iter().enumerate() {
                 let public_id = format!("catalog-rule-{}-{rule_type}-{index}", topic.key);
@@ -1317,16 +1320,25 @@ pub fn apply_personal_catalog(
                          SET rule_type = ?2, pattern = ?3, target_domain_id = ?4,
                              target_topic_id = ?5, weight = ?6, priority = 0,
                              enabled = 1,
-                             config_json = '{\"managedBy\":\"personal-catalog-v2\"}',
-                             updated_at = ?7
+                             config_json = ?7,
+                             updated_at = ?8
                          WHERE public_id = ?1
                            AND (
                              rule_type <> ?2 OR pattern <> ?3
                              OR target_domain_id IS NOT ?4 OR target_topic_id IS NOT ?5
                              OR weight <> ?6 OR priority <> 0 OR enabled <> 1
-                             OR config_json <> '{\"managedBy\":\"personal-catalog-v2\"}'
+                             OR config_json <> ?7
                            )",
-                        params![public_id, rule_type, pattern, domain_id, topic_id, weight, now],
+                        params![
+                            public_id,
+                            rule_type,
+                            pattern,
+                            domain_id,
+                            topic_id,
+                            weight,
+                            &managed_config,
+                            now
+                        ],
                     )?;
                     continue;
                 }
@@ -1336,9 +1348,18 @@ pub fn apply_personal_catalog(
                        weight, priority, enabled, config_json, created_at, updated_at
                      ) VALUES (
                        ?1, ?2, ?3, ?4, ?5, ?6, 0, 1,
-                       '{\"managedBy\":\"personal-catalog-v2\"}', ?7, ?7
+                       ?7, ?8, ?8
                      )",
-                    params![public_id, rule_type, pattern, domain_id, topic_id, weight, now,],
+                    params![
+                        public_id,
+                        rule_type,
+                        pattern,
+                        domain_id,
+                        topic_id,
+                        weight,
+                        &managed_config,
+                        now,
+                    ],
                 )?;
                 result.created_rules += 1;
             }
@@ -3743,6 +3764,15 @@ fn normalized_bm25_signals(
         if terms.is_empty() {
             continue;
         }
+        let matched_terms = terms
+            .iter()
+            .filter(|term| source_haystack.contains(&term.to_lowercase()))
+            .count();
+        // source_items_fts 为保真原文索引，可能包含原始 JSON 元数据。
+        // 只有同一短语也出现在用户可见投影中时，BM25 才能成为分类证据。
+        if matched_terms == 0 {
+            continue;
+        }
         let expression = terms
             .iter()
             .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
@@ -3760,10 +3790,6 @@ fn normalized_bm25_signals(
             .unwrap_or(0.0)
             .max(0.0);
         if raw_score > 0.0 {
-            let matched_terms = terms
-                .iter()
-                .filter(|term| source_haystack.contains(&term.to_lowercase()))
-                .count();
             raw_scores.push((topic.id.clone(), raw_score, matched_terms));
         }
     }
@@ -4840,17 +4866,51 @@ mod tests {
         assert!(!proposal.topics.is_empty());
         for required_topic in [
             "A股与基金市场",
+            "美股与全球市场",
+            "半导体与算力产业",
+            "宏观经济与资产配置",
+            "房地产与楼市研究",
             "海外账号体系",
             "海外银行与支付",
             "海外通信与号码",
             "新能源车与二手车",
             "血型与输血",
             "艺术与设计升学",
+            "Git 与版本控制",
+            "数据备份、迁移与恢复",
+            "网络、代理与连接",
+            "品牌、图标与界面设计",
+            "图像处理与色彩",
+            "健康、疾病与就医",
+            "旅行、签证与行程",
         ] {
             assert!(proposal
                 .topics
                 .iter()
                 .any(|topic| topic.name == required_topic));
+        }
+        assert!(
+            proposal.topics.len() >= 40,
+            "个人目录应覆盖主要资料簇，而不是只修复少量截图样本"
+        );
+        let mut managed_patterns = HashMap::<String, String>::new();
+        for topic in &proposal.topics {
+            for pattern in topic
+                .aliases
+                .iter()
+                .chain(topic.entities.iter())
+                .chain(topic.keywords.iter())
+            {
+                let normalized = normalize_name(pattern);
+                if let Some(existing_topic) =
+                    managed_patterns.insert(normalized.clone(), topic.name.clone())
+                {
+                    assert_eq!(
+                        existing_topic, topic.name,
+                        "托管主题短语跨主题重复：{pattern}"
+                    );
+                }
+            }
         }
         assert_eq!(
             connection
@@ -4929,7 +4989,7 @@ mod tests {
         );
         for unsafe_pattern in [
             "ChatGPT", "Claude", "Google", "Apple", "SRT", "ACES", "GPU", "价格", "视频", "动画",
-            "配置", "支付",
+            "配置", "支付", "模型", "设计", "账号", "GitHub", "银行", "汽车", "投资",
         ] {
             assert_eq!(
                 connection
@@ -4943,6 +5003,109 @@ mod tests {
                     .expect("unsafe managed rule count"),
                 0,
                 "不应保留宽泛托管规则：{unsafe_pattern}"
+            );
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM classification_rules
+                     WHERE enabled <> 0 AND rule_type = 'keyword'
+                       AND public_id LIKE 'catalog-rule-%' AND weight <> 0.9",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("managed keyword weight"),
+            0
+        );
+    }
+
+    #[test]
+    fn catalog_v3_exposes_direct_evidence_for_reported_unmatched_subjects() {
+        let mut connection = database::open_memory_database().expect("database");
+        let proposal = get_personal_catalog_proposal();
+        apply_personal_catalog(
+            &mut connection,
+            &ApplyPersonalCatalogInput {
+                version: proposal.version,
+            },
+        )
+        .expect("apply catalog");
+
+        for (title, text, expected_topic, expected_phrase) in [
+            (
+                "日本楼市跌幅与分化",
+                "日本楼市经历长期下跌，不同城市房价和住房市场明显分化。",
+                "房地产与楼市研究",
+                "日本楼市",
+            ),
+            (
+                "南枫批量改名设计",
+                "为批量改名工具设计应用图标、界面配色和品牌标识。",
+                "品牌、图标与界面设计",
+                "批量改名设计",
+            ),
+            (
+                "GitHub 分支保护建议",
+                "为 GitHub 主分支设置分支保护规则，避免强推和误删。",
+                "Git 与版本控制",
+                "GitHub 分支保护",
+            ),
+            (
+                "账本恢复失败原因",
+                "正式账本备份完整，但应用数据库恢复失败，需要检查备份恢复流程。",
+                "数据备份、迁移与恢复",
+                "账本恢复",
+            ),
+        ] {
+            let record = database::create_record(
+                &mut connection,
+                &CreateRecordInput {
+                    title: title.to_string(),
+                    original_at: None,
+                    summary: String::new(),
+                    status: Default::default(),
+                    tags: Vec::new(),
+                    current_judgment: String::new(),
+                    confirmed_facts: Vec::new(),
+                    key_evidence: Vec::new(),
+                    open_questions: Vec::new(),
+                    next_actions: Vec::new(),
+                    notes: String::new(),
+                    source_text: text.to_string(),
+                    sources: Vec::new(),
+                    is_favorite: false,
+                },
+            )
+            .expect("record");
+            sync_legacy_record(&mut connection, record.id).expect("source");
+            let source_id = connection
+                .query_row(
+                    "SELECT id FROM source_items WHERE legacy_record_id = ?1",
+                    [record.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("source id");
+            let context = prepare_classification_context(&connection, source_id).expect("context");
+            let topic = context
+                .topics
+                .iter()
+                .find(|topic| topic.name == expected_topic)
+                .expect("expected topic");
+            assert!(
+                context.rules.iter().any(|rule| {
+                    rule.enabled
+                        && rule.topic_id == topic.id
+                        && rule.value == expected_phrase
+                        && rule.strength >= 0.9
+                }),
+                "{title} 应有明确托管短语"
+            );
+            assert!(
+                context
+                    .search_signals
+                    .iter()
+                    .any(|signal| signal.topic_id == topic.id && signal.normalized_score > 0.0),
+                "{title} 应有仅来自可见正文的搜索信号"
             );
         }
     }

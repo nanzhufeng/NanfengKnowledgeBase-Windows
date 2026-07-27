@@ -164,6 +164,15 @@ function locatorKindsForSource(sourceType?: string): EvidenceLocator["kind"][] {
   return shared;
 }
 
+function catalogRuleVersion(configJson: string): string | null {
+  try {
+    const parsed = JSON.parse(configJson) as { managedBy?: unknown };
+    return typeof parsed.managedBy === "string" ? parsed.managedBy : null;
+  } catch {
+    return null;
+  }
+}
+
 export function KnowledgeWorkspace({
   mode,
   onNotify,
@@ -184,6 +193,8 @@ export function KnowledgeWorkspace({
   } | null>(null);
   const [sourceDetailOpen, setSourceDetailOpen] = useState(false);
   const sourceTextRequestSequence = useRef(0);
+  const preparedCatalogVersion = useRef<string | null>(null);
+  const catalogPreparation = useRef<Promise<void> | null>(null);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>([]);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -294,6 +305,7 @@ export function KnowledgeWorkspace({
 
   const reload = async () => {
     let catalogBootstrapped = false;
+    let catalogUpgraded = false;
     let [
       nextInbox,
       nextDomains,
@@ -311,12 +323,31 @@ export function KnowledgeWorkspace({
       repository.listEntities(),
       repository.listClassificationRules(),
     ]);
-    if (!nextTopics.length && nextInbox.length && nextCatalog) {
+    const catalogIsCurrent = nextCatalog
+      ? nextRules.some((rule) => catalogRuleVersion(rule.configJson) === nextCatalog.version)
+      : false;
+    const catalogPreparedForSession = nextCatalog
+      ? catalogIsCurrent || preparedCatalogVersion.current === nextCatalog.version
+      : false;
+    if (catalogPreparedForSession && nextCatalog) {
+      preparedCatalogVersion.current = nextCatalog.version;
+    }
+    if (
+      nextInbox.length
+      && nextCatalog
+      && !catalogPreparedForSession
+    ) {
+      const hadTopics = nextTopics.length > 0;
       await repository.applyPersonalCatalog(nextCatalog.version);
-      catalogBootstrapped = true;
-      [nextDomains, nextTopics] = await Promise.all([
+      preparedCatalogVersion.current = nextCatalog.version;
+      catalogBootstrapped = !hadTopics;
+      catalogUpgraded = hadTopics;
+      [nextDomains, nextTopics, nextAliases, nextEntities, nextRules] = await Promise.all([
         repository.listDomains(),
         repository.listTopics(),
+        repository.listTopicAliases(),
+        repository.listEntities(),
+        repository.listClassificationRules(),
       ]);
     }
     setInbox(nextInbox);
@@ -347,10 +378,30 @@ export function KnowledgeWorkspace({
         : nextTopics[0]?.id ?? null);
     if (catalogBootstrapped) {
       onNotify("已根据现有笔记启用可编辑默认领域与主题；不会覆盖原文");
+    } else if (catalogUpgraded) {
+      onNotify("已升级可编辑主题目录；只补充缺失主题和托管规则，不改原文或既有归类");
     }
   };
 
+  const ensureCurrentCatalog = async () => {
+    const proposal = catalogProposal ?? await repository.getPersonalCatalogProposal();
+    if (!proposal || preparedCatalogVersion.current === proposal.version) return;
+    if (!catalogPreparation.current) {
+      catalogPreparation.current = repository.applyPersonalCatalog(proposal.version)
+        .then(() => {
+          preparedCatalogVersion.current = proposal.version;
+        })
+        .finally(() => {
+          catalogPreparation.current = null;
+        });
+    }
+    await catalogPreparation.current;
+  };
+
   const computeAndSaveSuggestions = async (sourceItemId: number) => {
+    // 新版目录必须先进入同一持久化入口，否则已有 Topic 的库会一直沿用旧目录，
+    // 自动计算与用户点击“重新计算”将产生不同结果。
+    await ensureCurrentCatalog();
     const context = await repository.prepareClassificationContext(sourceItemId);
     const result = classifySource(context);
     return repository.saveSuggestions({
@@ -550,6 +601,7 @@ export function KnowledgeWorkspace({
     setBusy(true);
     try {
       const result = await repository.applyPersonalCatalog(catalogProposal.version);
+      preparedCatalogVersion.current = catalogProposal.version;
       await reload();
       setCatalogReviewed(false);
       onNotify(
@@ -847,8 +899,6 @@ export function KnowledgeWorkspace({
     }
     setBusy(true);
     try {
-      const proposal = await repository.getPersonalCatalogProposal();
-      if (proposal) await repository.applyPersonalCatalog(proposal.version);
       const persisted = await computeAndSaveSuggestions(selected.id);
       await reload();
       setSuggestions(persisted);

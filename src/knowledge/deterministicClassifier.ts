@@ -12,7 +12,7 @@ import {
   type KnowledgeTopicCandidate,
 } from "./domain";
 
-export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v2";
+export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v3";
 
 type SignalEvaluation = {
   normalizedScore: number;
@@ -60,6 +60,18 @@ function tokenSet(value: string): Set<string> {
   return tokens;
 }
 
+function deterministicTextSample(value: string, limit = 12_000): string {
+  if (value.length <= limit) return value;
+  const edge = Math.floor(limit * 0.4);
+  const middle = limit - edge * 2;
+  const middleStart = Math.max(0, Math.floor(value.length / 2) - Math.floor(middle / 2));
+  return [
+    value.slice(0, edge),
+    value.slice(middleStart, middleStart + middle),
+    value.slice(-edge),
+  ].join("\n");
+}
+
 function diceSimilarity(left: Set<string>, right: Set<string>): number {
   if (!left.size || !right.size) return 0;
   let overlap = 0;
@@ -83,7 +95,9 @@ function sourceFieldValues(source: KnowledgeSourceDraft, rule: ClassificationRul
     case "title":
       return [source.title];
     case "text":
-      return [source.text];
+      // 关键词、实体和排除规则都属于来源内容证据；标题是最高密度的内容入口，
+      // 不能要求同一主题短语必须在长正文中再次出现。
+      return [source.title, source.text];
     case "platform":
       return [source.platform ?? ""];
     case "source_kind":
@@ -168,7 +182,10 @@ function evaluateFullText(
   const topicTitleTokens = tokenSet([topic.name, ...topic.aliases, ...topic.keywords].join(" "));
   const topicDocumentTokens = tokenSet(`${topic.searchDocument} ${topic.entities.join(" ")}`);
   const titleScore = diceSimilarity(tokenSet(source.title), topicTitleTokens);
-  const documentScore = diceSimilarity(tokenSet(source.text), topicDocumentTokens);
+  const documentScore = diceSimilarity(
+    tokenSet(deterministicTextSample(source.text)),
+    topicDocumentTokens,
+  );
   const normalizedScore = clamp01(titleScore * 0.62 + documentScore * 0.38);
   return {
     normalizedScore,
@@ -180,9 +197,14 @@ function evaluateSetSimilarity(
   source: KnowledgeSourceDraft,
   topic: KnowledgeTopicCandidate,
 ): SignalEvaluation {
-  const sourceTokens = tokenSet(`${source.title} ${source.text} ${(source.tags ?? []).join(" ")}`);
+  const titleTokens = tokenSet(source.title);
+  const sourceTokens = tokenSet(
+    `${deterministicTextSample(source.text)} ${(source.tags ?? []).join(" ")}`,
+  );
   const topicTokens = tokenSet(`${topic.name} ${topic.aliases.join(" ")} ${topic.keywords.join(" ")}`);
-  const score = jaccardSimilarity(sourceTokens, topicTokens);
+  const titleScore = jaccardSimilarity(titleTokens, topicTokens);
+  const bodyScore = jaccardSimilarity(sourceTokens, topicTokens);
+  const score = Math.max(titleScore * 1.8, bodyScore);
   return {
     normalizedScore: clamp01(score * 2.4),
     reasons: score > 0.08 ? [`关键词集合重合率 ${Math.round(score * 100)}%`] : [],

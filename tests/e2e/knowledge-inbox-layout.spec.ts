@@ -71,12 +71,24 @@ test("收录箱仅滚动左侧列表并使用统一正文卡片", async ({ page 
           }
           if (command === "get_personal_topic_catalog_proposal") {
             return {
-              version: "nanzhufeng-personal-catalog-v2",
+              version: "nanzhufeng-personal-catalog-v3",
               status: "proposal",
               title: "个人主题目录提案",
               note: "仅预览",
               domains: [],
               topics: [],
+            };
+          }
+          if (command === "apply_personal_topic_catalog") {
+            return {
+              version: "nanzhufeng-personal-catalog-v3",
+              createdDomains: 0,
+              existingDomains: 1,
+              createdTopics: 0,
+              existingTopics: 1,
+              createdAliases: 0,
+              createdEntities: 0,
+              createdRules: 0,
             };
           }
           if ([

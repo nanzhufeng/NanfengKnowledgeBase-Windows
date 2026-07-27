@@ -171,6 +171,26 @@ describe("deterministicClassifier", () => {
       text: "根据参考图保留人物形象，重新生成一张现代场景图片。",
       expectedTopicId: "image-generation",
     },
+    {
+      title: "日本楼市跌幅与分化",
+      text: "日本楼市经历长期下跌，不同城市房价、住房市场和房地产周期明显分化。",
+      expectedTopicId: "real-estate",
+    },
+    {
+      title: "南枫批量改名设计",
+      text: "为批量改名工具设计品牌标识、应用图标、界面配色和扁平化图标。",
+      expectedTopicId: "brand-design",
+    },
+    {
+      title: "GitHub 分支保护建议",
+      text: "为 GitHub 主分支设置分支保护规则，避免强推和误删。",
+      expectedTopicId: "git",
+    },
+    {
+      title: "账本恢复失败原因",
+      text: "正式账本备份仍完整，但应用数据库恢复失败，需要核对备份恢复流程。",
+      expectedTopicId: "data-recovery",
+    },
   ])("classifies the reported sample by its content subject: $title", ({
     title,
     text,
@@ -184,6 +204,10 @@ describe("deterministicClassifier", () => {
       regressionTopic("telecom", "海外通信与号码", ["giffgaff", "Wi-Fi Calling", "国际漫游"]),
       regressionTopic("overseas-banking", "海外银行与支付", ["美国银行卡", "HSBC HK", "跨境支付"]),
       regressionTopic("image-generation", "AI 图像与视觉创作", ["人物形象", "参考图生成", "生成一张"]),
+      regressionTopic("real-estate", "房地产与楼市研究", ["日本楼市", "住房市场", "房地产周期"]),
+      regressionTopic("brand-design", "品牌、图标与界面设计", ["品牌标识", "应用图标", "界面配色"]),
+      regressionTopic("git", "Git 与版本控制", ["GitHub 分支保护", "GitHub 主分支", "分支保护规则"]),
+      regressionTopic("data-recovery", "数据备份、迁移与恢复", ["账本恢复", "应用数据库", "备份恢复"]),
       regressionTopic("model-cost", "模型与成本", ["大模型价格", "Token 成本", "API 计费"]),
       regressionTopic("transcription", "音视频转写", ["音频转写", "SRT 字幕", "字幕时间码"]),
       regressionTopic("agent", "Agent 与 Codex 工作流", ["Agent 工作流", "Codex 任务", "MCP 插件"]),
@@ -250,6 +274,47 @@ describe("deterministicClassifier", () => {
     });
 
     expect(result.suggestions).toEqual([]);
+  });
+
+  it("treats a specific content rule in the title as direct topic evidence", () => {
+    const topic = regressionTopic(
+      "git",
+      "Git 与版本控制",
+      ["GitHub 分支保护", "GitHub 主分支", "分支保护规则"],
+    );
+    const result = classifySource({
+      source: {
+        id: "title-rule",
+        title: "保护 GitHub 主分支",
+        text: "避免误删和强制推送。",
+        kind: "ai_conversation",
+        importedAt: "2026-07-27T00:00:00Z",
+      },
+      topics: [topic],
+      rules: [{
+        id: "managed-keyword",
+        topicId: topic.id,
+        field: "text",
+        operator: "contains",
+        value: "保护 GitHub 主分支",
+        strength: 0.9,
+        reason: "目录主题短语命中",
+        enabled: true,
+      }],
+      history: {
+        confirmedTopicCounts: {},
+        recentTopicIds: [],
+        batchTopicIds: {},
+      },
+      searchSignals: [{
+        topicId: topic.id,
+        normalizedScore: 0.7,
+        reason: "可见正文 FTS5/BM25",
+      }],
+    });
+
+    expect(result.suggestions[0]?.topicId).toBe("git");
+    expect(result.suggestions[0]?.confidence).toBeGreaterThanOrEqual(45);
   });
 });
 
