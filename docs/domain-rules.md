@@ -91,6 +91,16 @@ classifySource(context: ClassificationContext): ClassificationResult
 
 `auto_eligible` 不等于分类器直接写库。分类器始终只返回建议；接受和撤销由 `KnowledgeRepository` 对应的 Rust 持久化用例统一执行并记录操作日志。
 
+### 导入后的自动整理
+
+- 导入器返回本次实际新增的 Source Item ID；自动整理只处理这些 ID，并先去重。
+- 当库中已有来源但没有 Topic 时，使用既有个人目录提案增量建立可编辑的 Domain/Topic；不得覆盖原文或已有目录。
+- 每条新来源仍统一调用 `classifySource`，并保存候选、分数、理由、信号贡献和算法版本。
+- 只有 `auto_eligible`（`≥90`）可以由自动整理用例确认；确认必须写操作日志，并允许按批次撤销。
+- `confirm`、`candidates` 和 `manual` 只保存为待确认建议，不得为了提高自动归类率降低阈值。
+- 收录箱可以对已加载的旧来源执行同一自动整理用例；不得复制分类权重或产生第二套页面规则。
+- Domain/Topic 的名称和描述允许用户编辑；编辑保留 ID、来源归属、判断、证据和关系。
+
 ### 确定性
 
 - 相同来源、主题、规则、历史、FTS 分数和算法版本必须得到相同排序与分数。
@@ -122,13 +132,15 @@ classifySource(context: ClassificationContext): ClassificationResult
 - `src/knowledge/domain.ts`：前端领域数据合同和运行时校验。
 - `src/knowledge/deterministicClassifier.ts`：纯本地、无副作用的分类建议内核。
 - `src/knowledge/classificationFixtures.ts`：固定验收数据，不是生产词典。
+- `src/services/knowledgeAutoOrganizer.ts`：导入后和收录箱批量整理的唯一前端编排；只调用分类器和仓库公开用例。
 - `src/services/knowledgeRepository.ts`：正式 WebView 到 Tauri 知识命令的唯一前端适配器。
 - `src/components/KnowledgeWorkspace.tsx`：正式收录箱、主题浏览器和整理工作台入口。
 - `src-tauri/src/knowledge/schema.rs`：正式知识表、约束和 FTS5 合同，已由 migration v3 接入。
 - `src-tauri/src/knowledge/repository.rs`：正式知识仓库，负责 Source Item 回填、分类确认/撤销、主题详情、判断、证据、问题、上下文、合并和关系。
 - `src-tauri/src/knowledge/legacy_preview.rs`：旧 `Record` 的只读映射预演；标签仅作候选，标题不自动升格为主题。
 - `src/prototypes/knowledge-evolution/`：历史假数据设计/测试资产，不是生产入口。
-- 已在 901 条隔离副本验证 migration v3 和幂等回填；正式 `D:\南枫知识库` 尚未升级。
+- 已在 901 条隔离副本验证 migration v3 和幂等回填；正式 `D:\南枫知识库` 已完成 migration v3 和独立只读复核。
 - 生产 FTS5/BM25、历史确认、主题别名/实体/用户规则已进入统一分类输入；个人目录、管理 CRUD 与分类纠正反馈已接入。
+- 隔离可见 BAT 已验证 12 条新来源导入后自动建立可编辑目录、生成 12 条待确认建议且不误执行低置信归类。
 - Topic 合并已实现预览、redirect 别名、事务提交和撤销；拆分仍按首版规则只提供预览。
 - 独立 Note CRUD、Proposition 和用户明确确认的 Turning Point 已接入；Evidence 锚点由 Rust 按来源类型校验，页面不直接保存任意定位 JSON。

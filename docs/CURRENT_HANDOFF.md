@@ -4,9 +4,9 @@
 > 项目：南枫知识库 `0.2.0`
 > 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 > 当前分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
-> 代码 checkpoint：`8f6559b`
+> 代码 checkpoint：`9965ad5`
 > 恢复验收 checkpoint：`fbe4c15`
-> 当前工作区：性能优化、正式数据只读复核与本地 NSIS 安装生命周期均已完成对应层级验证
+> 当前工作区：性能优化、阅读体验、自动分类、正式数据复核与本地 NSIS 安装生命周期均已完成对应层级验证
 > 远端状态：本分支无 upstream，未推送；`origin/main` 不包含本轮知识生产链路
 
 ## 新对话读取顺序
@@ -43,7 +43,7 @@
 
 正式应用默认显示收录箱、主题浏览器和整理工作台；假数据原型不再是运行入口。旧 `Record` 继续作为来源档案兼容层，知识结构由独立表和仓库管理。
 
-完整迁移备份、失败自动回滚、隐藏 Tauri 命令桥和重启持久化已经在隔离根验证。南烛枫于 2026-07-27 分别授权后，正式 `D:\南枫知识库` 已完成 migration v3 和独立只读复核；BAT 已完成知识工作区、长正文、收藏恢复、附件打开入口、隔离批量导入和优雅退出验收；性能优化与本地 NSIS 全新安装、旧版升级、运行中保护、正式数据保留及卸载也已验证。当前最重要的边界：**性能优化 BAT 等待南烛枫主观确认；GitHub 发布未执行。**
+完整迁移备份、失败自动回滚、隐藏 Tauri 命令桥和重启持久化已经在隔离根验证。南烛枫于 2026-07-27 分别授权后，正式 `D:\南枫知识库` 已完成 migration v3 和独立只读复核；BAT 已完成知识工作区、长正文、收藏恢复、附件打开入口、隔离批量导入和优雅退出验收；南烛枫已确认性能优化后“流畅度好多了”。本轮进一步完成收录箱独立滚动、统一正文渲染、领域/主题编辑和导入自动分类。当前最重要的边界：**新 BAT 等待南烛枫确认外部图片/链接前台唤起；GitHub 发布未执行。**
 
 ## 二、已实现的当前代码事实
 
@@ -57,13 +57,17 @@
 - 浏览器没有 Tauri 桥接时只显示诚实空状态，不注入业务假数据。
 - 收录箱列表默认只加载 120 条轻量摘要，完整正文仅在选中后读取；超过 20,000 字默认使用流畅预览，用户可主动展开。
 - 切换来源会先清空旧正文，避免一帧显示上一条内容；非来源页不再预取旧记录详情、版本和附件。
+- 桌面宽屏收录箱只让左侧来源列表滚动；页头和右侧阅读/分类卡保持固定。正文区占用分类区之外的剩余高度，主题归属区独立滚动。
+- 当前判断、普通 TXT/Markdown、Claude/ChatGPT 等平台会话统一经过 `MarkdownContent` 和 `ReadableMessageContent`；自然换行、标题、列表、链接与角色卡不再由页面各写一套格式。
 
 ### 已接入的知识能力
 
-- Domain、任意深度 Topic/Subtopic 创建与读取。
+- Domain、任意深度 Topic/Subtopic 创建、读取和编辑；重命名或修改描述保留原 ID 与已有关系。
 - legacy Record 幂等生成 Source Item 并进入收录箱。
 - 分类建议持久化、人工确认、操作日志与撤销。
 - 分类入口通过一个正式 Tauri 命令读取 SQLite 中的主题、别名/实体规则、用户规则、历史确认和归一化 FTS5/BM25 信号，再统一交给 `classifySource` 评分。
+- 新导入成功后由 `knowledgeAutoOrganizer` 对新增 Source Item 去重并生成建议；没有主题时先增量启用既有可编辑个人目录。只有 `auto_eligible`（≥90）建议自动确认并记录可撤销操作，其余保留人工确认。
+- 收录箱提供“自动整理已加载来源”，用于对已有待整理来源补算建议；不改写来源正文。
 - 可审阅个人目录提案经用户勾选确认后才增量写入；重复确认幂等，不覆盖已有主题。
 - 主题别名、实体词典和分类规则具备正式 CRUD；分类纠正保存明确反馈并继续可撤销。
 - 主题判断快照、证据、待验证问题。
@@ -86,6 +90,7 @@
 - 导入预览有界；确认时由 Rust 重读归档原件，不把完整正文往返 WebView。
 - 远程 Markdown 图片默认不自动联网。
 - 附件打开、删除和恢复限制在 canonical 受控路径。
+- 图片附件和外部链接统一由 Rust `external_open` 所有；Windows 使用 `AllowSetForegroundWindow` 后直接调用 `ShellExecuteExW + SW_SHOWNORMAL`，不再经 PowerShell `Start-Process` 中转。
 - 完整迁移备份协议 v2 逐文件记录 SHA-256；旧版无哈希备份只可预览。
 - 备份和恢复使用后台工作线程，并在恢复前检查空间、文件集合、大小和哈希。
 - 大型 Windows 备份不再依赖构建目录原子改名；最终目录以 `.building` 标记未完成，manifest 最后写入，检查器拒绝仍带标记的备份。
@@ -126,6 +131,8 @@
 - PNG 与 WAV 附件登记可见并能调用 Windows 打开流程；本机没有对应默认应用，因此停在“选择应用”并取消。
 - 正式根的批量导入页和多文件选择器已打开并取消，未创建新导入任务。
 - 隔离根通过 BAT 选择 JSON 与 Markdown 两个脱敏文件，预览 3 条并成功导入 3 条；migration 1/2/3、3 Record、3 Source Item、`integrity_check=ok`、外键 0。
+- 本轮另在 `.runtime-qa/visible-layout-auto-20260727-qa1/data` 预览并导入 12 条脱敏 JSON 记录；成功 12、跳过 0、失败 0。导入后自动建立可编辑默认目录，分析 12 条并保留 12 条待确认建议。
+- 可见收录箱确认左侧列表独立滚动，页头和右侧正文/主题归属卡不随左侧移动；浏览器端契约进一步精确验证页头和右卡位移为 0。
 - 两次独立普通关闭分别约 0.52 秒和 1.55 秒完成退出。
 - 收藏恢复会更新该记录的 `updated_at`，因此当前数据库 SHA-256 为 `37cf4e9278f9afad5d1cedbf4d593a7b0341c518c7b3f8865b8554f3a7ca6b48`；计数、migration、完整性、外键和最终收藏状态保持正确。
 - 脱敏摘要：`docs/audits/2026-07-27-visible-bat-acceptance/summary.md`。
@@ -135,7 +142,9 @@
 - 性能根因是启动时向 React 传输最多 500 条完整 `original_text`，并在收录箱页预取旧记录详情、版本和附件。
 - `d3fae13` 将列表改为轻量摘要、120 条分页和选中后正文按需读取；`ab91841` 增加切换清空与 20,000 字流畅预览。
 - 当前 BAT：`启动南枫知识库-测试版.bat`；其测试 EXE 位于被忽略的 `.runtime-qa/knowledge-base-build/release/`。
-- 可见只读检查确认正式库首屏 120 条、长正文预览和展开/恢复按钮工作；用户主观流畅度确认仍待完成。
+- 可见只读检查确认正式库首屏 120 条、长正文预览和展开/恢复按钮工作；南烛枫已确认流畅度明显改善。
+- 本轮 BAT 测试 EXE 已在 `.runtime-qa/knowledge-base-build/release/nanfeng-knowledge-base.exe` 重新生成。外部打开已改用 Windows 原生 ShellExecute；自动桌面检查在点击测试链接后因无法可靠确认浏览器 URL 而按安全规则停止，因此“浏览器/图片查看器是否直接前台显示”仍由南烛枫用 BAT 最终确认。
+- 脱敏摘要：`docs/audits/2026-07-27-reading-auto-organization/summary.md`。
 - NSIS `0.2.0` 安装器 SHA-256：`E252C46EE8728E1FBA1AAFA468E79A2CFC158D6C2BCE7133C4FB75DBD564BF4B`；大小 4,126,201 字节。
 - 全新安装、隔离启动、优雅退出和卸载通过；隔离数据库 migration 1/2/3、完整性 `ok`、外键 0。
 - `0.1.0 → 0.2.0` 升级保留 1 条脱敏记录，并生成 1 个 Source Item 和 1 条收录箱来源；旧程序目录和旧卸载项被移除。
@@ -177,14 +186,14 @@
 
 ## 四、最新验证等级
 
-当前知识生产核心代码、隐藏 IPC 工具和正式迁移维护入口对应 checkpoint `6d0180f`；性能优化对应 `d3fae13`、`ab91841`；安装升级修复对应 `8f6559b`：
+当前知识生产核心代码、隐藏 IPC 工具和正式迁移维护入口对应 checkpoint `6d0180f`；性能优化对应 `d3fae13`、`ab91841`；安装升级修复对应 `8f6559b`；阅读布局、统一正文、前台唤起和自动分类对应 `9965ad5`：
 
 | 验证层级 | 结果 |
 |---|---|
-| 前端单元/领域合同 | 53/53 通过 |
-| Rust/SQLite 合同 | 63/63 通过 |
+| 前端单元/领域合同 | 55/55 通过 |
+| Rust/SQLite 合同 | 65/65 通过 |
 | Sites 回退合同 | 4/4 通过 |
-| Playwright 无界面交互 | 17/17 通过；其中 1 条覆盖知识生产 UI→受控 Tauri 桥参数 |
+| Playwright 无界面交互 | 18/18 通过；新增收录箱独立滚动、右侧固定和统一会话卡合同 |
 | TypeScript | 通过 |
 | Vite 生产构建 | 通过 |
 | `git diff --check` | 通过 |
@@ -194,9 +203,10 @@
 | 最新知识生产命令的真实 Tauri 桥 | 隐藏 WebView2 IPC 通过；新对象写入与强制重启读回通过 |
 | 重启与退出 | 强制进程重启后的持久化通过；可见普通退出两次通过 |
 | 正式数据 migration v3 | 已执行；完整备份、前后 SHA-256、第二次打开幂等、完整性和外键均通过 |
-| 可见 BAT 用户路径 | 启动、知识工作区、长正文、收藏恢复、PNG/WAV 附件打开入口、隔离批量导入和优雅退出通过 |
+| 可见 BAT 用户路径 | 启动、知识工作区、长正文、收藏恢复、附件入口、隔离批量导入、自动目录/建议、独立滚动和优雅退出通过 |
 | 当前版本安装包/升级覆盖/卸载 | 本地 NSIS 全新安装、0.1.0 升级、运行中保护、正式数据保留和卸载通过 |
-| 性能优化 BAT 主观体验 | 待南烛枫确认 |
+| 性能优化 BAT 主观体验 | 南烛枫已确认明显改善 |
+| 外部图片/链接前台显示 | 代码、Rust 合同和生产构建通过；待南烛枫用最新 BAT 确认真实默认应用前台行为 |
 | GitHub 发布 | 未执行 |
 
 不能把自动测试、生产构建或隔离迁移表述为正式数据与完整桌面链路已完成。
@@ -215,7 +225,7 @@
 
 ### P2：发布前用户验收
 
-1. BAT 的功能路径已通过；最新性能优化 BAT 等待南烛枫主观流畅度确认。
+1. BAT 的功能路径和性能主观反馈已通过；最新 BAT 等待南烛枫确认图片/外部链接是否直接出现在前台，并复核本轮阅读布局与自动分类体验。
 2. 本地 NSIS 全新安装、旧版升级、运行中保护、正式数据保留和卸载已通过。
 3. 南烛枫已明确暂不安装 Inno Setup 7；不要自行切换打包链路。
 4. 只有用户明确说“上传”后，才同步默认分支、tag、GitHub Release 和安装器哈希。
@@ -239,7 +249,7 @@
 | 知识仓库 | `src-tauri/src/knowledge/repository.rs` |
 | 只读审计、隔离与正式迁移工具 | `src-tauri/src/knowledge/audit.rs`、`classification_input.rs`、`legacy_preview.rs`、`src-tauri/src/maintenance.rs`、`src-tauri/examples/knowledge_inspect_formal.rs`、`knowledge_migration_apply_formal.rs` |
 | ChatGPT 完整导出 | `src-tauri/src/chatgpt_export.rs`、`src-tauri/src/importer.rs` |
-| 附件和备份 | `src-tauri/src/attachments.rs`、`src-tauri/src/transfer.rs` |
+| 附件、外部打开和备份 | `src-tauri/src/attachments.rs`、`src-tauri/src/external_open.rs`、`src-tauri/src/transfer.rs` |
 | 隔离恢复验收 | `src-tauri/src/maintenance.rs`、`src-tauri/examples/portable_recovery_qa.rs` |
 | 验收合同 | `docs/test-plan.md`、`docs/audits/2026-07-27-knowledge-production-checkpoint/acceptance-matrix.md` |
 
@@ -249,10 +259,10 @@
 - 当前成果位于本地 `codex/nanfeng-knowledge-production-checkpoint-20260727`，不要误回到 `main`。
 - 不执行 `reset --hard`、`clean`、`stash` 或覆盖未知改动。
 - 本分支未推送；不要把“本地 checkpoint”描述成“GitHub 已更新”。
-- 当前代码 checkpoint 为 `b962159`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
+- 当前代码 checkpoint 为 `9965ad5`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
 
 ## 九、下一件事
 
-当前没有继续扩大代码范围的默认任务。下一道门槛是：**由南烛枫运行 `启动南枫知识库-测试版.bat`，主观确认收录箱切换和长正文滚动是否足够流畅。**
+当前没有继续扩大代码范围的默认任务。下一道门槛是：**由南烛枫运行 `启动南枫知识库-测试版.bat`，确认图片和外部链接是否直接出现在前台，并复核独立滚动、统一正文和自动分类体验。**
 
-若仍卡顿，下一轮只复现具体卡顿动作并采样定位；不要凭感觉扩大重构。GitHub 发布必须等待南烛枫明确说“上传”；Inno Setup 7 也保持暂缓。
+若仍有问题，下一轮只复现具体动作并定向修复；不要凭感觉扩大重构。GitHub 发布必须等待南烛枫明确说“上传”；Inno Setup 7 也保持暂缓。
