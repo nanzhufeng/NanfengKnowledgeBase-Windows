@@ -23,7 +23,8 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
 
 if /I "%~1"=="--rebuild" (
   set "RUNNING_APP="
-  tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" 2>nul | find /I "nanfeng-knowledge-base.exe" >nul
+  rem tasklist 的 Image Name 列最多显示 25 个字符，长进程名会显示为 nanfeng-knowledge-base.ex。
+  tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" /NH 2>nul | find /I "nanfeng-knowledge-base" >nul
   if not errorlevel 1 set "RUNNING_APP=1"
   tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
   if not errorlevel 1 set "RUNNING_APP=1"
@@ -75,7 +76,7 @@ if not exist "%APP_EXE%" (
 )
 
 set "RUNNING_APP="
-tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" 2>nul | find /I "nanfeng-knowledge-base.exe" >nul
+tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" /NH 2>nul | find /I "nanfeng-knowledge-base" >nul
 if not errorlevel 1 set "RUNNING_APP=1"
 tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-intelligence.exe" >nul
 if not errorlevel 1 set "RUNNING_APP=1"
@@ -93,7 +94,7 @@ echo [启动] 南枫知识库测试版
 start "" /D "%PROJECT_DIR%" "%APP_EXE%"
 
 timeout /t 2 /nobreak >nul
-tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" 2>nul | find /I "nanfeng-knowledge-base.exe" >nul
+tasklist /FI "IMAGENAME eq nanfeng-knowledge-base.exe" /NH 2>nul | find /I "nanfeng-knowledge-base" >nul
 if errorlevel 1 (
   >> "%LAUNCH_LOG%" echo 程序启动后两秒内退出
   echo [失败] 程序启动后立即退出，未能打开主界面。
