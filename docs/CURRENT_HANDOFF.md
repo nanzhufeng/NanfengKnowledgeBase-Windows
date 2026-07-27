@@ -5,7 +5,8 @@
 > 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 > 当前分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
 > 代码 checkpoint：`bf7d97e`
-> checkpoint 记录提交：`6c35261`
+> 最新交接提交：`c60120d`
+> 当前工作区：本轮完整恢复与隐藏 Tauri 验收修改尚未提交
 > 远端状态：本分支无 upstream，未推送；`origin/main` 不包含本轮知识生产链路
 
 ## 新对话读取顺序
@@ -41,7 +42,7 @@
 
 正式应用默认显示收录箱、主题浏览器和整理工作台；假数据原型不再是运行入口。旧 `Record` 继续作为来源档案兼容层，知识结构由独立表和仓库管理。
 
-当前最重要的边界：**代码和 901 条隔离副本已验证，正式 `D:\南枫知识库` 尚未执行 migration v3。**
+完整迁移备份、失败自动回滚、隐藏 Tauri 命令桥和重启持久化已经在新的隔离根验证。当前最重要的边界：**正式升级前 P0 隔离证据已关闭，但正式 `D:\南枫知识库` 尚未执行 migration v3，必须等待南烛枫单独明确授权。**
 
 ## 二、已实现的当前代码事实
 
@@ -75,6 +76,8 @@
 - 附件打开、删除和恢复限制在 canonical 受控路径。
 - 完整迁移备份协议 v2 逐文件记录 SHA-256；旧版无哈希备份只可预览。
 - 备份和恢复使用后台工作线程，并在恢复前检查空间、文件集合、大小和哈希。
+- 大型 Windows 备份不再依赖构建目录原子改名；最终目录以 `.building` 标记未完成，manifest 最后写入，检查器拒绝仍带标记的备份。
+- 隔离维护工具可在数据库与导入原件替换后注入确定性故障，用于验证自动回滚；生产 Tauri 恢复命令不暴露该故障入口。
 
 ## 三、数据现状与保护边界
 
@@ -103,22 +106,35 @@
 
 隔离工具要求 `.isolated-knowledge-migration-test` 标记，并拒绝正式新旧数据根。
 
+### 完整恢复与隐藏 Tauri 证据
+
+- 完整恢复根：`.runtime-qa/portable-recovery-20260727-qa4`
+- 隐藏 Tauri 根：`.runtime-qa/hidden-tauri-bridge-20260727-qa1`
+- 完整备份 manifest：6 个受校验文件，653,213,880 字节，`verified_sha256`
+- 成功恢复、故障自动回滚和数据库重开均保持 901 Record、901 Source Item、446 附件登记、migration 1/2/3、`integrity_check=ok`、外键 0。
+- 脱敏合成导入原件、附件和界面偏好在恢复后哈希一致；故障回滚后的受保护文件哈希精确一致。
+- 实际隐藏 Tauri/WebView2 经正式 IPC 创建脱敏 Domain/Topic；强制结束后第二次隐藏启动仍读到相同 ID，收录箱 901、完整性 `ok`。
+- capability 不允许 WebView 自行关闭窗口，因此只验证了强制进程重启后的 SQLite 恢复与持久化，未验证优雅退出。
+- 脱敏摘要：`docs/audits/2026-07-27-portable-recovery-hidden-tauri/summary.md`
+
 ## 四、最新验证等级
 
-以下结果对应代码 checkpoint `bf7d97e`：
+基础知识生产代码对应 checkpoint `bf7d97e`；恢复修复和本轮证据当前尚未提交：
 
 | 验证层级 | 结果 |
 |---|---|
 | 前端单元/领域合同 | 46/46 通过 |
-| Rust/SQLite 合同 | 53/53 通过 |
+| Rust/SQLite 合同 | 55/55 通过 |
 | Sites 回退合同 | 4/4 通过 |
 | Playwright 无界面交互 | 16/16 通过 |
 | TypeScript | 通过 |
 | Vite 生产构建 | 通过 |
 | `git diff --check` | 通过 |
 | 901 条隔离 migration v3 | 通过 |
-| 最新知识 UI 的真实 Tauri 命令桥 | 未执行 |
-| 完整迁移备份真实恢复演练 | 未执行 |
+| 完整迁移备份创建/检查/恢复 | 隔离 qa4 通过 |
+| 故障注入后的自动回滚 | 隔离 qa4 通过 |
+| 最新知识 UI 的真实 Tauri 命令桥 | 隐藏 WebView2 IPC 通过 |
+| 重启持久化 | 强制进程重启后通过；优雅退出未验证 |
 | 正式数据 migration v3 | 未执行 |
 | 当前版本安装包/升级覆盖 | 未执行 |
 | GitHub 发布 | 未执行 |
@@ -127,11 +143,9 @@
 
 ## 五、仍需继续处理
 
-### P0：正式数据升级前必须关闭
+### P0：等待单独授权
 
-1. 在新的 `.runtime-qa` 隔离根完成完整迁移备份创建、检查、恢复和失败回滚演练。
-2. 以隐藏后台 Tauri 进程验证最新知识命令桥、migration v3 和重启持久化。
-3. 验证后再次核对数据库、附件、偏好、哈希、完整性和外键。
+完整恢复、失败回滚、隐藏命令桥、重启持久化、数据库/附件登记/偏好/哈希/完整性/外键的隔离验证已完成。下一步涉及正式 `D:\南枫知识库` migration v3，必须由南烛枫在新一轮明确授权；未授权时停止。
 
 ### P1：知识系统生产能力
 
@@ -167,6 +181,7 @@
 | 只读审计与隔离工具 | `src-tauri/src/knowledge/audit.rs`、`classification_input.rs`、`legacy_preview.rs`、`src-tauri/src/maintenance.rs` |
 | ChatGPT 完整导出 | `src-tauri/src/chatgpt_export.rs`、`src-tauri/src/importer.rs` |
 | 附件和备份 | `src-tauri/src/attachments.rs`、`src-tauri/src/transfer.rs` |
+| 隔离恢复验收 | `src-tauri/src/maintenance.rs`、`src-tauri/examples/portable_recovery_qa.rs` |
 | 验收合同 | `docs/test-plan.md`、`docs/audits/2026-07-27-knowledge-production-checkpoint/acceptance-matrix.md` |
 
 ## 八、接手时的 Git 规则
@@ -175,10 +190,10 @@
 - 当前成果位于本地 `codex/nanfeng-knowledge-production-checkpoint-20260727`，不要误回到 `main`。
 - 不执行 `reset --hard`、`clean`、`stash` 或覆盖未知改动。
 - 本分支未推送；不要把“本地 checkpoint”描述成“GitHub 已更新”。
-- 本文件所在 HEAD 是最新交接包；接手时以 `git log -1` 为准，不需要把完整聊天历史重新读取。
+- 当前 HEAD 仍为 `c60120d`，本轮恢复验收修改尚未提交；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
 
 ## 九、下一件事
 
-唯一候选任务：**隔离完整恢复演练 + 隐藏 Tauri 命令桥与重启持久化验证。**
+本轮唯一任务已经完成。**不要自动执行下一项。**
 
-直接使用 `docs/next-codex-prompt.md` 开启新对话。该任务完成并有可恢复证据前，不得进入正式数据 migration v3、安装包或 GitHub 发布。
+正式数据 migration v3 是下一授权门槛；只有南烛枫明确授权后，才可根据新的任务合同处理正式升级。安装包和 GitHub 发布仍不在范围内。直接使用 `docs/next-codex-prompt.md` 开启新对话进行状态确认。

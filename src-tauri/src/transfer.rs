@@ -18,6 +18,11 @@ const LEGACY_PORTABLE_BACKUP_FORMAT: &str = "nanfeng-intelligence-portable-backu
 const PORTABLE_BACKUP_FORMAT_VERSION: i64 = 2;
 const HASH_BUFFER_BYTES: usize = 256 * 1024;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PortableRestoreFault {
+    AfterImports,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PortableFileManifestEntry {
@@ -390,27 +395,29 @@ pub fn create_portable_backup(
             available_bytes as f64 / 1_073_741_824_f64,
         )));
     }
-    let stage = paths
-        .backups
-        .join(format!(".{folder_name}.building-{}", std::process::id()));
-    if stage.exists() {
-        fs::remove_dir_all(&stage)?;
+    if destination.exists() {
+        return Err(AppError::Conflict(format!(
+            "完整迁移备份目标已存在：{}",
+            destination.display()
+        )));
     }
-    fs::create_dir_all(stage.join("data"))?;
+    fs::create_dir_all(destination.join("data"))?;
+    let building_marker = destination.join(".building");
+    fs::write(&building_marker, b"portable-backup-building-v1")?;
     let build_result = (|| -> AppResult<()> {
-        let database_path = stage.join("data").join("app.db");
+        let database_path = destination.join("data").join("app.db");
         backup_connection(connection, &database_path)?;
         validate_database_file(&database_path)?;
-        copy_directory_contents(&paths.imports_raw, &stage.join("imports").join("raw"))?;
-        copy_directory_contents(&paths.attachments, &stage.join("attachments"))?;
+        copy_directory_contents(&paths.imports_raw, &destination.join("imports").join("raw"))?;
+        copy_directory_contents(&paths.attachments, &destination.join("attachments"))?;
         atomic_write(
-            &stage.join("preferences.json"),
+            &destination.join("preferences.json"),
             serde_json::to_string_pretty(&preferences)?.as_bytes(),
         )?;
         let record_count = connection.query_row("SELECT COUNT(*) FROM records", [], |row| {
             row.get::<_, i64>(0)
         })?;
-        let files = portable_file_manifest(&stage)?;
+        let files = portable_file_manifest(&destination)?;
         let manifest = serde_json::json!({
             "format": PORTABLE_BACKUP_FORMAT,
             "formatVersion": PORTABLE_BACKUP_FORMAT_VERSION,
@@ -425,16 +432,16 @@ pub fn create_portable_backup(
             "files": files,
         });
         atomic_write(
-            &stage.join("manifest.json"),
+            &destination.join("manifest.json"),
             serde_json::to_string_pretty(&manifest)?.as_bytes(),
         )?;
         Ok(())
     })();
     if let Err(error) = build_result {
-        let _ = fs::remove_dir_all(&stage);
+        let _ = fs::remove_dir_all(&destination);
         return Err(error);
     }
-    fs::rename(&stage, &destination)?;
+    fs::remove_file(building_marker)?;
     let (file_count, total_bytes) = directory_inventory(&destination)?;
     let record_count = connection.query_row("SELECT COUNT(*) FROM records", [], |row| {
         row.get::<_, i64>(0)
@@ -453,6 +460,11 @@ pub fn inspect_portable_backup(source_path: impl AsRef<Path>) -> AppResult<Porta
     if !source_path.is_dir() {
         return Err(AppError::NotFound(
             "选择的完整迁移备份文件夹不存在".to_string(),
+        ));
+    }
+    if source_path.join(".building").exists() {
+        return Err(AppError::Validation(
+            "完整迁移备份仍在创建中或上次创建未完成".to_string(),
         ));
     }
     let manifest_path = source_path.join("manifest.json");
@@ -534,7 +546,38 @@ pub fn restore_portable_backup(
     source_path: impl AsRef<Path>,
     current_preferences_json: &str,
 ) -> AppResult<PortableRestoreResult> {
-    let source_path = source_path.as_ref();
+    restore_portable_backup_inner(
+        connection,
+        paths,
+        source_path.as_ref(),
+        current_preferences_json,
+        None,
+    )
+}
+
+pub(crate) fn restore_portable_backup_with_fault_injection(
+    connection: &mut Connection,
+    paths: &AppPaths,
+    source_path: impl AsRef<Path>,
+    current_preferences_json: &str,
+    fault: PortableRestoreFault,
+) -> AppResult<PortableRestoreResult> {
+    restore_portable_backup_inner(
+        connection,
+        paths,
+        source_path.as_ref(),
+        current_preferences_json,
+        Some(fault),
+    )
+}
+
+fn restore_portable_backup_inner(
+    connection: &mut Connection,
+    paths: &AppPaths,
+    source_path: &Path,
+    current_preferences_json: &str,
+    fault: Option<PortableRestoreFault>,
+) -> AppResult<PortableRestoreResult> {
     let preview = inspect_portable_backup(source_path)?;
     if !preview.restorable {
         return Err(AppError::Validation(
@@ -548,10 +591,14 @@ pub fn restore_portable_backup(
         current_preferences_json,
         "恢复前完整安全备份",
     )?;
-    let apply_result = apply_portable_backup(connection, paths, source_path);
+    let apply_result = apply_portable_backup(connection, paths, source_path, fault);
     if let Err(error) = apply_result {
-        let rollback =
-            apply_portable_backup(connection, paths, Path::new(&safety_backup.folder_path));
+        let rollback = apply_portable_backup(
+            connection,
+            paths,
+            Path::new(&safety_backup.folder_path),
+            None,
+        );
         return match rollback {
             Ok(_) => Err(error),
             Err(rollback_error) => Err(AppError::Conflict(format!(
@@ -561,7 +608,12 @@ pub fn restore_portable_backup(
     }
     let restored_integrity = database::integrity_check(connection)?;
     if restored_integrity != "ok" {
-        let _ = apply_portable_backup(connection, paths, Path::new(&safety_backup.folder_path));
+        let _ = apply_portable_backup(
+            connection,
+            paths,
+            Path::new(&safety_backup.folder_path),
+            None,
+        );
         return Err(AppError::Conflict(format!(
             "完整恢复后的数据库检查失败：{restored_integrity}；已尝试回滚"
         )));
@@ -595,6 +647,7 @@ fn apply_portable_backup(
     connection: &mut Connection,
     paths: &AppPaths,
     source_path: &Path,
+    fault: Option<PortableRestoreFault>,
 ) -> AppResult<()> {
     inspect_portable_backup(source_path)?;
     restore_connection_from_path(connection, &source_path.join("data").join("app.db"))?;
@@ -605,6 +658,11 @@ fn apply_portable_backup(
          PRAGMA synchronous = NORMAL;",
     )?;
     replace_directory_contents(&source_path.join("imports").join("raw"), &paths.imports_raw)?;
+    if fault == Some(PortableRestoreFault::AfterImports) {
+        return Err(AppError::Conflict(
+            "隔离恢复演练注入故障：数据库与导入原件替换后停止".to_string(),
+        ));
+    }
     replace_directory_contents(&source_path.join("attachments"), &paths.attachments)?;
     Ok(())
 }
@@ -704,7 +762,10 @@ fn collect_portable_files(
             continue;
         }
         if !file_type.is_file()
-            || path.file_name().and_then(|name| name.to_str()) == Some("manifest.json")
+            || matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("manifest.json" | ".building")
+            )
         {
             continue;
         }
@@ -1281,6 +1342,80 @@ mod tests {
         assert!(error.to_string().contains("校验失败"));
         assert!(
             restore_portable_backup(&mut connection, &paths, &backup.folder_path, "{}",).is_err()
+        );
+    }
+
+    #[test]
+    fn portable_backup_with_building_marker_is_not_restorable() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let connection = database::open_database(&paths.database).expect("database");
+        let backup =
+            create_portable_backup(&connection, &paths, "{}", "未完成标记").expect("backup");
+        let marker = Path::new(&backup.folder_path).join(".building");
+        fs::write(&marker, "incomplete").expect("marker");
+
+        let error =
+            inspect_portable_backup(&backup.folder_path).expect_err("building backup must fail");
+
+        assert!(error.to_string().contains("仍在创建中"));
+        fs::remove_file(marker).expect("remove marker");
+        assert!(
+            inspect_portable_backup(&backup.folder_path)
+                .expect("completed backup")
+                .restorable
+        );
+    }
+
+    #[test]
+    fn portable_restore_rolls_back_database_and_files_after_injected_failure() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        fs::write(paths.imports_raw.join("source.txt"), "backup import").expect("import");
+        fs::write(paths.attachments.join("asset.txt"), "backup attachment").expect("attachment");
+        let backup =
+            create_portable_backup(&connection, &paths, "{}", "故障注入源").expect("backup");
+
+        connection
+            .execute_batch(
+                "CREATE TABLE qa_rollback_guard(value TEXT NOT NULL);
+                 INSERT INTO qa_rollback_guard(value) VALUES ('protected');",
+            )
+            .expect("guard");
+        fs::write(paths.imports_raw.join("source.txt"), "protected import")
+            .expect("protected import");
+        fs::write(paths.attachments.join("asset.txt"), "protected attachment")
+            .expect("protected attachment");
+
+        let error = restore_portable_backup_with_fault_injection(
+            &mut connection,
+            &paths,
+            &backup.folder_path,
+            r#"{"qa":"protected"}"#,
+            PortableRestoreFault::AfterImports,
+        )
+        .expect_err("fault must fail");
+
+        assert!(error.to_string().contains("隔离恢复演练注入故障"));
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM qa_rollback_guard", [], |row| row
+                    .get::<_, String>(0))
+                .expect("guard restored"),
+            "protected"
+        );
+        assert_eq!(
+            fs::read_to_string(paths.imports_raw.join("source.txt")).expect("import restored"),
+            "protected import"
+        );
+        assert_eq!(
+            fs::read_to_string(paths.attachments.join("asset.txt")).expect("attachment restored"),
+            "protected attachment"
+        );
+        assert_eq!(
+            database::integrity_check(&connection).expect("integrity"),
+            "ok"
         );
     }
 

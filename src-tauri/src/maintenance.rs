@@ -52,6 +52,50 @@ pub struct KnowledgeMigrationMaintenanceReport {
     pub migration_backup: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableRecoveryQaSnapshot {
+    pub database_sha256: String,
+    pub import_sha256: String,
+    pub attachment_sha256: String,
+    pub preferences_sha256: String,
+    pub schema_versions: Vec<i64>,
+    pub active_records: i64,
+    pub source_items: i64,
+    pub inbox_sources: i64,
+    pub attachment_rows: i64,
+    pub integrity_check: String,
+    pub foreign_key_violations: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableRecoveryQaReport {
+    pub source_root: String,
+    pub qa_root: String,
+    pub source_database_sha256: String,
+    pub baseline: PortableRecoveryQaSnapshot,
+    pub backup_folder: String,
+    pub backup_manifest_sha256: String,
+    pub backup_manifest_file_count: usize,
+    pub backup_manifest_bytes: u64,
+    pub backup_inventory_file_count: u64,
+    pub backup_inventory_bytes: u64,
+    pub backup_content_integrity: String,
+    pub restored: PortableRecoveryQaSnapshot,
+    pub restored_preferences_match: bool,
+    pub successful_restore_log: String,
+    pub fault_injection_error: String,
+    pub rollback_safety_backup: String,
+    pub rollback_safety_manifest_verified: bool,
+    pub rollback_protected: PortableRecoveryQaSnapshot,
+    pub rollback_after_failure: PortableRecoveryQaSnapshot,
+    pub rollback_exact_files_match: bool,
+    pub restart: PortableRecoveryQaSnapshot,
+    pub restart_persisted: bool,
+    pub receipt_path: String,
+}
+
 pub fn migrate_isolated_knowledge_copy(
     data_root: impl AsRef<Path>,
 ) -> AppResult<KnowledgeMigrationMaintenanceReport> {
@@ -120,6 +164,274 @@ pub fn migrate_isolated_knowledge_copy(
         foreign_key_violations,
         migration_backup: migration_backup.to_string_lossy().into_owned(),
     })
+}
+
+pub fn run_isolated_portable_recovery_qa(
+    source_root: impl AsRef<Path>,
+    qa_root: impl AsRef<Path>,
+) -> AppResult<PortableRecoveryQaReport> {
+    const BASELINE_PREFERENCES: &str = r#"{"nanfeng-knowledge-base:qa-layout":"three-column","nanfeng-knowledge-base:qa-density":"compact"}"#;
+    const MUTATED_PREFERENCES: &str =
+        r#"{"nanfeng-knowledge-base:qa-layout":"mutated-before-restore"}"#;
+    const ROLLBACK_PREFERENCES: &str =
+        r#"{"nanfeng-knowledge-base:qa-layout":"rollback-protected"}"#;
+    const SYNTHETIC_IMPORT: &str = "qa-import-source.txt";
+    const SYNTHETIC_ATTACHMENT: &str = "qa-attachment.bin";
+
+    let source_root = require_isolated_root(source_root.as_ref(), "隔离输入目录")?;
+    let qa_root = require_isolated_root(qa_root.as_ref(), "隔离演练目录")?;
+    require_isolated_marker(&source_root)?;
+    if qa_root.exists() {
+        return Err(AppError::Conflict(format!(
+            "隔离演练目录已存在，拒绝覆盖：{}",
+            qa_root.display()
+        )));
+    }
+    fs::create_dir(&qa_root)?;
+    fs::write(
+        qa_root.join(ISOLATED_MIGRATION_MARKER),
+        b"portable-recovery-qa-v1",
+    )?;
+
+    let paths = AppPaths::from_root(&qa_root)?;
+    let source_database = source_root.join("data").join("app.db");
+    if !source_database.is_file() {
+        return Err(AppError::NotFound(format!(
+            "隔离输入数据库不存在：{}",
+            source_database.display()
+        )));
+    }
+    let source_database_sha256 = sha256_file(&source_database)?;
+    let source_connection =
+        Connection::open_with_flags(&source_database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut target_connection = Connection::open(&paths.database)?;
+    database::copy_database(&source_connection, &mut target_connection)?;
+    drop(target_connection);
+    drop(source_connection);
+
+    fs::write(
+        paths.imports_raw.join(SYNTHETIC_IMPORT),
+        b"portable recovery qa import baseline\n",
+    )?;
+    fs::write(
+        paths.attachments.join(SYNTHETIC_ATTACHMENT),
+        b"portable recovery qa attachment baseline\n",
+    )?;
+
+    let mut connection = database::open_database(&paths.database)?;
+    checkpoint_database(&connection)?;
+    let baseline = portable_recovery_snapshot(
+        &connection,
+        &paths,
+        BASELINE_PREFERENCES,
+        SYNTHETIC_IMPORT,
+        SYNTHETIC_ATTACHMENT,
+    )?;
+
+    let backup = transfer::create_portable_backup(
+        &connection,
+        &paths,
+        BASELINE_PREFERENCES,
+        "隔离完整迁移备份演练",
+    )?;
+    let backup_preview = transfer::inspect_portable_backup(&backup.folder_path)?;
+    let backup_folder = PathBuf::from(&backup.folder_path);
+    let backup_manifest_path = backup_folder.join("manifest.json");
+    let backup_manifest_sha256 = sha256_file(&backup_manifest_path)?;
+    let backup_manifest =
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&backup_manifest_path)?)?;
+    let backup_manifest_files = backup_manifest
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| AppError::Validation("完整迁移备份缺少逐文件清单".to_string()))?;
+    let backup_manifest_file_count = backup_manifest_files.len();
+    let backup_manifest_bytes = backup_manifest_files
+        .iter()
+        .filter_map(|entry| entry.get("sizeBytes").and_then(serde_json::Value::as_u64))
+        .sum();
+
+    connection.execute_batch(
+        "CREATE TABLE qa_restore_mutation(value TEXT NOT NULL);
+         INSERT INTO qa_restore_mutation(value) VALUES ('must-disappear-after-restore');",
+    )?;
+    fs::write(
+        paths.imports_raw.join(SYNTHETIC_IMPORT),
+        b"mutated import before successful restore\n",
+    )?;
+    fs::write(
+        paths.attachments.join(SYNTHETIC_ATTACHMENT),
+        b"mutated attachment before successful restore\n",
+    )?;
+
+    let restored_result = transfer::restore_portable_backup(
+        &mut connection,
+        &paths,
+        &backup.folder_path,
+        MUTATED_PREFERENCES,
+    )?;
+    checkpoint_database(&connection)?;
+    let restored = portable_recovery_snapshot(
+        &connection,
+        &paths,
+        &restored_result.preferences_json,
+        SYNTHETIC_IMPORT,
+        SYNTHETIC_ATTACHMENT,
+    )?;
+    let restore_mutation_exists = table_exists(&connection, "qa_restore_mutation")?;
+    let restored_preferences_match =
+        json_values_equal(&restored_result.preferences_json, BASELINE_PREFERENCES)?;
+    if restore_mutation_exists
+        || restored.import_sha256 != baseline.import_sha256
+        || restored.attachment_sha256 != baseline.attachment_sha256
+        || restored.active_records != baseline.active_records
+        || restored.source_items != baseline.source_items
+        || restored.attachment_rows != baseline.attachment_rows
+        || !restored_preferences_match
+    {
+        return Err(AppError::Conflict(
+            "完整迁移备份恢复后的数据库、文件或界面偏好与基线不一致".to_string(),
+        ));
+    }
+
+    connection.execute_batch(
+        "CREATE TABLE qa_rollback_guard(value TEXT NOT NULL);
+         INSERT INTO qa_rollback_guard(value) VALUES ('rollback-protected-state');",
+    )?;
+    fs::write(
+        paths.imports_raw.join(SYNTHETIC_IMPORT),
+        b"rollback protected import\n",
+    )?;
+    fs::write(
+        paths.attachments.join(SYNTHETIC_ATTACHMENT),
+        b"rollback protected attachment\n",
+    )?;
+    checkpoint_database(&connection)?;
+    let rollback_protected = portable_recovery_snapshot(
+        &connection,
+        &paths,
+        ROLLBACK_PREFERENCES,
+        SYNTHETIC_IMPORT,
+        SYNTHETIC_ATTACHMENT,
+    )?;
+
+    let fault_injection_error = match transfer::restore_portable_backup_with_fault_injection(
+        &mut connection,
+        &paths,
+        &backup.folder_path,
+        ROLLBACK_PREFERENCES,
+        transfer::PortableRestoreFault::AfterImports,
+    ) {
+        Ok(_) => {
+            return Err(AppError::Conflict(
+                "隔离故障注入未让恢复返回失败".to_string(),
+            ))
+        }
+        Err(error) => error.to_string(),
+    };
+    if !fault_injection_error.contains("隔离恢复演练注入故障") {
+        return Err(AppError::Conflict(format!(
+            "恢复失败不是预期的隔离故障注入：{fault_injection_error}"
+        )));
+    }
+    checkpoint_database(&connection)?;
+    let rollback_after_failure = portable_recovery_snapshot(
+        &connection,
+        &paths,
+        ROLLBACK_PREFERENCES,
+        SYNTHETIC_IMPORT,
+        SYNTHETIC_ATTACHMENT,
+    )?;
+    let rollback_guard_preserved = connection.query_row(
+        "SELECT COUNT(*) FROM qa_rollback_guard WHERE value = 'rollback-protected-state'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? == 1;
+    let rollback_exact_files_match = rollback_after_failure.import_sha256
+        == rollback_protected.import_sha256
+        && rollback_after_failure.attachment_sha256 == rollback_protected.attachment_sha256;
+    if !rollback_guard_preserved
+        || !rollback_exact_files_match
+        || rollback_after_failure.active_records != rollback_protected.active_records
+        || rollback_after_failure.source_items != rollback_protected.source_items
+        || rollback_after_failure.attachment_rows != rollback_protected.attachment_rows
+        || rollback_after_failure.integrity_check != "ok"
+        || rollback_after_failure.foreign_key_violations != 0
+    {
+        return Err(AppError::Conflict(
+            "故障注入后的自动回滚没有完整保留受保护状态".to_string(),
+        ));
+    }
+
+    let rollback_safety_backup = newest_matching_directory(&paths.backups, "恢复前完整安全备份_")?
+        .ok_or_else(|| AppError::Conflict("故障注入没有生成回滚安全备份".to_string()))?;
+    let rollback_safety_preview = transfer::inspect_portable_backup(&rollback_safety_backup)?;
+    let rollback_safety_preferences =
+        fs::read_to_string(rollback_safety_backup.join("preferences.json"))?;
+    let rollback_safety_manifest_verified = rollback_safety_preview.restorable
+        && rollback_safety_preview.content_integrity == "verified_sha256"
+        && json_values_equal(&rollback_safety_preferences, ROLLBACK_PREFERENCES)?;
+    if !rollback_safety_manifest_verified {
+        return Err(AppError::Conflict(
+            "故障注入的回滚安全备份未通过逐文件或界面偏好检查".to_string(),
+        ));
+    }
+
+    drop(connection);
+    let restart_connection = database::open_database(&paths.database)?;
+    checkpoint_database(&restart_connection)?;
+    let restart = portable_recovery_snapshot(
+        &restart_connection,
+        &paths,
+        ROLLBACK_PREFERENCES,
+        SYNTHETIC_IMPORT,
+        SYNTHETIC_ATTACHMENT,
+    )?;
+    let restart_persisted = restart_connection.query_row(
+        "SELECT COUNT(*) FROM qa_rollback_guard WHERE value = 'rollback-protected-state'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? == 1
+        && restart.import_sha256 == rollback_protected.import_sha256
+        && restart.attachment_sha256 == rollback_protected.attachment_sha256
+        && restart.schema_versions == vec![1, 2, 3]
+        && restart.integrity_check == "ok"
+        && restart.foreign_key_violations == 0;
+    if !restart_persisted {
+        return Err(AppError::Conflict(
+            "隔离恢复数据在关闭并重开数据库后没有保持一致".to_string(),
+        ));
+    }
+    drop(restart_connection);
+
+    let receipt_path = paths.logs.join("portable-recovery-qa-report.json");
+    let mut report = PortableRecoveryQaReport {
+        source_root: source_root.to_string_lossy().into_owned(),
+        qa_root: qa_root.to_string_lossy().into_owned(),
+        source_database_sha256,
+        baseline,
+        backup_folder: backup.folder_path,
+        backup_manifest_sha256,
+        backup_manifest_file_count,
+        backup_manifest_bytes,
+        backup_inventory_file_count: backup.file_count,
+        backup_inventory_bytes: backup.total_bytes,
+        backup_content_integrity: backup_preview.content_integrity,
+        restored,
+        restored_preferences_match,
+        successful_restore_log: restored_result.log_path,
+        fault_injection_error,
+        rollback_safety_backup: rollback_safety_backup.to_string_lossy().into_owned(),
+        rollback_safety_manifest_verified,
+        rollback_protected,
+        rollback_after_failure,
+        rollback_exact_files_match,
+        restart,
+        restart_persisted,
+        receipt_path: receipt_path.to_string_lossy().into_owned(),
+    };
+    write_new_json(&receipt_path, &report)?;
+    report.receipt_path = receipt_path.to_string_lossy().into_owned();
+    Ok(report)
 }
 
 pub fn import_chatgpt_export_with_backup(
@@ -336,6 +648,116 @@ fn require_absolute_path(path: &Path, label: &str) -> AppResult<PathBuf> {
     Ok(path.to_path_buf())
 }
 
+fn require_isolated_root(path: &Path, label: &str) -> AppResult<PathBuf> {
+    let path = require_absolute_path(path, label)?;
+    let normalized = path.to_string_lossy().replace('/', "\\");
+    if normalized.eq_ignore_ascii_case(r"D:\南枫知识库")
+        || normalized.eq_ignore_ascii_case(r"D:\南枫情报台")
+    {
+        return Err(AppError::Validation(format!("{label}拒绝使用正式数据目录")));
+    }
+    if !path
+        .components()
+        .any(|component| component.as_os_str() == ".runtime-qa")
+    {
+        return Err(AppError::Validation(format!(
+            "{label}必须位于 .runtime-qa 下"
+        )));
+    }
+    Ok(path)
+}
+
+fn require_isolated_marker(root: &Path) -> AppResult<()> {
+    let marker = root.join(ISOLATED_MIGRATION_MARKER);
+    if !marker.is_file() {
+        return Err(AppError::Validation(format!(
+            "缺少隔离迁移标记文件：{}",
+            marker.display()
+        )));
+    }
+    Ok(())
+}
+
+fn checkpoint_database(connection: &Connection) -> AppResult<()> {
+    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    Ok(())
+}
+
+fn schema_versions(connection: &Connection) -> AppResult<Vec<i64>> {
+    let mut statement =
+        connection.prepare("SELECT version FROM schema_migrations ORDER BY version")?;
+    let versions = statement
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(versions)
+}
+
+fn portable_recovery_snapshot(
+    connection: &Connection,
+    paths: &AppPaths,
+    preferences_json: &str,
+    import_name: &str,
+    attachment_name: &str,
+) -> AppResult<PortableRecoveryQaSnapshot> {
+    let preferences = serde_json::from_str::<serde_json::Value>(preferences_json)?;
+    let normalized_preferences = serde_json::to_vec(&preferences)?;
+    let integrity_check = database::integrity_check(connection)?;
+    let foreign_key_violations =
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    Ok(PortableRecoveryQaSnapshot {
+        database_sha256: sha256_file(&paths.database)?,
+        import_sha256: sha256_file(&paths.imports_raw.join(import_name))?,
+        attachment_sha256: sha256_file(&paths.attachments.join(attachment_name))?,
+        preferences_sha256: sha256_bytes(&normalized_preferences),
+        schema_versions: schema_versions(connection)?,
+        active_records: count_where(connection, "records", "is_deleted = 0")?,
+        source_items: count_where(connection, "source_items", "1 = 1")?,
+        inbox_sources: count_where(connection, "source_items", "organization_state = 'inbox'")?,
+        attachment_rows: count_where(connection, "attachments", "1 = 1")?,
+        integrity_check,
+        foreign_key_violations,
+    })
+}
+
+fn table_exists(connection: &Connection, name: &str) -> AppResult<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+         )",
+        [name],
+        |row| row.get::<_, i64>(0),
+    )? != 0)
+}
+
+fn json_values_equal(left: &str, right: &str) -> AppResult<bool> {
+    Ok(serde_json::from_str::<serde_json::Value>(left)?
+        == serde_json::from_str::<serde_json::Value>(right)?)
+}
+
+fn newest_matching_directory(directory: &Path, prefix: &str) -> AppResult<Option<PathBuf>> {
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(prefix) {
+            continue;
+        }
+        let modified = entry.metadata()?.modified()?;
+        if newest
+            .as_ref()
+            .is_none_or(|(current, _)| modified > *current)
+        {
+            newest = Some((modified, entry.path()));
+        }
+    }
+    Ok(newest.map(|(_, path)| path))
+}
+
 fn active_record_count(connection: &Connection) -> AppResult<i64> {
     Ok(connection.query_row(
         "SELECT COUNT(*) FROM records WHERE is_deleted = 0",
@@ -387,6 +809,12 @@ fn sha256_file(path: &Path) -> AppResult<String> {
         digest.update(&buffer[..read]);
     }
     Ok(hex::encode(digest.finalize()))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    hex::encode(digest.finalize())
 }
 
 fn write_new_json(path: &Path, value: &impl Serialize) -> AppResult<()> {
