@@ -1,5 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
@@ -14,6 +15,8 @@ use crate::paths::AppPaths;
 use crate::transfer;
 
 const ISOLATED_MIGRATION_MARKER: &str = ".isolated-knowledge-migration-test";
+const FORMAL_KNOWLEDGE_ROOT: &str = r"D:\南枫知识库";
+const FORMAL_MIGRATION_CONFIRMATION: &str = "AUTHORIZE_FORMAL_KNOWLEDGE_MIGRATION_V3_20260727";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +70,43 @@ pub struct KnowledgeInspectionMaintenanceReport {
     pub turning_points: i64,
     pub integrity_check: String,
     pub foreign_key_violations: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FormalKnowledgeMigrationSnapshot {
+    pub database_sha256: String,
+    pub schema_versions: Vec<i64>,
+    pub active_records: i64,
+    pub deleted_records: i64,
+    pub source_items: Option<i64>,
+    pub linked_legacy_sources: Option<i64>,
+    pub inbox_sources: Option<i64>,
+    pub attachments: i64,
+    pub integrity_check: String,
+    pub foreign_key_violations: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormalKnowledgeMigrationReport {
+    pub data_root: String,
+    pub database: String,
+    pub before: FormalKnowledgeMigrationSnapshot,
+    pub portable_backup_folder: String,
+    pub portable_backup_manifest_sha256: String,
+    pub portable_backup_database_sha256: String,
+    pub portable_backup_file_count: u64,
+    pub portable_backup_total_bytes: u64,
+    pub portable_backup_content_integrity: String,
+    pub portable_backup_preferences: String,
+    pub automatic_database_backup: String,
+    pub automatic_database_backup_sha256: String,
+    pub after: FormalKnowledgeMigrationSnapshot,
+    pub reopened: FormalKnowledgeMigrationSnapshot,
+    pub idempotent: bool,
+    pub receipt_path: Option<String>,
+    pub receipt_write_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -226,6 +266,151 @@ pub fn inspect_isolated_knowledge_copy(
         integrity_check,
         foreign_key_violations,
     })
+}
+
+pub fn inspect_formal_knowledge_base(
+    data_root: impl AsRef<Path>,
+) -> AppResult<FormalKnowledgeMigrationSnapshot> {
+    let data_root = require_exact_formal_knowledge_root(data_root.as_ref())?;
+    let database = data_root.join("data").join("app.db");
+    if !database.is_file() {
+        return Err(AppError::NotFound(format!(
+            "正式数据库不存在：{}",
+            database.display()
+        )));
+    }
+    let _instance_guard = TcpListener::bind("127.0.0.1:47633").map_err(|error| {
+        AppError::Conflict(format!(
+            "南枫知识库可能正在运行，已停止正式只读核对：{error}"
+        ))
+    })?;
+    let connection = Connection::open_with_flags(
+        &database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    formal_knowledge_snapshot(&connection, &database)
+}
+
+pub fn migrate_formal_knowledge_base(
+    data_root: impl AsRef<Path>,
+    confirmation: &str,
+) -> AppResult<FormalKnowledgeMigrationReport> {
+    if confirmation != FORMAL_MIGRATION_CONFIRMATION {
+        return Err(AppError::Validation(
+            "正式迁移确认令牌不匹配，已拒绝写入正式数据".to_string(),
+        ));
+    }
+    let data_root = require_exact_formal_knowledge_root(data_root.as_ref())?;
+    let paths = AppPaths::from_root(&data_root)?;
+    if !paths.database.is_file() {
+        return Err(AppError::NotFound(format!(
+            "正式数据库不存在：{}",
+            paths.database.display()
+        )));
+    }
+
+    // 与桌面应用共用单实例端口。维护期间持有端口，避免迁移和用户写入并发发生。
+    let _instance_guard = TcpListener::bind("127.0.0.1:47633").map_err(|error| {
+        AppError::Conflict(format!("南枫知识库可能正在运行，已停止正式迁移：{error}"))
+    })?;
+
+    let automatic_backups_before =
+        matching_files(&paths.backups, "知识结构迁移前自动备份_", ".db")?;
+    let preflight_connection = Connection::open_with_flags(
+        &paths.database,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    preflight_connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    let preflight = formal_knowledge_snapshot(&preflight_connection, &paths.database)?;
+    if preflight.schema_versions.contains(&3) {
+        return Err(AppError::Conflict(
+            "正式数据库已经包含 migration v3；本工具拒绝重复创建正式迁移备份".to_string(),
+        ));
+    }
+    if preflight.integrity_check != "ok" || preflight.foreign_key_violations != 0 {
+        return Err(AppError::Conflict(format!(
+            "正式数据库升级前检查未通过：完整性 {}，外键违规 {}",
+            preflight.integrity_check, preflight.foreign_key_violations
+        )));
+    }
+
+    // 无界面维护无法读取 WebView localStorage；迁移只改数据库，现有界面设置保持不动。
+    // 完整备份仍显式包含空 preferences.json，恢复时不会伪造未读取到的设置。
+    let portable_backup = transfer::create_portable_backup(
+        &preflight_connection,
+        &paths,
+        "{}",
+        "正式知识结构升级前完整备份",
+    )?;
+    let portable_preview = transfer::inspect_portable_backup(&portable_backup.folder_path)?;
+    let portable_folder = PathBuf::from(&portable_backup.folder_path);
+    let portable_database = portable_folder.join("data").join("app.db");
+    let portable_manifest = portable_folder.join("manifest.json");
+    let before_connection =
+        Connection::open_with_flags(&portable_database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let before = formal_knowledge_snapshot(&before_connection, &portable_database)?;
+    drop(before_connection);
+    if !formal_snapshots_logically_equal(&preflight, &before)
+        || before.integrity_check != "ok"
+        || before.foreign_key_violations != 0
+        || !portable_preview.restorable
+        || portable_preview.content_integrity != "verified_sha256"
+    {
+        return Err(AppError::Conflict(
+            "正式迁移前完整备份与当前数据库逻辑状态不一致，已停止迁移".to_string(),
+        ));
+    }
+    drop(preflight_connection);
+
+    let migration_result =
+        run_formal_migration_and_verify(&paths, &before, &automatic_backups_before);
+    let (after, reopened, automatic_database_backup) = match migration_result {
+        Ok(result) => result,
+        Err(error) => {
+            return match rollback_formal_database(&paths, &portable_database, &before) {
+                Ok(()) => Err(AppError::Conflict(format!(
+                    "正式 migration v3 失败，已从完整备份恢复迁移前数据库：{error}"
+                ))),
+                Err(rollback_error) => Err(AppError::Conflict(format!(
+                    "正式 migration v3 失败，数据库自动恢复也失败：{error}；恢复错误：{rollback_error}；完整备份位于 {}",
+                    portable_folder.display()
+                ))),
+            };
+        }
+    };
+
+    let idempotent = after == reopened;
+    let automatic_database_backup_sha256 = sha256_file(&automatic_database_backup)?;
+    let mut report = FormalKnowledgeMigrationReport {
+        data_root: data_root.to_string_lossy().into_owned(),
+        database: paths.database.to_string_lossy().into_owned(),
+        before,
+        portable_backup_folder: portable_backup.folder_path,
+        portable_backup_manifest_sha256: sha256_file(&portable_manifest)?,
+        portable_backup_database_sha256: sha256_file(&portable_database)?,
+        portable_backup_file_count: portable_backup.file_count,
+        portable_backup_total_bytes: portable_backup.total_bytes,
+        portable_backup_content_integrity: portable_preview.content_integrity,
+        portable_backup_preferences:
+            "headless_empty_object; live WebView localStorage was not modified".to_string(),
+        automatic_database_backup: automatic_database_backup.to_string_lossy().into_owned(),
+        automatic_database_backup_sha256,
+        after,
+        reopened,
+        idempotent,
+        receipt_path: None,
+        receipt_write_error: None,
+    };
+    let receipt_path = paths.logs.join(format!(
+        "formal-knowledge-migration-v3-{}.json",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f")
+    ));
+    report.receipt_path = Some(receipt_path.to_string_lossy().into_owned());
+    if let Err(error) = write_new_json(&receipt_path, &report) {
+        report.receipt_path = None;
+        report.receipt_write_error = Some(error.to_string());
+    }
+    Ok(report)
 }
 
 pub fn run_isolated_portable_recovery_qa(
@@ -791,6 +976,210 @@ fn table_exists(connection: &Connection, name: &str) -> AppResult<bool> {
         [name],
         |row| row.get::<_, i64>(0),
     )? != 0)
+}
+
+fn require_exact_formal_knowledge_root(path: &Path) -> AppResult<PathBuf> {
+    let path = require_absolute_path(path, "正式数据目录")?;
+    let expected = PathBuf::from(FORMAL_KNOWLEDGE_ROOT);
+    let canonical_path = fs::canonicalize(&path)?;
+    let canonical_expected = fs::canonicalize(&expected)?;
+    if canonical_path != canonical_expected {
+        return Err(AppError::Validation(format!(
+            "正式迁移只允许精确目录 {}，实际收到 {}",
+            expected.display(),
+            path.display()
+        )));
+    }
+    Ok(path)
+}
+
+fn formal_knowledge_snapshot(
+    connection: &Connection,
+    database_path: &Path,
+) -> AppResult<FormalKnowledgeMigrationSnapshot> {
+    let integrity_check = database::integrity_check(connection)?;
+    let foreign_key_violations =
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+    Ok(FormalKnowledgeMigrationSnapshot {
+        database_sha256: sha256_file(database_path)?,
+        schema_versions: schema_versions(connection)?,
+        active_records: count_where(connection, "records", "is_deleted = 0")?,
+        deleted_records: count_where(connection, "records", "is_deleted = 1")?,
+        source_items: count_if_table_exists(connection, "source_items", "1 = 1")?,
+        linked_legacy_sources: count_if_table_exists(
+            connection,
+            "source_items",
+            "legacy_record_id IS NOT NULL",
+        )?,
+        inbox_sources: count_if_table_exists(
+            connection,
+            "source_items",
+            "organization_state = 'inbox'",
+        )?,
+        attachments: count_where(connection, "attachments", "1 = 1")?,
+        integrity_check,
+        foreign_key_violations,
+    })
+}
+
+fn count_if_table_exists(
+    connection: &Connection,
+    table: &str,
+    predicate: &str,
+) -> AppResult<Option<i64>> {
+    if !table_exists(connection, table)? {
+        return Ok(None);
+    }
+    count_where(connection, table, predicate).map(Some)
+}
+
+fn formal_snapshots_logically_equal(
+    left: &FormalKnowledgeMigrationSnapshot,
+    right: &FormalKnowledgeMigrationSnapshot,
+) -> bool {
+    left.schema_versions == right.schema_versions
+        && left.active_records == right.active_records
+        && left.deleted_records == right.deleted_records
+        && left.source_items == right.source_items
+        && left.linked_legacy_sources == right.linked_legacy_sources
+        && left.inbox_sources == right.inbox_sources
+        && left.attachments == right.attachments
+        && left.integrity_check == right.integrity_check
+        && left.foreign_key_violations == right.foreign_key_violations
+}
+
+fn run_formal_migration_and_verify(
+    paths: &AppPaths,
+    before: &FormalKnowledgeMigrationSnapshot,
+    automatic_backups_before: &[PathBuf],
+) -> AppResult<(
+    FormalKnowledgeMigrationSnapshot,
+    FormalKnowledgeMigrationSnapshot,
+    PathBuf,
+)> {
+    let first_connection = database::open_database(&paths.database)?;
+    checkpoint_database(&first_connection)?;
+    let after = formal_knowledge_snapshot(&first_connection, &paths.database)?;
+    drop(first_connection);
+
+    let automatic_backups_after_first =
+        matching_files(&paths.backups, "知识结构迁移前自动备份_", ".db")?;
+    let new_automatic_backups = automatic_backups_after_first
+        .iter()
+        .filter(|path| !automatic_backups_before.contains(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if new_automatic_backups.len() != 1 {
+        return Err(AppError::Conflict(format!(
+            "正式 migration v3 应生成 1 份数据库自动备份，实际新增 {} 份",
+            new_automatic_backups.len()
+        )));
+    }
+    let automatic_database_backup = new_automatic_backups[0].clone();
+    let automatic_backup_connection =
+        Connection::open_with_flags(&automatic_database_backup, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let automatic_backup_snapshot =
+        formal_knowledge_snapshot(&automatic_backup_connection, &automatic_database_backup)?;
+    drop(automatic_backup_connection);
+    if !formal_snapshots_logically_equal(before, &automatic_backup_snapshot) {
+        return Err(AppError::Conflict(
+            "migration v3 自动数据库备份与迁移前状态不一致".to_string(),
+        ));
+    }
+
+    validate_formal_migration_result(before, &after)?;
+
+    let reopened_connection = database::open_database(&paths.database)?;
+    checkpoint_database(&reopened_connection)?;
+    let reopened = formal_knowledge_snapshot(&reopened_connection, &paths.database)?;
+    drop(reopened_connection);
+    let automatic_backups_after_reopen =
+        matching_files(&paths.backups, "知识结构迁移前自动备份_", ".db")?;
+    if automatic_backups_after_reopen != automatic_backups_after_first {
+        return Err(AppError::Conflict(
+            "第二次打开数据库重复生成了 migration v3 自动备份".to_string(),
+        ));
+    }
+    if after != reopened {
+        return Err(AppError::Conflict(
+            "第二次打开数据库后关键计数或数据库 SHA-256 发生变化，幂等检查失败".to_string(),
+        ));
+    }
+    Ok((after, reopened, automatic_database_backup))
+}
+
+fn validate_formal_migration_result(
+    before: &FormalKnowledgeMigrationSnapshot,
+    after: &FormalKnowledgeMigrationSnapshot,
+) -> AppResult<()> {
+    let expected_source_items = before.active_records + before.deleted_records;
+    if after.schema_versions != vec![1, 2, 3]
+        || after.active_records != before.active_records
+        || after.deleted_records != before.deleted_records
+        || after.attachments != before.attachments
+        || after.source_items != Some(expected_source_items)
+        || after.linked_legacy_sources != Some(expected_source_items)
+        || after.inbox_sources != Some(expected_source_items)
+        || after.integrity_check != "ok"
+        || after.foreign_key_violations != 0
+    {
+        return Err(AppError::Conflict(format!(
+            "正式 migration v3 后验收不通过：migration {:?}，活动记录 {}，删除记录 {}，Source Item {:?}，legacy 关联 {:?}，收录箱 {:?}，附件 {}，完整性 {}，外键违规 {}",
+            after.schema_versions,
+            after.active_records,
+            after.deleted_records,
+            after.source_items,
+            after.linked_legacy_sources,
+            after.inbox_sources,
+            after.attachments,
+            after.integrity_check,
+            after.foreign_key_violations
+        )));
+    }
+    Ok(())
+}
+
+fn rollback_formal_database(
+    paths: &AppPaths,
+    portable_database: &Path,
+    before: &FormalKnowledgeMigrationSnapshot,
+) -> AppResult<()> {
+    let source = Connection::open_with_flags(portable_database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut target = Connection::open_with_flags(
+        &paths.database,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    target.busy_timeout(std::time::Duration::from_secs(5))?;
+    database::copy_database(&source, &mut target)?;
+    checkpoint_database(&target)?;
+    let restored = formal_knowledge_snapshot(&target, &paths.database)?;
+    if !formal_snapshots_logically_equal(before, &restored)
+        || restored.integrity_check != "ok"
+        || restored.foreign_key_violations != 0
+    {
+        return Err(AppError::Conflict(
+            "从完整备份恢复后，数据库逻辑状态与迁移前不一致".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn matching_files(directory: &Path, prefix: &str, suffix: &str) -> AppResult<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(prefix) && name.ends_with(suffix) {
+            files.push(entry.path());
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn json_values_equal(left: &str, right: &str) -> AppResult<bool> {
