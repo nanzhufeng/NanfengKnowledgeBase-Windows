@@ -846,7 +846,7 @@ export function KnowledgeWorkspace({
                     </small>
                   </article>
                 ))}
-                <select value={evidenceSourceId ?? ""} onChange={(event) => {
+                <select aria-label="证据来源" value={evidenceSourceId ?? ""} onChange={(event) => {
                   const sourceId = event.target.value ? Number(event.target.value) : null;
                   setEvidenceSourceId(sourceId);
                   setEvidenceLocatorKind("none");
@@ -858,6 +858,7 @@ export function KnowledgeWorkspace({
                 <textarea value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} placeholder="证据内容或原文摘录" />
                 <div className="knowledge-evidence-fields">
                   <select
+                    aria-label="证据立场"
                     value={evidenceStance}
                     onChange={(event) => setEvidenceStance(event.target.value as typeof evidenceStance)}
                   >
@@ -876,6 +877,7 @@ export function KnowledgeWorkspace({
                     />
                   </label>
                   <select
+                    aria-label="证据验证状态"
                     value={evidenceVerificationStatus}
                     onChange={(event) => setEvidenceVerificationStatus(event.target.value)}
                   >
@@ -884,6 +886,7 @@ export function KnowledgeWorkspace({
                     <option value="disputed">有争议</option>
                   </select>
                   <select
+                    aria-label="证据有效状态"
                     value={evidenceValidityStatus}
                     onChange={(event) => setEvidenceValidityStatus(event.target.value)}
                   >
@@ -893,6 +896,7 @@ export function KnowledgeWorkspace({
                   </select>
                 </div>
                 <select
+                  aria-label="证据锚点类型"
                   value={evidenceLocatorKind}
                   onChange={(event) => {
                     setEvidenceLocatorKind(event.target.value as EvidenceLocator["kind"]);
@@ -906,11 +910,13 @@ export function KnowledgeWorkspace({
                 {evidenceLocatorKind !== "none" ? (
                   <>
                     <input
+                      aria-label="证据锚点值"
                       value={evidenceLocatorValue}
                       onChange={(event) => setEvidenceLocatorValue(event.target.value)}
                       placeholder={`填写${locatorLabels[evidenceLocatorKind]}的精确值`}
                     />
                     <input
+                      aria-label="证据短引用"
                       value={evidenceQuote}
                       onChange={(event) => setEvidenceQuote(event.target.value)}
                       placeholder="可选：保存一段短引用帮助核对"
@@ -1014,6 +1020,7 @@ export function KnowledgeWorkspace({
                     placeholder="写下一条可验证、可被证据支持或反驳的具体陈述"
                   />
                   <select
+                    aria-label="命题状态"
                     value={propositionStatus}
                     onChange={(event) => setPropositionStatus(event.target.value as TopicPropositionRow["status"])}
                   >
@@ -1183,6 +1190,7 @@ export function KnowledgeWorkspace({
                   <label>
                     类型
                     <select
+                      aria-label="笔记类型"
                       value={noteType}
                       onChange={(event) => setNoteType(event.target.value as KnowledgeNoteRow["noteType"])}
                     >
@@ -1198,6 +1206,7 @@ export function KnowledgeWorkspace({
                   <label>
                     状态
                     <select
+                      aria-label="笔记状态"
                       value={noteStatus}
                       onChange={(event) => setNoteStatus(event.target.value as KnowledgeNoteRow["status"])}
                     >
@@ -1218,6 +1227,7 @@ export function KnowledgeWorkspace({
                 <label>
                   相关主题
                   <select
+                    aria-label="笔记相关主题"
                     multiple
                     value={noteRelatedTopicIds.map(String)}
                     onChange={(event) => {
