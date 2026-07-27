@@ -4,9 +4,9 @@
 > 项目：南枫知识库 `0.2.0`
 > 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 > 当前分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
-> 代码 checkpoint：`08ddaec`
+> 代码 checkpoint：`6d0180f`
 > 恢复验收 checkpoint：`fbe4c15`
-> 当前工作区：P1 知识生产能力代码与交接文档已更新
+> 当前工作区：正式 migration v3 已执行并完成无界面复核
 > 远端状态：本分支无 upstream，未推送；`origin/main` 不包含本轮知识生产链路
 
 ## 新对话读取顺序
@@ -43,7 +43,7 @@
 
 正式应用默认显示收录箱、主题浏览器和整理工作台；假数据原型不再是运行入口。旧 `Record` 继续作为来源档案兼容层，知识结构由独立表和仓库管理。
 
-完整迁移备份、失败自动回滚、隐藏 Tauri 命令桥和重启持久化已经在新的隔离根验证。当前最重要的边界：**正式升级前 P0 隔离证据已关闭，但正式 `D:\南枫知识库` 尚未执行 migration v3，必须等待南烛枫单独明确授权。**
+完整迁移备份、失败自动回滚、隐藏 Tauri 命令桥和重启持久化已经在隔离根验证。南烛枫于 2026-07-27 单独授权后，正式 `D:\南枫知识库` 已完成 migration v3、完整迁移备份、第二次打开幂等检查和独立只读复核。当前最重要的边界：**数据库升级门槛已经关闭，但可见 BAT 长时间交互与优雅退出仍未验收；安装包和发布也未执行。**
 
 ## 二、已实现的当前代码事实
 
@@ -95,9 +95,24 @@
 
 - 当前正式数据根：`D:\南枫知识库`。
 - 活动记录：901。
+- Source Item：901；legacy Record 关联：901；收录箱：901。
 - 附件数据库登记：446。
+- migration：1、2、3；`integrity_check=ok`；外键违规 0。
 - ChatGPT 完整导出已导入 517 条会话，恢复 718 个附件实体；同一记录内内容完全相同的实体去重后形成 446 条附件登记。
 - 旧目录 `D:\南枫情报台` 仅作为保留的兼容来源，不删除、不覆盖。
+
+### 正式 migration v3 证据
+
+- 升级前只读核对：migration 1、2；活动 Record 901；删除 Record 0；附件登记 446；知识表不存在；`integrity_check=ok`；外键违规 0。
+- 完整备份：`D:\南枫知识库\backups\正式知识结构升级前完整备份_20260727-071304-178`。
+- 完整备份共 729 个文件、2,370,812,749 字节；无 `.building` 标记；逐文件清单状态 `verified_sha256`。
+- manifest SHA-256：`f0dd16ba18fcdc82997db2e7d1ecb02a78e00b5e205cc44b6497f8658663a13d`。
+- 升级前一致数据库与 migration 自动数据库备份 SHA-256：`c4e957f08430eddd381336c2b3494491beb58ee4f9d6395e9884b616e1d371cc`。
+- migration 后正式数据库 SHA-256：`7a65927e0019318f42db15d4fe9839ee3ab5fc5b602e5c93cc38ef952293ba22`。
+- migration 后与第二次打开均为 migration 1、2、3；901 活动 Record、901 Source Item、901 legacy 关联、901 收录箱、446 附件；`integrity_check=ok`；外键违规 0；SHA-256 和计数不变。
+- 正式回执：`D:\南枫知识库\logs\formal-knowledge-migration-v3-20260727-071615-115.json`。
+- 无界面维护无法读取 WebView localStorage，因此完整备份中的 `preferences.json` 是诚实的空对象；迁移未修改现有 WebView 界面设置，失败回滚路径只恢复数据库。
+- 脱敏摘要：`docs/audits/2026-07-27-formal-knowledge-migration/summary.md`。
 
 ### 本轮知识迁移证据
 
@@ -132,7 +147,7 @@
 
 ## 四、最新验证等级
 
-当前 P1 知识生产代码与隐藏 IPC 工具对应 checkpoint `08ddaec`：
+当前知识生产代码、隐藏 IPC 工具和正式迁移维护入口对应代码 checkpoint `6d0180f`：
 
 | 验证层级 | 结果 |
 |---|---|
@@ -148,7 +163,7 @@
 | 故障注入后的自动回滚 | 隔离 qa4 通过 |
 | 最新知识生产命令的真实 Tauri 桥 | 隐藏 WebView2 IPC 通过；新对象写入与强制重启读回通过 |
 | 重启持久化 | 强制进程重启后通过；优雅退出未验证 |
-| 正式数据 migration v3 | 未执行 |
+| 正式数据 migration v3 | 已执行；完整备份、前后 SHA-256、第二次打开幂等、完整性和外键均通过 |
 | 当前版本安装包/升级覆盖 | 未执行 |
 | GitHub 发布 | 未执行 |
 
@@ -156,9 +171,9 @@
 
 ## 五、仍需继续处理
 
-### P0：等待单独授权
+### P0：正式数据升级已关闭
 
-完整恢复、失败回滚、隐藏命令桥、重启持久化、数据库/附件登记/偏好/哈希/完整性/外键的隔离验证已完成。下一步涉及正式 `D:\南枫知识库` migration v3，必须由南烛枫在新一轮明确授权；未授权时停止。
+正式 `D:\南枫知识库` 已完成 migration v3。完整数据备份与 migration 自动数据库备份均保留，正式回执和脱敏审计摘要已记录；本轮没有删除或覆盖 `D:\南枫情报台`。
 
 ### P1：知识系统生产能力
 
@@ -189,7 +204,7 @@
 | 前端知识合同与适配器 | `src/knowledge/domain.ts`、`src/knowledge/deterministicClassifier.ts`、`src/services/knowledgeRepository.ts` |
 | 数据库与 migration | `src-tauri/src/database.rs`、`src-tauri/src/knowledge/schema.rs` |
 | 知识仓库 | `src-tauri/src/knowledge/repository.rs` |
-| 只读审计与隔离工具 | `src-tauri/src/knowledge/audit.rs`、`classification_input.rs`、`legacy_preview.rs`、`src-tauri/src/maintenance.rs` |
+| 只读审计、隔离与正式迁移工具 | `src-tauri/src/knowledge/audit.rs`、`classification_input.rs`、`legacy_preview.rs`、`src-tauri/src/maintenance.rs`、`src-tauri/examples/knowledge_inspect_formal.rs`、`knowledge_migration_apply_formal.rs` |
 | ChatGPT 完整导出 | `src-tauri/src/chatgpt_export.rs`、`src-tauri/src/importer.rs` |
 | 附件和备份 | `src-tauri/src/attachments.rs`、`src-tauri/src/transfer.rs` |
 | 隔离恢复验收 | `src-tauri/src/maintenance.rs`、`src-tauri/examples/portable_recovery_qa.rs` |
@@ -201,10 +216,10 @@
 - 当前成果位于本地 `codex/nanfeng-knowledge-production-checkpoint-20260727`，不要误回到 `main`。
 - 不执行 `reset --hard`、`clean`、`stash` 或覆盖未知改动。
 - 本分支未推送；不要把“本地 checkpoint”描述成“GitHub 已更新”。
-- 当前代码 HEAD 为 `08ddaec`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
+- 当前代码 checkpoint 为 `6d0180f`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
 
 ## 九、下一件事
 
-当前没有继续扩大代码范围的默认任务。下一道门槛是：**等待南烛枫专项授权后，才对正式 `D:\南枫知识库` 执行 migration v3、验证当前知识 schema 并记录前后证据。**
+当前没有继续扩大代码范围的默认任务。下一道门槛是：**等待南烛枫明确允许打开可见窗口后，通过 `启动南枫知识库-测试版.bat` 连续验收收藏、长正文、批量导入、不同类型附件、知识工作区与优雅退出。**
 
-专项授权前只允许只读检查和文档核对；不得把本文件、继续提示词或“完成剩余任务”的宽泛要求视为正式数据写入授权。正式迁移后仍需独立完成可见 BAT 长时间交互与优雅退出验收；安装包和 GitHub 发布继续需要后续明确授权。
+本轮“无可见窗口”边界没有被正式迁移授权扩大；因此不能把无界面数据库验收冒充可见桌面用户验收。BAT 验收通过后，安装包/升级覆盖/卸载和 GitHub 发布仍是后续独立门槛，不得自动开始。
