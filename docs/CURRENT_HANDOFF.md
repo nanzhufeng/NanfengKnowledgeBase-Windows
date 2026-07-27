@@ -4,7 +4,7 @@
 > 项目：南枫知识库 `0.2.0`
 > 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 > 当前分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
-> 代码 checkpoint：`fad79b4`
+> 代码 checkpoint：`52d9ad0`
 > 恢复验收 checkpoint：`fbe4c15`
 > 当前工作区：P1 知识生产能力代码与交接文档已更新
 > 远端状态：本分支无 upstream，未推送；`origin/main` 不包含本轮知识生产链路
@@ -69,6 +69,7 @@
 - 独立 Note 支持创建、编辑、软归档、状态恢复、一个主要主题、多个相关主题和多个来源；保存不覆盖 Source Item 正文。
 - Proposition 支持独立创建、编辑和保留历史的 superseded 状态。
 - Turning Point 只在用户明确选择前后判断并确认后写入；填写变化原因不再自动升格为关键转折。
+- 无界面浏览器桥接验收已实际操作 Note、Proposition、时间码 Evidence 和 Turning Point，并核对发往 Tauri 的四组命令参数。
 - 带来源边界的本地研究上下文编译，不依赖模型。
 - 主题合并影响预览、事务提交和撤销。
 - 被合并主题的旧名称和完整旧路径以 redirect 别名写入目标主题；撤销只移除本次插入的重定向。
@@ -128,14 +129,14 @@
 
 ## 四、最新验证等级
 
-当前 P1 知识生产代码对应 checkpoint `fad79b4`：
+当前 P1 知识生产代码对应 checkpoint `52d9ad0`：
 
 | 验证层级 | 结果 |
 |---|---|
 | 前端单元/领域合同 | 52/52 通过 |
 | Rust/SQLite 合同 | 62/62 通过 |
 | Sites 回退合同 | 4/4 通过 |
-| Playwright 无界面交互 | 16/16 通过 |
+| Playwright 无界面交互 | 17/17 通过；其中 1 条覆盖知识生产 UI→受控 Tauri 桥参数 |
 | TypeScript | 通过 |
 | Vite 生产构建 | 通过 |
 | `git diff --check` | 通过 |
@@ -197,7 +198,7 @@
 - 当前成果位于本地 `codex/nanfeng-knowledge-production-checkpoint-20260727`，不要误回到 `main`。
 - 不执行 `reset --hard`、`clean`、`stash` 或覆盖未知改动。
 - 本分支未推送；不要把“本地 checkpoint”描述成“GitHub 已更新”。
-- 当前代码 HEAD 为 `fad79b4`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
+- 当前代码 HEAD 为 `52d9ad0`；接手时先以 `git status` 和 `git log -1` 为准，不需要把完整聊天历史重新读取。
 
 ## 九、下一件事
 

@@ -5,7 +5,7 @@
 
 仓库：C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence
 当前分支：codex/nanfeng-knowledge-production-checkpoint-20260727
-代码 checkpoint：fad79b4
+代码 checkpoint：52d9ad0
 
 先完整读取项目根 AGENTS.md 和 docs/CURRENT_HANDOFF.md，再运行：
 git status --short
@@ -14,7 +14,7 @@ git log -5 --oneline --decorate
 不要扫描全部历史审计、旧原型或整段聊天记录。先简短确认：
 1. 当前分支、HEAD 和工作区；
 2. 个人目录确认、分类治理/反馈、合并 redirect、独立 Note、Proposition、用户确认的 Turning Point 和精确 Evidence 锚点已经进入正式代码；
-3. 自动验证为前端 52/52、Rust 62/62、Sites 4/4、无界面 E2E 16/16，TypeScript 与生产构建通过；
+3. 自动验证为前端 52/52、Rust 62/62、Sites 4/4、无界面 E2E 17/17，TypeScript 与生产构建通过；新增桥接用例实际操作 Note、Proposition、时间码 Evidence 和 Turning Point 并核对 Tauri 命令参数；
 4. 上述证明代码与隔离合同，不证明正式 D:\南枫知识库 已升级或可见桌面已验收。
 
 当前没有默认代码扩展任务。只有当南烛枫在当前对话中单独、明确授权正式数据升级时，才执行唯一任务：

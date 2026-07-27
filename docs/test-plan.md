@@ -41,6 +41,7 @@
 13. Note 与 Source Item 分离；Note 更新和归档不能覆盖原始来源正文。
 14. Proposition 是独立对象；Turning Point 只由用户明确选择前后判断后创建，变化原因本身不能自动升格。
 15. Evidence 锚点按来源类型校验；可信度、验证状态和有效状态分开持久化。
+16. 无界面桥接用例实际操作 Note、Proposition、时间码 Evidence 和 Turning Point，并核对 UI 发往 Tauri 的主题、来源、锚点和前后判断 ID。
 
 ## migration v3 合同
 
