@@ -60,6 +60,7 @@ pub fn run() {
             commands::list_knowledge_inbox,
             commands::list_knowledge_domains,
             commands::list_knowledge_topics,
+            commands::prepare_knowledge_classification_context,
             commands::create_knowledge_domain,
             commands::create_knowledge_topic,
             commands::save_knowledge_classification_suggestions,

@@ -1,5 +1,8 @@
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -65,6 +68,78 @@ pub struct KnowledgeClassificationSuggestionRow {
     pub classifier_version: String,
     pub status: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationSourceContext {
+    pub id: String,
+    pub title: String,
+    pub text: String,
+    pub kind: String,
+    pub platform: Option<String>,
+    pub file_name: Option<String>,
+    pub file_path: Option<String>,
+    pub folder_path: Option<String>,
+    pub tags: Vec<String>,
+    pub json_fields: HashMap<String, String>,
+    pub imported_at: String,
+    pub batch_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationTopicContext {
+    pub id: String,
+    pub primary_domain_id: String,
+    pub path: Vec<String>,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub entities: Vec<String>,
+    pub keywords: Vec<String>,
+    pub search_document: String,
+    pub status: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationRuleContext {
+    pub id: String,
+    pub topic_id: String,
+    pub field: String,
+    pub operator: String,
+    pub value: String,
+    pub json_field: Option<String>,
+    pub strength: f64,
+    pub reason: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationHistoryContext {
+    pub confirmed_topic_counts: HashMap<String, i64>,
+    pub recent_topic_ids: Vec<String>,
+    pub batch_topic_ids: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationSearchSignal {
+    pub topic_id: String,
+    pub normalized_score: f64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeClassificationContext {
+    pub source: ClassificationSourceContext,
+    pub topics: Vec<ClassificationTopicContext>,
+    pub rules: Vec<ClassificationRuleContext>,
+    pub history: ClassificationHistoryContext,
+    pub search_signals: Vec<ClassificationSearchSignal>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -566,6 +641,169 @@ pub fn list_topics(connection: &Connection) -> AppResult<Vec<KnowledgeTopicRow>>
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn prepare_classification_context(
+    connection: &Connection,
+    source_item_id: i64,
+) -> AppResult<KnowledgeClassificationContext> {
+    let (
+        public_id,
+        title,
+        text,
+        source_type,
+        platform,
+        local_path,
+        metadata_json,
+        imported_at,
+        legacy_record_id,
+    ) = connection
+        .query_row(
+            "SELECT public_id, title, original_text, source_type, platform, local_path,
+                    metadata_json, imported_at, legacy_record_id
+             FROM source_items
+             WHERE id = ?1 AND status = 'active'",
+            [source_item_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, Option<i64>>(8)?,
+                ))
+            },
+        )
+        .map_err(|_| AppError::NotFound("待分类来源不存在".to_string()))?;
+    let metadata = serde_json::from_str::<serde_json::Value>(&metadata_json)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    let batch_id = metadata
+        .get("batchId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let mut json_fields = HashMap::new();
+    if let Some(object) = metadata.as_object() {
+        for (key, value) in object {
+            if let Some(value) = value.as_str() {
+                json_fields.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+    let tags = if let Some(record_id) = legacy_record_id {
+        let mut statement = connection.prepare(
+            "SELECT tag.name
+             FROM record_tags record_tag
+             JOIN tags tag ON tag.id = record_tag.tag_id
+             WHERE record_tag.record_id = ?1
+             ORDER BY tag.name",
+        )?;
+        let tags = statement
+            .query_map([record_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        tags
+    } else {
+        metadata
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let file_name = local_path
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    let folder_path = local_path
+        .as_deref()
+        .and_then(|path| Path::new(path).parent())
+        .map(|parent| parent.to_string_lossy().into_owned());
+    let source = ClassificationSourceContext {
+        id: public_id,
+        title,
+        text,
+        kind: source_type,
+        platform: (!platform.trim().is_empty()).then_some(platform),
+        file_name,
+        file_path: local_path,
+        folder_path,
+        tags,
+        json_fields,
+        imported_at,
+        batch_id: batch_id.clone(),
+    };
+
+    let topic_rows = list_topics(connection)?;
+    let positive_rules = read_positive_classification_rules(connection)?;
+    let entity_dictionary = read_entity_dictionary(connection)?;
+    let mut topics = Vec::with_capacity(topic_rows.len());
+    for topic in &topic_rows {
+        let aliases = read_topic_aliases(connection, topic.id)?;
+        let topic_rules = positive_rules
+            .iter()
+            .filter(|rule| rule.topic_id == topic.id.to_string())
+            .collect::<Vec<_>>();
+        let mut entities = topic_rules
+            .iter()
+            .filter(|rule| rule.field == "text" && rule.id.starts_with("entity:"))
+            .map(|rule| rule.value.clone())
+            .collect::<Vec<_>>();
+        expand_entities(&mut entities, &entity_dictionary);
+        let mut keywords = topic_rules
+            .iter()
+            .filter(|rule| rule.field == "text")
+            .map(|rule| rule.value.clone())
+            .collect::<Vec<_>>();
+        keywords.extend(split_search_terms(&topic.description));
+        deduplicate_strings(&mut entities);
+        deduplicate_strings(&mut keywords);
+        let mut search_parts = vec![topic.name.clone(), topic.description.clone()];
+        search_parts.extend(aliases.iter().cloned());
+        search_parts.extend(entities.iter().cloned());
+        search_parts.extend(keywords.iter().cloned());
+        topics.push(ClassificationTopicContext {
+            id: topic.id.to_string(),
+            primary_domain_id: topic.domain_id.to_string(),
+            path: topic_path(connection, topic.id)?,
+            name: topic.name.clone(),
+            aliases,
+            entities,
+            keywords,
+            search_document: search_parts
+                .into_iter()
+                .filter(|value| !value.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            status: if topic.status == "merged" {
+                "archived".to_string()
+            } else {
+                topic.status.clone()
+            },
+            updated_at: connection.query_row(
+                "SELECT updated_at FROM topics WHERE id = ?1",
+                [topic.id],
+                |row| row.get(0),
+            )?,
+        });
+    }
+
+    let history = read_classification_history(connection, batch_id.as_deref())?;
+    let search_signals = normalized_bm25_signals(connection, source_item_id, &source, &topics)?;
+    Ok(KnowledgeClassificationContext {
+        source,
+        topics,
+        rules: positive_rules,
+        history,
+        search_signals,
+    })
 }
 
 pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<KnowledgeTopicDetail> {
@@ -1957,6 +2195,269 @@ fn normalize_source_type(source_type: &str, local_path: Option<&str>) -> &'stati
     }
 }
 
+fn read_topic_aliases(connection: &Connection, topic_id: i64) -> AppResult<Vec<String>> {
+    let mut statement = connection.prepare(
+        "SELECT alias FROM topic_aliases WHERE topic_id = ?1 ORDER BY alias_type, alias",
+    )?;
+    let aliases = statement
+        .query_map([topic_id], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(aliases)
+}
+
+fn topic_path(connection: &Connection, topic_id: i64) -> AppResult<Vec<String>> {
+    let mut current_id = Some(topic_id);
+    let mut domain_id = None;
+    let mut path = Vec::new();
+    let mut seen = HashSet::new();
+    while let Some(id) = current_id {
+        if !seen.insert(id) {
+            return Err(AppError::Conflict(
+                "主题层级存在循环，无法生成主路径".to_string(),
+            ));
+        }
+        let (name, parent_id, current_domain_id) = connection
+            .query_row(
+                "SELECT name, parent_topic_id, domain_id FROM topics WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .map_err(|_| AppError::NotFound("主题不存在".to_string()))?;
+        domain_id = Some(current_domain_id);
+        path.push(name);
+        current_id = parent_id;
+    }
+    path.reverse();
+    if let Some(domain_id) = domain_id {
+        let domain_name = connection.query_row(
+            "SELECT name FROM domains WHERE id = ?1",
+            [domain_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        path.insert(0, domain_name);
+    }
+    Ok(path)
+}
+
+fn read_positive_classification_rules(
+    connection: &Connection,
+) -> AppResult<Vec<ClassificationRuleContext>> {
+    let mut statement = connection.prepare(
+        "SELECT public_id, rule_type, pattern, target_topic_id, weight, enabled
+         FROM classification_rules
+         WHERE target_topic_id IS NOT NULL
+           AND rule_type NOT IN ('negative_keyword', 'stopword')
+         ORDER BY priority DESC, id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let public_id = row.get::<_, String>(0)?;
+        let rule_type = row.get::<_, String>(1)?;
+        let (field, operator) = match rule_type.as_str() {
+            "exact_alias" => ("title", "contains"),
+            "file_path" => ("file_path", "contains"),
+            "source" => ("platform", "contains"),
+            "legacy_tag" => ("tag", "contains"),
+            "keyword" | "entity" | "domain_hint" => ("text", "contains"),
+            _ => ("text", "contains"),
+        };
+        let value = row.get::<_, String>(2)?;
+        Ok(ClassificationRuleContext {
+            id: format!("{rule_type}:{public_id}"),
+            topic_id: row.get::<_, i64>(3)?.to_string(),
+            field: field.to_string(),
+            operator: operator.to_string(),
+            value: value.clone(),
+            json_field: None,
+            strength: row.get::<_, f64>(4)?.clamp(0.0, 1.0),
+            reason: format!("用户规则命中「{value}」"),
+            enabled: row.get::<_, i64>(5)? != 0,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn read_entity_dictionary(connection: &Connection) -> AppResult<Vec<(String, Vec<String>)>> {
+    let mut statement = connection
+        .prepare("SELECT canonical_name, aliases_json FROM entity_dictionary ORDER BY id")?;
+    let rows = statement.query_map([], |row| {
+        let aliases_json = row.get::<_, String>(1)?;
+        Ok((
+            row.get::<_, String>(0)?,
+            serde_json::from_str::<Vec<String>>(&aliases_json).unwrap_or_default(),
+        ))
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn expand_entities(entities: &mut Vec<String>, dictionary: &[(String, Vec<String>)]) {
+    let seeds = entities
+        .iter()
+        .map(|value| normalize_name(value))
+        .collect::<HashSet<_>>();
+    for (canonical, aliases) in dictionary {
+        let matches = seeds.contains(&normalize_name(canonical))
+            || aliases
+                .iter()
+                .any(|alias| seeds.contains(&normalize_name(alias)));
+        if matches {
+            entities.push(canonical.clone());
+            entities.extend(aliases.iter().cloned());
+        }
+    }
+}
+
+fn read_classification_history(
+    connection: &Connection,
+    batch_id: Option<&str>,
+) -> AppResult<ClassificationHistoryContext> {
+    let mut confirmed_topic_counts = HashMap::new();
+    let mut statement = connection.prepare(
+        "SELECT topic_id, COUNT(*)
+         FROM source_topics
+         WHERE role = 'primary'
+         GROUP BY topic_id
+         ORDER BY topic_id",
+    )?;
+    let counts =
+        statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+    for count in counts {
+        let (topic_id, count) = count?;
+        confirmed_topic_counts.insert(topic_id.to_string(), count);
+    }
+
+    let mut recent_statement = connection.prepare(
+        "SELECT topic_id
+         FROM source_topics
+         WHERE role = 'primary'
+         GROUP BY topic_id
+         ORDER BY MAX(created_at) DESC, topic_id
+         LIMIT 8",
+    )?;
+    let recent_topic_ids = recent_statement
+        .query_map([], |row| Ok(row.get::<_, i64>(0)?.to_string()))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut batch_topic_ids = HashMap::new();
+    if let Some(batch_id) = batch_id {
+        let mut batch_statement = connection.prepare(
+            "SELECT DISTINCT link.topic_id
+             FROM source_items source
+             JOIN source_topics link ON link.source_item_id = source.id
+             WHERE json_extract(source.metadata_json, '$.batchId') = ?1
+               AND link.role = 'primary'
+             ORDER BY link.topic_id",
+        )?;
+        let topic_ids = batch_statement
+            .query_map([batch_id], |row| Ok(row.get::<_, i64>(0)?.to_string()))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if !topic_ids.is_empty() {
+            batch_topic_ids.insert(batch_id.to_string(), topic_ids);
+        }
+    }
+    Ok(ClassificationHistoryContext {
+        confirmed_topic_counts,
+        recent_topic_ids,
+        batch_topic_ids,
+    })
+}
+
+fn normalized_bm25_signals(
+    connection: &Connection,
+    source_item_id: i64,
+    source: &ClassificationSourceContext,
+    topics: &[ClassificationTopicContext],
+) -> AppResult<Vec<ClassificationSearchSignal>> {
+    let mut raw_scores = Vec::new();
+    let source_haystack = format!("{} {}", source.title, source.text).to_lowercase();
+    for topic in topics.iter().filter(|topic| topic.status != "archived") {
+        let mut terms = vec![topic.name.clone()];
+        terms.extend(topic.aliases.iter().cloned());
+        terms.extend(topic.entities.iter().cloned());
+        terms.extend(topic.keywords.iter().cloned());
+        terms.extend(split_search_terms(&topic.search_document));
+        deduplicate_strings(&mut terms);
+        terms.retain(|term| (3..=48).contains(&term.chars().count()));
+        terms.truncate(20);
+        if terms.is_empty() {
+            continue;
+        }
+        let expression = terms
+            .iter()
+            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let raw_score = connection
+            .query_row(
+                "SELECT -bm25(source_items_fts, 8.0, 1.0)
+                 FROM source_items_fts
+                 WHERE rowid = ?1 AND source_items_fts MATCH ?2",
+                params![source_item_id, expression],
+                |row| row.get::<_, f64>(0),
+            )
+            .optional()?
+            .unwrap_or(0.0)
+            .max(0.0);
+        if raw_score > 0.0 {
+            let matched_terms = terms
+                .iter()
+                .filter(|term| source_haystack.contains(&term.to_lowercase()))
+                .count();
+            raw_scores.push((topic.id.clone(), raw_score, matched_terms));
+        }
+    }
+    let maximum = raw_scores
+        .iter()
+        .map(|(_, score, _)| *score)
+        .fold(0.0_f64, f64::max);
+    if maximum <= 0.0 {
+        return Ok(Vec::new());
+    }
+    Ok(raw_scores
+        .into_iter()
+        .map(|(topic_id, raw_score, matched_terms)| {
+            let coverage = (0.55 + 0.15 * matched_terms.min(3) as f64).min(1.0);
+            let normalized_score = ((raw_score / maximum) * coverage * 10_000.0).round() / 10_000.0;
+            ClassificationSearchSignal {
+                topic_id,
+                normalized_score,
+                reason: format!(
+                    "SQLite FTS5/BM25 命中 {matched_terms} 个主题词，归一化相关度 {}%",
+                    (normalized_score * 100.0).round()
+                ),
+            }
+        })
+        .collect())
+}
+
+fn split_search_terms(value: &str) -> Vec<String> {
+    value
+        .split(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    ',' | '，' | '、' | ';' | '；' | ':' | '：' | '/' | '\\' | '|' | '\n'
+                )
+        })
+        .map(str::trim)
+        .filter(|term| (2..=48).contains(&term.chars().count()))
+        .map(str::to_string)
+        .collect()
+}
+
+fn deduplicate_strings(values: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    values.retain(|value| {
+        let normalized = normalize_name(value);
+        !normalized.is_empty() && seen.insert(normalized)
+    });
+}
+
 fn normalize_name(value: &str) -> String {
     value
         .trim()
@@ -2138,6 +2639,169 @@ mod tests {
             list_inbox(&connection, 20).expect("inbox")[0].legacy_record_id,
             Some(record.id)
         );
+    }
+
+    #[test]
+    fn classification_context_uses_persisted_rules_entities_history_and_bm25() {
+        let mut connection = database::open_memory_database().expect("database");
+        let domain = create_domain(
+            &connection,
+            &CreateKnowledgeDomainInput {
+                name: "AI 与软件".to_string(),
+                description: String::new(),
+            },
+        )
+        .expect("domain");
+        let target_topic = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "模型与成本".to_string(),
+                description: "Claude API token 推理价格".to_string(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("target topic");
+        create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "代码编辑器".to_string(),
+                description: "IDE 插件快捷键".to_string(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("other topic");
+        let now = Utc::now().to_rfc3339();
+        connection
+            .execute(
+                "INSERT INTO topic_aliases(
+                   topic_id, alias, normalized_alias, alias_type, created_at
+                 ) VALUES (?1, '模型价格', '模型价格', 'name', ?2)",
+                params![target_topic.id, now],
+            )
+            .expect("alias");
+        connection
+            .execute(
+                "INSERT INTO entity_dictionary(
+                   canonical_name, normalized_name, aliases_json, created_at, updated_at
+                 ) VALUES ('Claude', 'claude', '[\"Anthropic\"]', ?1, ?1)",
+                [now.as_str()],
+            )
+            .expect("dictionary");
+        connection
+            .execute(
+                "INSERT INTO classification_rules(
+                   public_id, rule_type, pattern, target_topic_id, weight,
+                   priority, enabled, created_at, updated_at
+                 ) VALUES
+                   ('rule-entity-claude', 'entity', 'Claude', ?1, 0.9, 10, 1, ?2, ?2),
+                   ('rule-keyword-token', 'keyword', 'token', ?1, 0.8, 5, 1, ?2, ?2)",
+                params![target_topic.id, now],
+            )
+            .expect("rules");
+
+        database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "历史 Claude API 成本".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: "Claude API token 价格".to_string(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("historical source");
+        let historical_source = list_inbox(&connection, 20)
+            .expect("historical inbox")
+            .into_iter()
+            .find(|item| item.title == "历史 Claude API 成本")
+            .expect("historical row");
+        confirm_classification(
+            &mut connection,
+            &ConfirmKnowledgeClassificationInput {
+                source_item_id: historical_source.id,
+                topic_id: target_topic.id,
+                suggestion_id: None,
+                confidence: 95.0,
+            },
+        )
+        .expect("historical confirmation");
+
+        database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "Claude token 推理价格观察".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: vec!["模型".to_string()],
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: "Anthropic 调整 Claude API token 成本".to_string(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("target source");
+        let source = list_inbox(&connection, 20)
+            .expect("target inbox")
+            .into_iter()
+            .find(|item| item.title == "Claude token 推理价格观察")
+            .expect("target row");
+
+        let first =
+            prepare_classification_context(&connection, source.id).expect("classification context");
+        let second =
+            prepare_classification_context(&connection, source.id).expect("deterministic context");
+        assert_eq!(first, second);
+        let topic = first
+            .topics
+            .iter()
+            .find(|topic| topic.id == target_topic.id.to_string())
+            .expect("target topic context");
+        assert_eq!(topic.path, vec!["AI 与软件", "模型与成本"]);
+        assert!(topic.aliases.contains(&"模型价格".to_string()));
+        assert!(topic.entities.contains(&"Claude".to_string()));
+        assert!(topic.entities.contains(&"Anthropic".to_string()));
+        assert!(first.rules.iter().any(|rule| {
+            rule.topic_id == target_topic.id.to_string()
+                && rule.value == "token"
+                && rule.strength == 0.8
+        }));
+        assert_eq!(
+            first
+                .history
+                .confirmed_topic_counts
+                .get(&target_topic.id.to_string()),
+            Some(&1)
+        );
+        assert!(first
+            .history
+            .recent_topic_ids
+            .contains(&target_topic.id.to_string()));
+        let signal = first
+            .search_signals
+            .iter()
+            .find(|signal| signal.topic_id == target_topic.id.to_string())
+            .expect("bm25 signal");
+        assert!(signal.normalized_score > 0.0);
+        assert!(signal.reason.contains("FTS5/BM25"));
     }
 
     #[test]

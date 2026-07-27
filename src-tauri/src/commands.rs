@@ -97,6 +97,17 @@ pub fn list_knowledge_topics(
 }
 
 #[tauri::command]
+pub fn prepare_knowledge_classification_context(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+) -> Result<crate::knowledge::repository::KnowledgeClassificationContext, CommandError> {
+    let connection = command(state.connection())?;
+    command(
+        crate::knowledge::repository::prepare_classification_context(&connection, source_item_id),
+    )
+}
+
+#[tauri::command]
 pub fn create_knowledge_domain(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateKnowledgeDomainInput,

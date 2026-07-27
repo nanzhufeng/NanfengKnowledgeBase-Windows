@@ -13,7 +13,6 @@ import {
   Sparkles,
 } from "lucide-react";
 import { CLASSIFIER_ALGORITHM_VERSION, classifySource } from "../knowledge/deterministicClassifier";
-import type { KnowledgeTopicCandidate } from "../knowledge/domain";
 import {
   KnowledgeRepository,
   type KnowledgeClassificationSuggestionRow,
@@ -41,21 +40,6 @@ function topicPath(topic: KnowledgeTopicRow, topics: KnowledgeTopicRow[]): strin
     parentId = parent.parentTopicId;
   }
   return result;
-}
-
-function classifierTopics(topics: KnowledgeTopicRow[]): KnowledgeTopicCandidate[] {
-  return topics.map((topic) => ({
-    id: String(topic.id),
-    primaryDomainId: String(topic.domainId),
-    path: topicPath(topic, topics),
-    name: topic.name,
-    aliases: [],
-    entities: [],
-    keywords: topic.description.split(/[\s,，、；;]+/).filter(Boolean),
-    searchDocument: `${topic.name}\n${topic.description}`,
-    status: topic.status === "archived" ? "archived" : "active",
-    updatedAt: "1970-01-01T00:00:00.000Z",
-  }));
 }
 
 export function KnowledgeWorkspace({
@@ -242,25 +226,8 @@ export function KnowledgeWorkspace({
     }
     setBusy(true);
     try {
-      const result = classifySource({
-        source: {
-          id: selected.publicId,
-          title: selected.title,
-          text: selected.originalText,
-          kind: selected.sourceType === "conversation" ? "ai_conversation" : selected.sourceType as never,
-          platform: selected.platform,
-          importedAt: selected.importedAt,
-        },
-        topics: classifierTopics(topics),
-        rules: [],
-        history: {
-          confirmedTopicCounts: Object.fromEntries(
-            topics.map((topic) => [String(topic.id), topic.sourceCount]),
-          ),
-          recentTopicIds: [],
-          batchTopicIds: {},
-        },
-      });
+      const context = await repository.prepareClassificationContext(selected.id);
+      const result = classifySource(context);
       const persisted = await repository.saveSuggestions({
         sourceItemId: selected.id,
         classifierVersion: CLASSIFIER_ALGORITHM_VERSION,

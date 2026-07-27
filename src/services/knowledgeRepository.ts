@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+import {
+  sourceKindSchema,
+  topicStatusSchema,
+  type ClassificationContext,
+} from "../knowledge/domain";
 
 const inboxItemSchema = z.object({
   id: z.number().int(),
@@ -52,6 +57,68 @@ const suggestionRowSchema = z.object({
   classifierVersion: z.string(),
   status: z.string(),
   createdAt: z.string(),
+});
+
+const nullableOptionalStringSchema = z.string().nullable().transform((value) => value ?? undefined);
+
+const classificationContextSchema = z.object({
+  source: z.object({
+    id: z.string(),
+    title: z.string(),
+    text: z.string(),
+    kind: sourceKindSchema,
+    platform: nullableOptionalStringSchema,
+    fileName: nullableOptionalStringSchema,
+    filePath: nullableOptionalStringSchema,
+    folderPath: nullableOptionalStringSchema,
+    tags: z.array(z.string()),
+    jsonFields: z.record(z.string(), z.string()),
+    importedAt: z.string(),
+    batchId: nullableOptionalStringSchema,
+  }),
+  topics: z.array(z.object({
+    id: z.string(),
+    primaryDomainId: z.string(),
+    path: z.array(z.string()),
+    name: z.string(),
+    aliases: z.array(z.string()),
+    entities: z.array(z.string()),
+    keywords: z.array(z.string()),
+    searchDocument: z.string(),
+    status: topicStatusSchema,
+    updatedAt: z.string(),
+  })),
+  rules: z.array(z.object({
+    id: z.string(),
+    topicId: z.string(),
+    field: z.enum([
+      "title",
+      "text",
+      "platform",
+      "source_kind",
+      "file_name",
+      "file_path",
+      "folder_path",
+      "tag",
+      "json_field",
+    ]),
+    operator: z.enum(["contains", "equals"]),
+    value: z.string(),
+    jsonField: nullableOptionalStringSchema,
+    strength: z.number().min(0).max(1),
+    reason: z.string(),
+    enabled: z.boolean(),
+  })),
+  history: z.object({
+    confirmedTopicCounts: z.record(z.string(), z.number().int().nonnegative()),
+    recentTopicIds: z.array(z.string()),
+    batchTopicIds: z.record(z.string(), z.array(z.string())),
+  }),
+  searchSignals: z.array(z.object({
+    topicId: z.string(),
+    normalizedScore: z.number().min(0).max(1),
+    reason: z.string(),
+  })),
 });
 
 const operationResultSchema = z.object({
@@ -215,6 +282,12 @@ export class KnowledgeRepository {
     return domainRowSchema.parse(await invoke("create_knowledge_domain", {
       input: { name, description },
     }));
+  }
+
+  async prepareClassificationContext(sourceItemId: number): Promise<ClassificationContext> {
+    return classificationContextSchema.parse(
+      await invoke("prepare_knowledge_classification_context", { sourceItemId }),
+    );
   }
 
   async createTopic(input: {

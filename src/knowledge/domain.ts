@@ -14,6 +14,7 @@ export const sourceKindSchema = z.enum([
   "transcript",
   "image",
   "manual",
+  "file",
 ]);
 export type SourceKind = z.infer<typeof sourceKindSchema>;
 
