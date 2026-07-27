@@ -13,7 +13,7 @@
 | Judgment Snapshot | 某时点判断、置信度和变化原因 | `knowledge/repository.rs` | `addTopicJudgment/getTopicDetail` | 主题页、时间线、上下文 | 覆盖旧判断冒充时间线 | 追加写入和读取已接入 |
 | Evidence | 支持/反驳关系和来源锚点 | `knowledge/repository.rs` | `addTopicEvidence/getTopicDetail` | 主题页、上下文 | 无来源证据；页面各自标强弱 | 正式命令已接入 |
 | Open Question | 待验证问题及状态 | `knowledge/repository.rs` | `addTopicQuestion/getTopicDetail` | 主题页、上下文 | 与普通待办混用 | 正式命令已接入 |
-| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 评分：`deterministicClassifier.ts`；持久化/确认：`knowledge/repository.rs` | `save/list/confirm/undoClassification` | 收录箱 | 分类器直接写库；页面复制评分规则 | 建议持久化、人工确认和撤销已接入；FTS5/BM25 生产信号未接入 |
+| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 评分：`deterministicClassifier.ts`；持久化输入/确认：`knowledge/repository.rs` | `prepare/save/list/confirm/undoClassification` | 收录箱 | 分类器直接写库；页面复制评分规则 | SQLite 别名/实体规则、用户规则、历史确认和 FTS5/BM25 信号已通过统一输入命令接入；管理 CRUD 与纠正反馈仍待完成 |
 | Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 整理工作台、操作日志 | 无预览直接批量改外键 | 合并事务与撤销已实现；拆分仍只预览；别名重定向未实现 |
 | Research Context | 本地可审阅的研究上下文 | `knowledge/repository.rs` | `compileTopicContext` | 主题页、导出/后续 Codex 交换 | 调模型生成不透明摘要 | 本地确定性编译已接入 |
 | Proposition / Turning Point | 可复用命题与人工确认的判断转折 | 尚无独立生产所有者 | 无 | 未来判断演化 | 从展示文本临时推断身份 | 未实现，不能以判断文本替代 |
