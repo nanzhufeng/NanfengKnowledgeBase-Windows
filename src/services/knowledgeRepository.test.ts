@@ -162,3 +162,99 @@ describe("KnowledgeRepository notes", () => {
     expect(note.sourceItemIds).toEqual([12, 15]);
   });
 });
+
+describe("KnowledgeRepository knowledge evolution", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("serializes a typed evidence locator without leaking page-only fields", async () => {
+    invoke.mockResolvedValue({
+      id: 4,
+      publicId: "evidence-4",
+      sourceItemId: 12,
+      sourceTitle: "访谈字幕",
+      contentMarkdown: "关键表述",
+      stance: "support",
+      credibility: 85,
+      verificationStatus: "verified",
+      validityStatus: "active",
+      locatorJson: JSON.stringify({
+        kind: "timecode",
+        value: "00:12:30",
+        quote: "关键表述",
+      }),
+      locatorLabel: "时间码：00:12:30",
+      createdAt: "2026-07-27T10:00:00+08:00",
+    });
+
+    const evidence = await new KnowledgeRepository().addTopicEvidence({
+      topicId: 3,
+      sourceItemId: 12,
+      contentMarkdown: "关键表述",
+      stance: "support",
+      credibility: 85,
+      verificationStatus: "verified",
+      validityStatus: "active",
+      locator: {
+        kind: "timecode",
+        value: " 00:12:30 ",
+        quote: " 关键表述 ",
+      },
+    });
+
+    expect(invoke).toHaveBeenCalledWith("add_knowledge_topic_evidence", {
+      input: {
+        topicId: 3,
+        sourceItemId: 12,
+        contentMarkdown: "关键表述",
+        stance: "support",
+        credibility: 85,
+        verificationStatus: "verified",
+        validityStatus: "active",
+        locatorJson: JSON.stringify({
+          kind: "timecode",
+          value: "00:12:30",
+          quote: "关键表述",
+        }),
+      },
+    });
+    expect(evidence.locatorLabel).toBe("时间码：00:12:30");
+  });
+
+  it("creates a turning point only through the explicit command", async () => {
+    invoke.mockResolvedValue({
+      id: 7,
+      publicId: "turning-point-7",
+      topicId: 3,
+      fromJudgmentId: 10,
+      fromStatementMarkdown: "旧判断",
+      toJudgmentId: 11,
+      toStatementMarkdown: "新判断",
+      title: "交付策略改变",
+      explanation: "新证据改变了风险评估",
+      occurredAt: "2026-07-27T10:00:00+08:00",
+      createdAt: "2026-07-27T10:00:00+08:00",
+    });
+
+    const point = await new KnowledgeRepository().createTurningPoint({
+      topicId: 3,
+      fromJudgmentId: 10,
+      toJudgmentId: 11,
+      title: "交付策略改变",
+      explanation: "新证据改变了风险评估",
+    });
+
+    expect(invoke).toHaveBeenCalledWith("create_knowledge_turning_point", {
+      input: {
+        topicId: 3,
+        fromJudgmentId: 10,
+        toJudgmentId: 11,
+        title: "交付策略改变",
+        explanation: "新证据改变了风险评估",
+        occurredAt: "",
+      },
+    });
+    expect(point.toJudgmentId).toBe(11);
+  });
+});

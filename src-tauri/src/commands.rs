@@ -396,6 +396,54 @@ pub fn archive_knowledge_note(
 }
 
 #[tauri::command]
+pub fn create_knowledge_proposition(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateTopicPropositionInput,
+) -> Result<crate::knowledge::repository::TopicPropositionRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_proposition(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn update_knowledge_proposition(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateTopicPropositionInput,
+) -> Result<crate::knowledge::repository::TopicPropositionRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_proposition(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn supersede_knowledge_proposition(
+    state: State<'_, AppState>,
+    proposition_id: i64,
+) -> Result<crate::knowledge::repository::TopicPropositionRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::supersede_proposition(
+        &connection,
+        proposition_id,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_turning_point(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateTopicTurningPointInput,
+) -> Result<crate::knowledge::repository::TopicTurningPointRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_turning_point(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
 pub fn add_knowledge_topic_judgment(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::AddTopicJudgmentInput,

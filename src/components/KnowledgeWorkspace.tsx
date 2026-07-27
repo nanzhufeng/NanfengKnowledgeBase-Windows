@@ -15,6 +15,7 @@ import {
 import { CLASSIFIER_ALGORITHM_VERSION, classifySource } from "../knowledge/deterministicClassifier";
 import {
   KnowledgeRepository,
+  type EvidenceLocator,
   type KnowledgeClassificationSuggestionRow,
   type KnowledgeClassificationRuleRow,
   type KnowledgeDomainRow,
@@ -26,6 +27,7 @@ import {
   type KnowledgeTopicRow,
   type PersonalCatalogProposal,
   type TopicMergePreview,
+  type TopicPropositionRow,
   type TopicRelationSuggestion,
   type TopicSplitPreview,
 } from "../services/knowledgeRepository";
@@ -45,6 +47,33 @@ function topicPath(topic: KnowledgeTopicRow, topics: KnowledgeTopicRow[]): strin
     parentId = parent.parentTopicId;
   }
   return result;
+}
+
+const locatorLabels: Record<EvidenceLocator["kind"], string> = {
+  none: "无精确锚点",
+  message: "AI 对话消息 ID",
+  timecode: "音视频时间码",
+  subtitle_line: "字幕行",
+  page: "PDF 页码",
+  html_paragraph: "HTML 段落",
+  markdown_heading: "Markdown 标题",
+  json_path: "JSON 路径",
+  file_fragment: "本地文件片段",
+  text_quote: "短文本引用",
+};
+
+function locatorKindsForSource(sourceType?: string): EvidenceLocator["kind"][] {
+  const shared: EvidenceLocator["kind"][] = ["none", "text_quote", "file_fragment"];
+  if (sourceType === "ai_conversation") return ["none", "message", "json_path", "text_quote"];
+  if (sourceType === "json") return ["none", "json_path", "message", "text_quote"];
+  if (["audio", "video"].includes(sourceType ?? "")) return ["none", "timecode", "text_quote"];
+  if (["subtitle", "transcript"].includes(sourceType ?? "")) {
+    return ["none", "timecode", "subtitle_line", "text_quote"];
+  }
+  if (sourceType === "pdf") return ["none", "page", "text_quote"];
+  if (["html", "web"].includes(sourceType ?? "")) return ["none", "html_paragraph", "text_quote"];
+  if (sourceType === "markdown") return ["none", "markdown_heading", "text_quote"];
+  return shared;
 }
 
 export function KnowledgeWorkspace({
@@ -77,7 +106,21 @@ export function KnowledgeWorkspace({
   const [judgmentReason, setJudgmentReason] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
   const [evidenceSourceId, setEvidenceSourceId] = useState<number | null>(null);
+  const [evidenceStance, setEvidenceStance] = useState<"support" | "oppose" | "context">("context");
+  const [evidenceCredibility, setEvidenceCredibility] = useState(60);
+  const [evidenceVerificationStatus, setEvidenceVerificationStatus] = useState("unverified");
+  const [evidenceValidityStatus, setEvidenceValidityStatus] = useState("active");
+  const [evidenceLocatorKind, setEvidenceLocatorKind] = useState<EvidenceLocator["kind"]>("none");
+  const [evidenceLocatorValue, setEvidenceLocatorValue] = useState("");
+  const [evidenceQuote, setEvidenceQuote] = useState("");
   const [questionText, setQuestionText] = useState("");
+  const [propositionEditId, setPropositionEditId] = useState<number | null>(null);
+  const [propositionText, setPropositionText] = useState("");
+  const [propositionStatus, setPropositionStatus] = useState<TopicPropositionRow["status"]>("open");
+  const [turningFromJudgmentId, setTurningFromJudgmentId] = useState<number | null>(null);
+  const [turningToJudgmentId, setTurningToJudgmentId] = useState<number | null>(null);
+  const [turningTitle, setTurningTitle] = useState("");
+  const [turningExplanation, setTurningExplanation] = useState("");
   const [noteEditId, setNoteEditId] = useState<number | null>(null);
   const [noteTitle, setNoteTitle] = useState("");
   const [noteSummary, setNoteSummary] = useState("");
@@ -181,6 +224,8 @@ export function KnowledgeWorkspace({
       .then((detail) => {
         setTopicDetail(detail);
         setEvidenceSourceId(detail.sources[0]?.id ?? null);
+        setTurningToJudgmentId(detail.judgments[0]?.id ?? null);
+        setTurningFromJudgmentId(detail.judgments[1]?.id ?? null);
       })
       .catch((error) => onNotify(error instanceof Error ? error.message : "主题详情读取失败"));
   }, [browserTopicId, mode, repository]);
@@ -194,7 +239,16 @@ export function KnowledgeWorkspace({
 
   const reloadTopicDetail = async () => {
     if (!browserTopicId) return;
-    setTopicDetail(await repository.getTopicDetail(browserTopicId));
+    const detail = await repository.getTopicDetail(browserTopicId);
+    setTopicDetail(detail);
+    setTurningToJudgmentId((current) =>
+      current && detail.judgments.some((item) => item.id === current)
+        ? current
+        : detail.judgments[0]?.id ?? null);
+    setTurningFromJudgmentId((current) =>
+      current && detail.judgments.some((item) => item.id === current)
+        ? current
+        : detail.judgments[1]?.id ?? null);
     setTopics(await repository.listTopics());
   };
 
@@ -491,6 +545,79 @@ export function KnowledgeWorkspace({
     }
   };
 
+  const resetPropositionEditor = () => {
+    setPropositionEditId(null);
+    setPropositionText("");
+    setPropositionStatus("open");
+  };
+
+  const saveProposition = async () => {
+    if (!topicDetail || !propositionText.trim()) return;
+    setBusy(true);
+    try {
+      if (propositionEditId) {
+        await repository.updateProposition({
+          id: propositionEditId,
+          statementMarkdown: propositionText.trim(),
+          status: propositionStatus,
+        });
+      } else {
+        await repository.createProposition({
+          topicId: topicDetail.topic.id,
+          statementMarkdown: propositionText.trim(),
+          status: propositionStatus,
+        });
+      }
+      const wasEditing = propositionEditId !== null;
+      resetPropositionEditor();
+      await reloadTopicDetail();
+      onNotify(wasEditing ? "命题已更新" : "命题已创建");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "命题保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const supersedeProposition = async (propositionId: number) => {
+    if (!window.confirm("将这条命题标记为已被替代？命题历史会保留。")) return;
+    setBusy(true);
+    try {
+      await repository.supersedeProposition(propositionId);
+      if (propositionEditId === propositionId) resetPropositionEditor();
+      await reloadTopicDetail();
+      onNotify("命题已标记为被替代，历史未删除");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "命题状态更新失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveTurningPoint = async () => {
+    if (!topicDetail || !turningToJudgmentId || !turningTitle.trim() || !turningExplanation.trim()) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await repository.createTurningPoint({
+        topicId: topicDetail.topic.id,
+        fromJudgmentId: turningFromJudgmentId,
+        toJudgmentId: turningToJudgmentId,
+        title: turningTitle.trim(),
+        explanation: turningExplanation.trim(),
+      });
+      setTurningTitle("");
+      setTurningExplanation("");
+      await reloadTopicDetail();
+      onNotify("关键转折已由用户明确确认");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "关键转折保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const generateSuggestions = async () => {
     if (!selected || !topics.length) {
       onNotify("请先在“主题浏览器”建立至少一个真实主题");
@@ -655,6 +782,11 @@ export function KnowledgeWorkspace({
                     onClick={() => {
                       setBrowserTopicId(topic.id);
                       resetNoteEditor();
+                      resetPropositionEditor();
+                      setEvidenceText("");
+                      setEvidenceLocatorKind("none");
+                      setEvidenceLocatorValue("");
+                      setEvidenceQuote("");
                     }}
                   >
                     <ChevronRight size={14} /><span>{topic.name}</span><em>{topic.sourceCount} 条来源</em>
@@ -708,25 +840,112 @@ export function KnowledgeWorkspace({
                 {topicDetail.evidence.map((item) => (
                   <article className={`knowledge-evidence-item ${item.stance}`} key={item.id}>
                     <MarkdownContent value={item.contentMarkdown} />
-                    <small>{item.sourceTitle} · 可信度 {Math.round(item.credibility)}%</small>
+                    <small>
+                      {item.sourceTitle} · 可信度 {Math.round(item.credibility)}% · {item.locatorLabel}
+                      {" · "}{item.verificationStatus}/{item.validityStatus}
+                    </small>
                   </article>
                 ))}
-                <select value={evidenceSourceId ?? ""} onChange={(event) => setEvidenceSourceId(event.target.value ? Number(event.target.value) : null)}>
+                <select value={evidenceSourceId ?? ""} onChange={(event) => {
+                  const sourceId = event.target.value ? Number(event.target.value) : null;
+                  setEvidenceSourceId(sourceId);
+                  setEvidenceLocatorKind("none");
+                  setEvidenceLocatorValue("");
+                }}>
                   <option value="">选择已归类来源</option>
                   {topicDetail.sources.map((source) => <option key={source.id} value={source.id}>{source.title}</option>)}
                 </select>
                 <textarea value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} placeholder="证据内容或原文摘录" />
-                <button disabled={!evidenceText.trim() || !evidenceSourceId} onClick={async () => {
+                <div className="knowledge-evidence-fields">
+                  <select
+                    value={evidenceStance}
+                    onChange={(event) => setEvidenceStance(event.target.value as typeof evidenceStance)}
+                  >
+                    <option value="support">支持</option>
+                    <option value="oppose">反对</option>
+                    <option value="context">背景</option>
+                  </select>
+                  <label>
+                    可信度 {evidenceCredibility}%
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={evidenceCredibility}
+                      onChange={(event) => setEvidenceCredibility(Number(event.target.value))}
+                    />
+                  </label>
+                  <select
+                    value={evidenceVerificationStatus}
+                    onChange={(event) => setEvidenceVerificationStatus(event.target.value)}
+                  >
+                    <option value="unverified">未验证</option>
+                    <option value="verified">已验证</option>
+                    <option value="disputed">有争议</option>
+                  </select>
+                  <select
+                    value={evidenceValidityStatus}
+                    onChange={(event) => setEvidenceValidityStatus(event.target.value)}
+                  >
+                    <option value="active">当前有效</option>
+                    <option value="possibly_outdated">可能过时</option>
+                    <option value="expired">已失效</option>
+                  </select>
+                </div>
+                <select
+                  value={evidenceLocatorKind}
+                  onChange={(event) => {
+                    setEvidenceLocatorKind(event.target.value as EvidenceLocator["kind"]);
+                    setEvidenceLocatorValue("");
+                  }}
+                >
+                  {locatorKindsForSource(
+                    topicDetail.sources.find((source) => source.id === evidenceSourceId)?.sourceType,
+                  ).map((kind) => <option key={kind} value={kind}>{locatorLabels[kind]}</option>)}
+                </select>
+                {evidenceLocatorKind !== "none" ? (
+                  <>
+                    <input
+                      value={evidenceLocatorValue}
+                      onChange={(event) => setEvidenceLocatorValue(event.target.value)}
+                      placeholder={`填写${locatorLabels[evidenceLocatorKind]}的精确值`}
+                    />
+                    <input
+                      value={evidenceQuote}
+                      onChange={(event) => setEvidenceQuote(event.target.value)}
+                      placeholder="可选：保存一段短引用帮助核对"
+                    />
+                  </>
+                ) : null}
+                <button
+                  disabled={
+                    !evidenceText.trim()
+                    || !evidenceSourceId
+                    || (evidenceLocatorKind !== "none" && !evidenceLocatorValue.trim())
+                  }
+                  onClick={async () => {
                   await repository.addTopicEvidence({
                     topicId: topicDetail.topic.id,
                     sourceItemId: evidenceSourceId!,
                     contentMarkdown: evidenceText,
-                    credibility: 60,
+                    stance: evidenceStance,
+                    credibility: evidenceCredibility,
+                    verificationStatus: evidenceVerificationStatus,
+                    validityStatus: evidenceValidityStatus,
+                    locator: {
+                      kind: evidenceLocatorKind,
+                      value: evidenceLocatorValue,
+                      quote: evidenceQuote,
+                    },
                   });
                   setEvidenceText("");
+                  setEvidenceLocatorKind("none");
+                  setEvidenceLocatorValue("");
+                  setEvidenceQuote("");
                   await reloadTopicDetail();
-                  onNotify("证据已关联到原始来源");
-                }}><Plus size={15} />添加证据</button>
+                  onNotify("证据及来源锚点已保存");
+                  }}
+                ><Plus size={15} />添加证据</button>
               </div>
               <div>
                 <h3>待验证问题</h3>
@@ -746,6 +965,155 @@ export function KnowledgeWorkspace({
                   onNotify("待验证问题已添加");
                 }}><Plus size={15} />添加问题</button>
               </div>
+            </div>
+            <div className="knowledge-evolution-columns">
+              <section>
+                <div className="knowledge-note-section-title">
+                  <div>
+                    <span>可验证的具体陈述</span>
+                    <h3>命题</h3>
+                  </div>
+                  <em>{topicDetail.propositions.length} 条</em>
+                </div>
+                <div className="knowledge-proposition-list">
+                  {topicDetail.propositions.map((proposition) => (
+                    <article
+                      className={proposition.status === "superseded" ? "superseded" : ""}
+                      key={proposition.id}
+                    >
+                      <div>
+                        <span>{proposition.status}</span>
+                        <MarkdownContent value={proposition.statementMarkdown} />
+                      </div>
+                      <footer>
+                        <button disabled={busy} onClick={() => {
+                          setPropositionEditId(proposition.id);
+                          setPropositionText(proposition.statementMarkdown);
+                          setPropositionStatus(proposition.status);
+                        }}>编辑</button>
+                        {proposition.status !== "superseded" ? (
+                          <button
+                            className="danger"
+                            disabled={busy}
+                            onClick={() => void supersedeProposition(proposition.id)}
+                          >
+                            标记为被替代
+                          </button>
+                        ) : null}
+                      </footer>
+                    </article>
+                  ))}
+                  {!topicDetail.propositions.length ? (
+                    <p className="knowledge-empty">尚无可独立复用和验证的命题。</p>
+                  ) : null}
+                </div>
+                <div className="knowledge-inline-editor">
+                  <textarea
+                    value={propositionText}
+                    onChange={(event) => setPropositionText(event.target.value)}
+                    placeholder="写下一条可验证、可被证据支持或反驳的具体陈述"
+                  />
+                  <select
+                    value={propositionStatus}
+                    onChange={(event) => setPropositionStatus(event.target.value as TopicPropositionRow["status"])}
+                  >
+                    <option value="open">待判断</option>
+                    <option value="supported">暂时成立</option>
+                    <option value="rejected">已推翻</option>
+                    <option value="superseded">已被替代</option>
+                  </select>
+                  <div>
+                    <button disabled={busy || !propositionText.trim()} onClick={() => void saveProposition()}>
+                      {propositionEditId ? "保存命题" : "创建命题"}
+                    </button>
+                    {propositionEditId ? (
+                      <button className="secondary" disabled={busy} onClick={resetPropositionEditor}>
+                        取消
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </section>
+              <section>
+                <div className="knowledge-note-section-title">
+                  <div>
+                    <span>仅由用户明确确认</span>
+                    <h3>关键转折</h3>
+                  </div>
+                  <em>{topicDetail.turningPoints.length} 个</em>
+                </div>
+                <div className="knowledge-turning-list">
+                  {topicDetail.turningPoints.map((point) => (
+                    <article key={point.id}>
+                      <strong>{point.title}</strong>
+                      <p>{point.explanation}</p>
+                      <div className="knowledge-turning-change">
+                        <span>{point.fromStatementMarkdown ?? "此前无判断"}</span>
+                        <ArrowRight size={15} />
+                        <span>{point.toStatementMarkdown}</span>
+                      </div>
+                      <small>{point.occurredAt}</small>
+                    </article>
+                  ))}
+                  {!topicDetail.turningPoints.length ? (
+                    <p className="knowledge-empty">变化原因不会自动升格；请在下方明确选择前后判断。</p>
+                  ) : null}
+                </div>
+                <div className="knowledge-inline-editor">
+                  <div className="knowledge-turning-selects">
+                    <label>
+                      改变前
+                      <select
+                        value={turningFromJudgmentId ?? ""}
+                        onChange={(event) => setTurningFromJudgmentId(
+                          event.target.value ? Number(event.target.value) : null,
+                        )}
+                      >
+                        <option value="">此前无判断</option>
+                        {topicDetail.judgments.map((judgment) => (
+                          <option key={judgment.id} value={judgment.id}>{judgment.statementMarkdown}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      改变后
+                      <select
+                        value={turningToJudgmentId ?? ""}
+                        onChange={(event) => setTurningToJudgmentId(
+                          event.target.value ? Number(event.target.value) : null,
+                        )}
+                      >
+                        <option value="">请选择判断快照</option>
+                        {topicDetail.judgments.map((judgment) => (
+                          <option key={judgment.id} value={judgment.id}>{judgment.statementMarkdown}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <input
+                    value={turningTitle}
+                    onChange={(event) => setTurningTitle(event.target.value)}
+                    placeholder="转折标题"
+                  />
+                  <textarea
+                    value={turningExplanation}
+                    onChange={(event) => setTurningExplanation(event.target.value)}
+                    placeholder="为什么这次变化足以构成关键转折？"
+                  />
+                  <button
+                    disabled={
+                      busy
+                      || !turningToJudgmentId
+                      || turningFromJudgmentId === turningToJudgmentId
+                      || !turningTitle.trim()
+                      || !turningExplanation.trim()
+                    }
+                    onClick={() => void saveTurningPoint()}
+                  >
+                    明确确认为关键转折
+                  </button>
+                </div>
+              </section>
             </div>
             <div className="knowledge-note-workspace">
               <div className="knowledge-note-list">

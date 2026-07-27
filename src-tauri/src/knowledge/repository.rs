@@ -492,6 +492,7 @@ pub struct TopicEvidenceRow {
     pub verification_status: String,
     pub validity_status: String,
     pub locator_json: String,
+    pub locator_label: String,
     pub created_at: String,
 }
 
@@ -507,6 +508,34 @@ pub struct TopicQuestionRow {
     pub resolution_note: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicPropositionRow {
+    pub id: i64,
+    pub public_id: String,
+    pub topic_id: i64,
+    pub statement_markdown: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicTurningPointRow {
+    pub id: i64,
+    pub public_id: String,
+    pub topic_id: i64,
+    pub from_judgment_id: Option<i64>,
+    pub from_statement_markdown: Option<String>,
+    pub to_judgment_id: i64,
+    pub to_statement_markdown: String,
+    pub title: String,
+    pub explanation: String,
+    pub occurred_at: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -573,6 +602,8 @@ pub struct KnowledgeTopicDetail {
     pub evidence: Vec<TopicEvidenceRow>,
     pub questions: Vec<TopicQuestionRow>,
     pub notes: Vec<KnowledgeNoteRow>,
+    pub propositions: Vec<TopicPropositionRow>,
+    pub turning_points: Vec<TopicTurningPointRow>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -601,12 +632,58 @@ pub struct AddTopicEvidenceInput {
     pub stance: String,
     #[serde(default)]
     pub credibility: f64,
+    #[serde(default = "default_evidence_verification_status")]
+    pub verification_status: String,
+    #[serde(default = "default_evidence_validity_status")]
+    pub validity_status: String,
     #[serde(default)]
     pub locator_json: String,
 }
 
 fn default_evidence_stance() -> String {
     "context".to_string()
+}
+
+fn default_evidence_verification_status() -> String {
+    "unverified".to_string()
+}
+
+fn default_evidence_validity_status() -> String {
+    "active".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTopicPropositionInput {
+    pub topic_id: i64,
+    pub statement_markdown: String,
+    #[serde(default = "default_proposition_status")]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTopicPropositionInput {
+    pub id: i64,
+    pub statement_markdown: String,
+    pub status: String,
+}
+
+fn default_proposition_status() -> String {
+    "open".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTopicTurningPointInput {
+    pub topic_id: i64,
+    pub from_judgment_id: Option<i64>,
+    pub to_judgment_id: i64,
+    pub title: String,
+    #[serde(default)]
+    pub explanation: String,
+    #[serde(default)]
+    pub occurred_at: String,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1634,6 +1711,197 @@ pub fn archive_note(connection: &Connection, note_id: i64) -> AppResult<Knowledg
     get_note(connection, note_id)
 }
 
+pub fn list_propositions(
+    connection: &Connection,
+    topic_id: i64,
+) -> AppResult<Vec<TopicPropositionRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, public_id, topic_id, statement_markdown, status, created_at, updated_at
+         FROM propositions
+         WHERE topic_id = ?1
+         ORDER BY CASE status
+           WHEN 'supported' THEN 0 WHEN 'open' THEN 1 WHEN 'rejected' THEN 2 ELSE 3 END,
+           updated_at DESC, id DESC",
+    )?;
+    let rows = statement.query_map([topic_id], |row| {
+        Ok(TopicPropositionRow {
+            id: row.get(0)?,
+            public_id: row.get(1)?,
+            topic_id: row.get(2)?,
+            statement_markdown: row.get(3)?,
+            status: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn create_proposition(
+    connection: &Connection,
+    input: &CreateTopicPropositionInput,
+) -> AppResult<TopicPropositionRow> {
+    validate_proposition(input.statement_markdown.as_str(), input.status.as_str())?;
+    require_active_topic(connection, input.topic_id)?;
+    let now = Utc::now().to_rfc3339();
+    connection.execute(
+        "INSERT INTO propositions(
+           public_id, topic_id, statement_markdown, status, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+        params![
+            format!("proposition-{}", Uuid::new_v4()),
+            input.topic_id,
+            input.statement_markdown.trim(),
+            input.status,
+            now,
+        ],
+    )?;
+    get_proposition(connection, connection.last_insert_rowid())
+}
+
+pub fn update_proposition(
+    connection: &Connection,
+    input: &UpdateTopicPropositionInput,
+) -> AppResult<TopicPropositionRow> {
+    validate_proposition(input.statement_markdown.as_str(), input.status.as_str())?;
+    let changed = connection.execute(
+        "UPDATE propositions
+         SET statement_markdown = ?1, status = ?2, updated_at = ?3
+         WHERE id = ?4",
+        params![
+            input.statement_markdown.trim(),
+            input.status,
+            Utc::now().to_rfc3339(),
+            input.id,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(AppError::NotFound("命题不存在".to_string()));
+    }
+    get_proposition(connection, input.id)
+}
+
+pub fn supersede_proposition(
+    connection: &Connection,
+    proposition_id: i64,
+) -> AppResult<TopicPropositionRow> {
+    let proposition = get_proposition(connection, proposition_id)?;
+    update_proposition(
+        connection,
+        &UpdateTopicPropositionInput {
+            id: proposition.id,
+            statement_markdown: proposition.statement_markdown,
+            status: "superseded".to_string(),
+        },
+    )
+}
+
+pub fn list_turning_points(
+    connection: &Connection,
+    topic_id: i64,
+) -> AppResult<Vec<TopicTurningPointRow>> {
+    let mut statement = connection.prepare(
+        "SELECT point.id, point.public_id, point.topic_id,
+                point.from_judgment_id, previous.statement_markdown,
+                point.to_judgment_id, current.statement_markdown,
+                point.title, point.explanation, point.occurred_at, point.created_at
+         FROM turning_points point
+         LEFT JOIN judgment_snapshots previous ON previous.id = point.from_judgment_id
+         JOIN judgment_snapshots current ON current.id = point.to_judgment_id
+         WHERE point.topic_id = ?1
+         ORDER BY point.occurred_at DESC, point.id DESC",
+    )?;
+    let rows = statement.query_map([topic_id], |row| {
+        Ok(TopicTurningPointRow {
+            id: row.get(0)?,
+            public_id: row.get(1)?,
+            topic_id: row.get(2)?,
+            from_judgment_id: row.get(3)?,
+            from_statement_markdown: row.get(4)?,
+            to_judgment_id: row.get(5)?,
+            to_statement_markdown: row.get(6)?,
+            title: row.get(7)?,
+            explanation: row.get(8)?,
+            occurred_at: row.get(9)?,
+            created_at: row.get(10)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn create_turning_point(
+    connection: &Connection,
+    input: &CreateTopicTurningPointInput,
+) -> AppResult<TopicTurningPointRow> {
+    require_active_topic(connection, input.topic_id)?;
+    if input.title.trim().is_empty() {
+        return Err(AppError::Validation("转折标题不能为空".to_string()));
+    }
+    if input.explanation.trim().is_empty() {
+        return Err(AppError::Validation(
+            "请说明这次变化为什么构成关键转折".to_string(),
+        ));
+    }
+    if input.from_judgment_id == Some(input.to_judgment_id) {
+        return Err(AppError::Validation(
+            "转折前后的判断快照不能相同".to_string(),
+        ));
+    }
+    let (_, to_effective_at) =
+        require_topic_judgment(connection, input.topic_id, input.to_judgment_id)?;
+    if let Some(from_judgment_id) = input.from_judgment_id {
+        let (_, from_effective_at) =
+            require_topic_judgment(connection, input.topic_id, from_judgment_id)?;
+        if from_effective_at > to_effective_at {
+            return Err(AppError::Validation(
+                "改变前的判断不能晚于改变后的判断".to_string(),
+            ));
+        }
+    }
+    let duplicate = connection
+        .query_row(
+            "SELECT id FROM turning_points
+             WHERE topic_id = ?1
+               AND from_judgment_id IS ?2
+               AND to_judgment_id = ?3",
+            params![input.topic_id, input.from_judgment_id, input.to_judgment_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if duplicate.is_some() {
+        return Err(AppError::Conflict(
+            "这两个判断快照之间已经存在转折点".to_string(),
+        ));
+    }
+    let occurred_at = if input.occurred_at.trim().is_empty() {
+        to_effective_at
+    } else {
+        input.occurred_at.trim().to_string()
+    };
+    let now = Utc::now().to_rfc3339();
+    connection.execute(
+        "INSERT INTO turning_points(
+           public_id, topic_id, from_judgment_id, to_judgment_id,
+           title, explanation, occurred_at, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            format!("turning-point-{}", Uuid::new_v4()),
+            input.topic_id,
+            input.from_judgment_id,
+            input.to_judgment_id,
+            input.title.trim(),
+            input.explanation.trim(),
+            occurred_at,
+            now,
+        ],
+    )?;
+    let id = connection.last_insert_rowid();
+    list_turning_points(connection, input.topic_id)?
+        .into_iter()
+        .find(|point| point.id == id)
+        .ok_or_else(|| AppError::NotFound("转折点写入后无法读取".to_string()))
+}
+
 pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<KnowledgeTopicDetail> {
     let topic = list_topics(connection)?
         .into_iter()
@@ -1705,6 +1973,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
                 verification_status: row.get(7)?,
                 validity_status: row.get(8)?,
                 locator_json: row.get(9)?,
+                locator_label: evidence_locator_label(&row.get::<_, String>(9)?),
                 created_at: row.get(10)?,
             })
         })?;
@@ -1741,6 +2010,8 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
         judgments,
         evidence,
         questions,
+        propositions: list_propositions(connection, topic_id)?,
+        turning_points: list_turning_points(connection, topic_id)?,
     })
 }
 
@@ -2446,23 +2717,6 @@ pub fn add_topic_judgment(
             "UPDATE judgment_snapshots SET replaced_by_id = ?1 WHERE id = ?2",
             params![id, previous_id],
         )?;
-        if !input.change_reason.trim().is_empty() {
-            transaction.execute(
-                "INSERT INTO turning_points(
-                   public_id, topic_id, from_judgment_id, to_judgment_id,
-                   title, explanation, occurred_at, created_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-                params![
-                    format!("turning-point-{}", Uuid::new_v4()),
-                    input.topic_id,
-                    previous_id,
-                    id,
-                    "判断发生变化",
-                    input.change_reason.trim(),
-                    now,
-                ],
-            )?;
-        }
     }
     transaction.commit()?;
     Ok(TopicJudgmentRow {
@@ -2490,26 +2744,36 @@ pub fn add_topic_evidence(
     {
         return Err(AppError::Validation("证据立场或可信度无效".to_string()));
     }
-    connection
+    if !matches!(
+        input.verification_status.as_str(),
+        "unverified" | "verified" | "disputed"
+    ) || !matches!(
+        input.validity_status.as_str(),
+        "active" | "possibly_outdated" | "expired"
+    ) {
+        return Err(AppError::Validation(
+            "证据验证状态或有效状态无效".to_string(),
+        ));
+    }
+    let source_type = connection
         .query_row(
-            "SELECT 1 FROM source_topics WHERE source_item_id = ?1 AND topic_id = ?2",
+            "SELECT source.source_type
+             FROM source_topics link
+             JOIN source_items source ON source.id = link.source_item_id
+             WHERE link.source_item_id = ?1 AND link.topic_id = ?2",
             params![input.source_item_id, input.topic_id],
-            |_| Ok(()),
+            |row| row.get::<_, String>(0),
         )
         .map_err(|_| AppError::Validation("证据来源必须先归入当前主题".to_string()))?;
     let now = Utc::now().to_rfc3339();
     let public_id = format!("evidence-{}", Uuid::new_v4());
-    let locator_json = if input.locator_json.trim().is_empty() {
-        "{}"
-    } else {
-        serde_json::from_str::<serde_json::Value>(&input.locator_json)?;
-        input.locator_json.as_str()
-    };
+    let locator_json =
+        validate_evidence_locator(source_type.as_str(), input.locator_json.as_str())?;
     connection.execute(
         "INSERT INTO evidence(
            public_id, topic_id, source_item_id, content_markdown, stance,
-           credibility, locator_json, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+           credibility, verification_status, validity_status, locator_json, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             public_id,
             input.topic_id,
@@ -2517,6 +2781,8 @@ pub fn add_topic_evidence(
             content,
             input.stance,
             input.credibility,
+            input.verification_status,
+            input.validity_status,
             locator_json,
             now,
         ],
@@ -2589,7 +2855,7 @@ pub fn compile_topic_context(connection: &Connection, topic_id: i64) -> AppResul
                     item.content_markdown,
                     item.source_title,
                     item.credibility.round(),
-                    item.locator_json
+                    item.locator_label
                 ))
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -2606,6 +2872,35 @@ pub fn compile_topic_context(connection: &Connection, topic_id: i64) -> AppResul
             open_questions
                 .iter()
                 .map(|item| format!("- [{}] {}", item.importance, item.question))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    let active_propositions = detail
+        .propositions
+        .iter()
+        .filter(|proposition| proposition.status != "superseded")
+        .collect::<Vec<_>>();
+    if !active_propositions.is_empty() {
+        sections.push(format!(
+            "## 命题\n\n{}",
+            active_propositions
+                .iter()
+                .map(|item| format!("- [{}] {}", item.status, item.statement_markdown))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !detail.turning_points.is_empty() {
+        sections.push(format!(
+            "## 关键转折\n\n{}",
+            detail
+                .turning_points
+                .iter()
+                .map(|item| format!(
+                    "- {}（{}）：{}",
+                    item.title, item.occurred_at, item.explanation
+                ))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
@@ -3623,6 +3918,198 @@ fn infer_entity_type(value: &str) -> &'static str {
     }
 }
 
+fn validate_proposition(statement_markdown: &str, status: &str) -> AppResult<()> {
+    if statement_markdown.trim().is_empty() {
+        return Err(AppError::Validation("命题内容不能为空".to_string()));
+    }
+    if !matches!(status, "open" | "supported" | "rejected" | "superseded") {
+        return Err(AppError::Validation("命题状态无效".to_string()));
+    }
+    Ok(())
+}
+
+fn get_proposition(connection: &Connection, proposition_id: i64) -> AppResult<TopicPropositionRow> {
+    connection
+        .query_row(
+            "SELECT id, public_id, topic_id, statement_markdown, status, created_at, updated_at
+             FROM propositions WHERE id = ?1",
+            [proposition_id],
+            |row| {
+                Ok(TopicPropositionRow {
+                    id: row.get(0)?,
+                    public_id: row.get(1)?,
+                    topic_id: row.get(2)?,
+                    statement_markdown: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
+        .map_err(|_| AppError::NotFound("命题不存在".to_string()))
+}
+
+fn require_topic_judgment(
+    connection: &Connection,
+    topic_id: i64,
+    judgment_id: i64,
+) -> AppResult<(String, String)> {
+    connection
+        .query_row(
+            "SELECT statement_markdown, effective_at
+             FROM judgment_snapshots
+             WHERE id = ?1 AND topic_id = ?2",
+            params![judgment_id, topic_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| AppError::Validation("转折点引用的判断快照不属于当前主题".to_string()))
+}
+
+fn validate_evidence_locator(source_type: &str, locator_json: &str) -> AppResult<String> {
+    let raw = locator_json.trim();
+    if raw.is_empty() || raw == "{}" {
+        return Ok("{}".to_string());
+    }
+    let parsed = serde_json::from_str::<serde_json::Value>(raw)?;
+    let object = parsed
+        .as_object()
+        .ok_or_else(|| AppError::Validation("证据锚点必须是 JSON 对象".to_string()))?;
+    let legacy = [
+        ("messageId", "message"),
+        ("timecode", "timecode"),
+        ("page", "page"),
+        ("subtitleLine", "subtitle_line"),
+        ("paragraph", "html_paragraph"),
+        ("heading", "markdown_heading"),
+        ("jsonPath", "json_path"),
+        ("fragment", "file_fragment"),
+    ]
+    .into_iter()
+    .find_map(|(field, kind)| {
+        object
+            .get(field)
+            .and_then(|value| value.as_str())
+            .map(|value| (kind, value))
+    });
+    let kind = object
+        .get("kind")
+        .and_then(|value| value.as_str())
+        .or_else(|| legacy.map(|(kind, _)| kind))
+        .unwrap_or("none");
+    let value = object
+        .get("value")
+        .and_then(|value| value.as_str())
+        .or_else(|| legacy.map(|(_, value)| value))
+        .unwrap_or("")
+        .trim();
+    let quote = object
+        .get("quote")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim();
+    if !matches!(
+        kind,
+        "none"
+            | "message"
+            | "timecode"
+            | "subtitle_line"
+            | "page"
+            | "html_paragraph"
+            | "markdown_heading"
+            | "json_path"
+            | "file_fragment"
+            | "text_quote"
+    ) {
+        return Err(AppError::Validation("证据锚点类型无效".to_string()));
+    }
+    if kind == "none" {
+        return Ok("{}".to_string());
+    }
+    if value.is_empty() {
+        return Err(AppError::Validation("精确锚点值不能为空".to_string()));
+    }
+    if value.chars().count() > 500 || quote.chars().count() > 2_000 {
+        return Err(AppError::Validation("证据锚点或短引用过长".to_string()));
+    }
+    let source_matches = match kind {
+        "message" => matches!(source_type, "ai_conversation" | "json"),
+        "timecode" => matches!(source_type, "audio" | "video" | "subtitle" | "transcript"),
+        "subtitle_line" => matches!(source_type, "subtitle" | "transcript"),
+        "page" => source_type == "pdf",
+        "html_paragraph" => matches!(source_type, "html" | "web"),
+        "markdown_heading" => source_type == "markdown",
+        "json_path" => matches!(source_type, "json" | "ai_conversation"),
+        "file_fragment" | "text_quote" => true,
+        _ => false,
+    };
+    if !source_matches {
+        return Err(AppError::Validation(format!(
+            "锚点类型 {kind} 不适用于来源类型 {source_type}"
+        )));
+    }
+    if kind == "page" && value.parse::<u32>().ok().filter(|page| *page > 0).is_none() {
+        return Err(AppError::Validation("PDF 页码必须是正整数".to_string()));
+    }
+    Ok(serde_json::json!({
+        "kind": kind,
+        "value": value,
+        "quote": quote,
+    })
+    .to_string())
+}
+
+fn evidence_locator_label(locator_json: &str) -> String {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(locator_json) else {
+        return "锚点格式异常".to_string();
+    };
+    let Some(object) = parsed.as_object() else {
+        return "锚点格式异常".to_string();
+    };
+    let (kind, value) = if let (Some(kind), Some(value)) = (
+        object.get("kind").and_then(|value| value.as_str()),
+        object.get("value").and_then(|value| value.as_str()),
+    ) {
+        (kind, value)
+    } else {
+        [
+            ("messageId", "消息"),
+            ("timecode", "时间码"),
+            ("page", "页码"),
+            ("subtitleLine", "字幕行"),
+            ("paragraph", "HTML 段落"),
+            ("heading", "Markdown 标题"),
+            ("jsonPath", "JSON 路径"),
+            ("fragment", "文件片段"),
+        ]
+        .into_iter()
+        .find_map(|(field, label)| {
+            object
+                .get(field)
+                .and_then(|value| value.as_str())
+                .map(|value| (label, value))
+        })
+        .unwrap_or(("none", ""))
+    };
+    let label = match kind {
+        "message" => "消息",
+        "timecode" => "时间码",
+        "subtitle_line" => "字幕行",
+        "page" => "PDF 页码",
+        "html_paragraph" => "HTML 段落",
+        "markdown_heading" => "Markdown 标题",
+        "json_path" => "JSON 路径",
+        "file_fragment" => "文件片段",
+        "text_quote" => "短文本引用",
+        "none" => return "未提供精确锚点".to_string(),
+        other => other,
+    };
+    if value.is_empty() {
+        "未提供精确锚点".to_string()
+    } else {
+        format!("{label}：{value}")
+    }
+}
+
 fn validate_note_input(
     connection: &Connection,
     title: &str,
@@ -3869,7 +4356,11 @@ mod tests {
                 content_markdown: "原始来源中的证据".to_string(),
                 stance: "support".to_string(),
                 credibility: 80.0,
-                locator_json: r#"{"messageId":"m-1"}"#.to_string(),
+                verification_status: "verified".to_string(),
+                validity_status: "active".to_string(),
+                locator_json:
+                    r#"{"kind":"text_quote","value":"GPU 与本地知识库","quote":"GPU 与本地知识库"}"#
+                        .to_string(),
             },
         )
         .expect("evidence");
@@ -4510,6 +5001,137 @@ mod tests {
     }
 
     #[test]
+    fn propositions_and_user_confirmed_turning_points_have_independent_lifecycles() {
+        let mut connection = database::open_memory_database().expect("database");
+        let domain = create_domain(
+            &connection,
+            &CreateKnowledgeDomainInput {
+                name: "判断演化".to_string(),
+                description: String::new(),
+            },
+        )
+        .expect("domain");
+        let topic = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "渲染策略".to_string(),
+                description: String::new(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("topic");
+        let proposition = create_proposition(
+            &connection,
+            &CreateTopicPropositionInput {
+                topic_id: topic.id,
+                statement_markdown: "离线渲染更适合当前项目".to_string(),
+                status: "open".to_string(),
+            },
+        )
+        .expect("proposition");
+        let proposition = update_proposition(
+            &connection,
+            &UpdateTopicPropositionInput {
+                id: proposition.id,
+                statement_markdown: "离线渲染在当前交付周期内更稳定".to_string(),
+                status: "supported".to_string(),
+            },
+        )
+        .expect("updated proposition");
+        assert_eq!(proposition.status, "supported");
+
+        let first = add_topic_judgment(
+            &mut connection,
+            &AddTopicJudgmentInput {
+                topic_id: topic.id,
+                statement_markdown: "先使用实时渲染".to_string(),
+                confidence: 65.0,
+                state: "tentative".to_string(),
+                change_reason: String::new(),
+            },
+        )
+        .expect("first judgment");
+        let second = add_topic_judgment(
+            &mut connection,
+            &AddTopicJudgmentInput {
+                topic_id: topic.id,
+                statement_markdown: "改用离线渲染".to_string(),
+                confidence: 88.0,
+                state: "current".to_string(),
+                change_reason: "交付稳定性要求提高".to_string(),
+            },
+        )
+        .expect("second judgment");
+        assert!(
+            list_turning_points(&connection, topic.id)
+                .expect("turning points before confirmation")
+                .is_empty(),
+            "填写变化原因不能自动升格为关键转折"
+        );
+        let turning_point = create_turning_point(
+            &connection,
+            &CreateTopicTurningPointInput {
+                topic_id: topic.id,
+                from_judgment_id: Some(first.id),
+                to_judgment_id: second.id,
+                title: "从实时切换到离线".to_string(),
+                explanation: "稳定性证据改变了交付判断".to_string(),
+                occurred_at: String::new(),
+            },
+        )
+        .expect("confirmed turning point");
+        assert_eq!(
+            turning_point.from_statement_markdown.as_deref(),
+            Some("先使用实时渲染")
+        );
+        assert_eq!(turning_point.to_statement_markdown, "改用离线渲染");
+        assert!(create_turning_point(
+            &connection,
+            &CreateTopicTurningPointInput {
+                topic_id: topic.id,
+                from_judgment_id: Some(first.id),
+                to_judgment_id: second.id,
+                title: "重复".to_string(),
+                explanation: "不应重复".to_string(),
+                occurred_at: String::new(),
+            },
+        )
+        .is_err());
+
+        let proposition = supersede_proposition(&connection, proposition.id).expect("supersede");
+        assert_eq!(proposition.status, "superseded");
+        let detail = get_topic_detail(&connection, topic.id).expect("detail");
+        assert_eq!(detail.propositions.len(), 1);
+        assert_eq!(detail.turning_points.len(), 1);
+        let context = compile_topic_context(&connection, topic.id).expect("context");
+        assert!(context.contains("关键转折"));
+        assert!(!context.contains("离线渲染在当前交付周期内更稳定"));
+    }
+
+    #[test]
+    fn evidence_locator_is_typed_canonical_and_source_aware() {
+        let canonical =
+            validate_evidence_locator("pdf", r#"{"kind":"page","value":"12","quote":"关键表格"}"#)
+                .expect("pdf locator");
+        assert_eq!(evidence_locator_label(&canonical), "PDF 页码：12");
+        assert!(validate_evidence_locator(
+            "markdown",
+            r#"{"kind":"page","value":"12","quote":""}"#
+        )
+        .is_err());
+        assert!(
+            validate_evidence_locator("video", r#"{"kind":"timecode","value":"","quote":""}"#)
+                .is_err()
+        );
+        assert_eq!(
+            validate_evidence_locator("text", "{}").expect("empty locator"),
+            "{}"
+        );
+    }
+
+    #[test]
     fn topic_merge_is_previewed_committed_and_undoable_without_losing_knowledge() {
         let mut connection = database::open_memory_database().expect("database");
         for (title, content) in [("Markdown 来源", "知识库设计"), ("PDF 来源", "知识库证据")]
@@ -4629,6 +5251,8 @@ mod tests {
                 content_markdown: "合并前证据".to_string(),
                 stance: "support".to_string(),
                 credibility: 80.0,
+                verification_status: "unverified".to_string(),
+                validity_status: "active".to_string(),
                 locator_json: "{}".to_string(),
             },
         )

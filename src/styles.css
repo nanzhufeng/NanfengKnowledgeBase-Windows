@@ -4143,6 +4143,200 @@ textarea:focus-visible,
   border-left-color: #ef8a20;
 }
 
+.knowledge-evidence-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.knowledge-evidence-fields label {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  margin-top: 8px;
+  color: #66748a;
+  font-size: 10px;
+}
+
+.knowledge-evidence-fields input[type="range"] {
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: #148b77;
+}
+
+.knowledge-evolution-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e1e6ef;
+}
+
+.knowledge-evolution-columns > section {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  padding: 16px;
+  gap: 12px;
+  border: 1px solid #dce4ef;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.knowledge-proposition-list,
+.knowledge-turning-list {
+  display: grid;
+  gap: 8px;
+}
+
+.knowledge-proposition-list > article,
+.knowledge-turning-list > article {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e0e6ef;
+  border-left: 3px solid #7652b5;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.knowledge-proposition-list > article.superseded {
+  border-left-color: #9aa5b3;
+  opacity: .66;
+}
+
+.knowledge-proposition-list > article > div > span {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f1ecfa;
+  color: #7652b5;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.knowledge-proposition-list footer {
+  display: flex;
+  gap: 6px;
+  padding-top: 7px;
+  border-top: 1px solid #eef1f5;
+}
+
+.knowledge-proposition-list button,
+.knowledge-inline-editor button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #d5deeb;
+  border-radius: 8px;
+  background: #fff;
+  color: #315072;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.knowledge-proposition-list button.danger {
+  color: #b53b35;
+}
+
+.knowledge-proposition-list button:disabled,
+.knowledge-inline-editor button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.knowledge-turning-list > article {
+  border-left-color: #e36a16;
+}
+
+.knowledge-turning-list strong {
+  color: #173766;
+}
+
+.knowledge-turning-list p,
+.knowledge-turning-list small {
+  margin: 0;
+  color: #728096;
+  font-size: 12px;
+}
+
+.knowledge-turning-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-turning-change span {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: #f5f7fa;
+  color: #40536d;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-turning-change svg {
+  color: #e36a16;
+}
+
+.knowledge-inline-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed #d6deea;
+}
+
+.knowledge-inline-editor input,
+.knowledge-inline-editor select,
+.knowledge-inline-editor textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #ccd5e3;
+  border-radius: 8px;
+  background: #fff;
+  color: #16375f;
+  font: inherit;
+}
+
+.knowledge-inline-editor textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.knowledge-inline-editor > div:not(.knowledge-turning-selects) {
+  display: flex;
+  gap: 7px;
+}
+
+.knowledge-inline-editor button:first-child {
+  border-color: #7652b5;
+  background: #7652b5;
+  color: #fff;
+}
+
+.knowledge-inline-editor button.secondary {
+  background: #fff;
+  color: #526178;
+}
+
+.knowledge-turning-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.knowledge-turning-selects label {
+  display: grid;
+  gap: 5px;
+  color: #526178;
+  font-size: 11px;
+}
+
 .knowledge-note-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(340px, .9fr);
@@ -4695,6 +4889,7 @@ textarea:focus-visible,
 @media (max-width: 1100px) {
   .knowledge-governance-grid,
   .knowledge-classification-management,
+  .knowledge-evolution-columns,
   .knowledge-note-workspace {
     grid-template-columns: 1fr;
   }

@@ -306,6 +306,7 @@ const topicEvidenceRowSchema = z.object({
   verificationStatus: z.string(),
   validityStatus: z.string(),
   locatorJson: z.string(),
+  locatorLabel: z.string(),
   createdAt: z.string(),
 });
 
@@ -345,6 +346,30 @@ const knowledgeNoteRowSchema = z.object({
   updatedAt: z.string(),
 });
 
+const topicPropositionRowSchema = z.object({
+  id: z.number().int(),
+  publicId: z.string(),
+  topicId: z.number().int(),
+  statementMarkdown: z.string(),
+  status: z.enum(["open", "supported", "rejected", "superseded"]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const topicTurningPointRowSchema = z.object({
+  id: z.number().int(),
+  publicId: z.string(),
+  topicId: z.number().int(),
+  fromJudgmentId: z.number().int().nullable(),
+  fromStatementMarkdown: z.string().nullable(),
+  toJudgmentId: z.number().int(),
+  toStatementMarkdown: z.string(),
+  title: z.string(),
+  explanation: z.string(),
+  occurredAt: z.string(),
+  createdAt: z.string(),
+});
+
 const topicDetailSchema = z.object({
   topic: topicRowSchema,
   sources: z.array(topicSourceRowSchema),
@@ -352,6 +377,8 @@ const topicDetailSchema = z.object({
   evidence: z.array(topicEvidenceRowSchema),
   questions: z.array(topicQuestionRowSchema),
   notes: z.array(knowledgeNoteRowSchema),
+  propositions: z.array(topicPropositionRowSchema),
+  turningPoints: z.array(topicTurningPointRowSchema),
 });
 
 export type KnowledgeInboxItem = z.infer<typeof inboxItemSchema>;
@@ -361,6 +388,8 @@ export type KnowledgeClassificationSuggestionRow = z.infer<typeof suggestionRowS
 export type KnowledgeOperationResult = z.infer<typeof operationResultSchema>;
 export type KnowledgeTopicDetail = z.infer<typeof topicDetailSchema>;
 export type KnowledgeNoteRow = z.infer<typeof knowledgeNoteRowSchema>;
+export type TopicPropositionRow = z.infer<typeof topicPropositionRowSchema>;
+export type TopicTurningPointRow = z.infer<typeof topicTurningPointRowSchema>;
 export type TopicMergePreview = z.infer<typeof topicMergePreviewSchema>;
 export type TopicMergeResult = z.infer<typeof topicMergeResultSchema>;
 export type TopicSplitPreview = z.infer<typeof topicSplitPreviewSchema>;
@@ -370,6 +399,22 @@ export type PersonalCatalogApplyResult = z.infer<typeof personalCatalogApplyResu
 export type KnowledgeTopicAliasRow = z.infer<typeof topicAliasRowSchema>;
 export type KnowledgeEntityRow = z.infer<typeof entityDictionaryRowSchema>;
 export type KnowledgeClassificationRuleRow = z.infer<typeof classificationRuleRowSchema>;
+
+export type EvidenceLocator = {
+  kind:
+    | "none"
+    | "message"
+    | "timecode"
+    | "subtitle_line"
+    | "page"
+    | "html_paragraph"
+    | "markdown_heading"
+    | "json_path"
+    | "file_fragment"
+    | "text_quote";
+  value: string;
+  quote?: string;
+};
 
 export type ClassificationRuleMutationInput = {
   ruleType: KnowledgeClassificationRuleRow["ruleType"];
@@ -648,6 +693,47 @@ export class KnowledgeRepository {
     );
   }
 
+  async createProposition(input: {
+    topicId: number;
+    statementMarkdown: string;
+    status: TopicPropositionRow["status"];
+  }): Promise<TopicPropositionRow> {
+    return topicPropositionRowSchema.parse(
+      await invoke("create_knowledge_proposition", { input }),
+    );
+  }
+
+  async updateProposition(input: {
+    id: number;
+    statementMarkdown: string;
+    status: TopicPropositionRow["status"];
+  }): Promise<TopicPropositionRow> {
+    return topicPropositionRowSchema.parse(
+      await invoke("update_knowledge_proposition", { input }),
+    );
+  }
+
+  async supersedeProposition(propositionId: number): Promise<TopicPropositionRow> {
+    return topicPropositionRowSchema.parse(
+      await invoke("supersede_knowledge_proposition", { propositionId }),
+    );
+  }
+
+  async createTurningPoint(input: {
+    topicId: number;
+    fromJudgmentId: number | null;
+    toJudgmentId: number;
+    title: string;
+    explanation: string;
+    occurredAt?: string;
+  }): Promise<TopicTurningPointRow> {
+    return topicTurningPointRowSchema.parse(
+      await invoke("create_knowledge_turning_point", {
+        input: { ...input, occurredAt: input.occurredAt ?? "" },
+      }),
+    );
+  }
+
   async addTopicJudgment(input: {
     topicId: number;
     statementMarkdown: string;
@@ -670,14 +756,25 @@ export class KnowledgeRepository {
     contentMarkdown: string;
     stance?: string;
     credibility?: number;
-    locatorJson?: string;
+    verificationStatus?: string;
+    validityStatus?: string;
+    locator?: EvidenceLocator;
   }) {
+    const { locator, ...rest } = input;
     return topicEvidenceRowSchema.parse(await invoke("add_knowledge_topic_evidence", {
       input: {
-        ...input,
+        ...rest,
         stance: input.stance ?? "context",
         credibility: input.credibility ?? 0,
-        locatorJson: input.locatorJson ?? "{}",
+        verificationStatus: input.verificationStatus ?? "unverified",
+        validityStatus: input.validityStatus ?? "active",
+        locatorJson: locator?.kind && locator.kind !== "none"
+          ? JSON.stringify({
+            kind: locator.kind,
+            value: locator.value.trim(),
+            quote: locator.quote?.trim() ?? "",
+          })
+          : "{}",
       },
     }));
   }
