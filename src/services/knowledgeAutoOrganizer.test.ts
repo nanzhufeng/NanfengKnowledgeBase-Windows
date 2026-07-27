@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ClassificationContext } from "../knowledge/domain";
-import { autoOrganizeImportedSources } from "./knowledgeAutoOrganizer";
+import {
+  autoOrganizeImportedSources,
+  upgradeOutdatedInboxSuggestions,
+} from "./knowledgeAutoOrganizer";
 
 function context(sourceId: number, explicitStrength: number): ClassificationContext {
   return {
@@ -119,11 +122,52 @@ describe("autoOrganizeImportedSources", () => {
     expect(repository.applyPersonalCatalog).toHaveBeenCalledWith("catalog-v2");
     expect(repository.saveSuggestions).toHaveBeenCalledWith(expect.objectContaining({
       sourceItemId: 33,
-      suggestions: [],
+      suggestions: [expect.objectContaining({
+        topicId: null,
+        decision: "manual",
+      })],
     }));
     expect(result.analyzedCount).toBe(1);
     expect(result.unmatchedCount).toBe(1);
     expect(result.awaitingConfirmationCount).toBe(0);
     expect(result.failures).toEqual([]);
+  });
+
+  it("upgrades every inbox source once and resumes from persisted current-version markers", async () => {
+    const unsupportedContext = context(42, 0);
+    unsupportedContext.source.title = "未命名导入记录";
+    unsupportedContext.source.text = "";
+    unsupportedContext.searchSignals = [];
+    const repository = {
+      listTopics: vi.fn().mockResolvedValue([{ id: 7 }]),
+      getPersonalCatalogProposal: vi.fn().mockResolvedValue(null),
+      applyPersonalCatalog: vi.fn(),
+      listInbox: vi.fn().mockResolvedValue([{ id: 41 }, { id: 42 }, { id: 43 }]),
+      listClassificationRunSourceIds: vi.fn().mockResolvedValue([41]),
+      prepareClassificationContext: vi.fn()
+        .mockResolvedValueOnce(unsupportedContext)
+        .mockResolvedValueOnce(context(43, 0.9)),
+      saveSuggestions: vi.fn().mockResolvedValue([]),
+      confirmClassification: vi.fn(),
+    };
+
+    const result = await upgradeOutdatedInboxSuggestions(repository as never);
+
+    expect(result).toEqual({
+      completed: 2,
+      total: 2,
+      matched: 1,
+      unmatched: 1,
+      failures: 0,
+    });
+    expect(repository.prepareClassificationContext).toHaveBeenCalledTimes(2);
+    expect(repository.prepareClassificationContext).not.toHaveBeenCalledWith(41);
+    expect(repository.saveSuggestions).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        sourceItemId: 42,
+        suggestions: [expect.objectContaining({ topicId: null })],
+      }),
+    );
   });
 });

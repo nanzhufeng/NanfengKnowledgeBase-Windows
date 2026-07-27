@@ -12,12 +12,31 @@ import {
   type KnowledgeTopicCandidate,
 } from "./domain";
 
-export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v3";
+export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v5";
 
 type SignalEvaluation = {
   normalizedScore: number;
   reasons: string[];
 };
+
+type SourceEvaluationCache = {
+  normalizedTitle: string;
+  normalizedLeadBody: string;
+  compactTitle: string;
+  compactLeadBody: string;
+  normalizedContent: string;
+  titleTokens: Set<string>;
+  leadBodyTokens: Set<string>;
+  sourceSetTokens: Set<string>;
+};
+
+type RuleMatchLocation = "title" | "lead_body" | "metadata";
+
+const rulePhraseCache = new Map<string, {
+  normalized: string;
+  compactLength: number;
+  tokens: Set<string>;
+}>();
 
 const signalLabels: Record<ClassificationSignalKey, string> = {
   explicit_rules: "显式规则",
@@ -44,6 +63,17 @@ function normalizeText(value: string): string {
     .trim();
 }
 
+function compactText(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
+function semanticIncludes(value: string, expected: string, compactValue?: string): boolean {
+  if (value.includes(expected)) return true;
+  const compactExpected = compactText(expected);
+  return compactExpected.length >= 3
+    && (compactValue ?? compactText(value)).includes(compactExpected);
+}
+
 function tokenSet(value: string): Set<string> {
   const normalized = normalizeText(value);
   const tokens = new Set<string>();
@@ -60,16 +90,37 @@ function tokenSet(value: string): Set<string> {
   return tokens;
 }
 
-function deterministicTextSample(value: string, limit = 12_000): string {
-  if (value.length <= limit) return value;
-  const edge = Math.floor(limit * 0.4);
-  const middle = limit - edge * 2;
-  const middleStart = Math.max(0, Math.floor(value.length / 2) - Math.floor(middle / 2));
-  return [
-    value.slice(0, edge),
-    value.slice(middleStart, middleStart + middle),
-    value.slice(-edge),
-  ].join("\n");
+function rulePhraseProfile(value: string) {
+  const cached = rulePhraseCache.get(value);
+  if (cached) return cached;
+  const normalized = normalizeText(value);
+  const profile = {
+    normalized,
+    compactLength: Array.from(compactText(normalized)).length,
+    tokens: tokenSet(normalized),
+  };
+  rulePhraseCache.set(value, profile);
+  return profile;
+}
+
+function coreTextLead(value: string, limit = 12_000): string {
+  return value.slice(0, limit);
+}
+
+function createSourceEvaluationCache(source: KnowledgeSourceDraft): SourceEvaluationCache {
+  const normalizedTitle = normalizeText(source.title);
+  const leadBody = coreTextLead(source.text);
+  const normalizedLeadBody = normalizeText(leadBody);
+  return {
+    normalizedTitle,
+    normalizedLeadBody,
+    compactTitle: compactText(normalizedTitle),
+    compactLeadBody: compactText(normalizedLeadBody),
+    normalizedContent: `${normalizedTitle} ${normalizedLeadBody}`.trim(),
+    titleTokens: tokenSet(source.title),
+    leadBodyTokens: tokenSet(leadBody),
+    sourceSetTokens: tokenSet(`${leadBody} ${(source.tags ?? []).join(" ")}`),
+  };
 }
 
 function diceSimilarity(left: Set<string>, right: Set<string>): number {
@@ -90,86 +141,157 @@ function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
   return overlap / (left.size + right.size - overlap);
 }
 
-function sourceFieldValues(source: KnowledgeSourceDraft, rule: ClassificationRule): string[] {
+function normalizedSourceFieldValues(
+  source: KnowledgeSourceDraft,
+  rule: ClassificationRule,
+  cache: SourceEvaluationCache,
+): Array<{ value: string; compactValue?: string; location: RuleMatchLocation }> {
   switch (rule.field) {
     case "title":
-      return [source.title];
+      return [{
+        value: cache.normalizedTitle,
+        compactValue: cache.compactTitle,
+        location: "title",
+      }];
     case "text":
-      // 关键词、实体和排除规则都属于来源内容证据；标题是最高密度的内容入口，
-      // 不能要求同一主题短语必须在长正文中再次出现。
-      return [source.title, source.text];
+      // 标题是最高密度的主题证据；正文只读取开头核心段，避免长对话后半段的
+      // 偶然词汇反客为主。
+      return [
+        {
+          value: cache.normalizedTitle,
+          compactValue: cache.compactTitle,
+          location: "title",
+        },
+        {
+          value: cache.normalizedLeadBody,
+          compactValue: cache.compactLeadBody,
+          location: "lead_body",
+        },
+      ];
     case "platform":
-      return [source.platform ?? ""];
+      return [{ value: normalizeText(source.platform ?? ""), location: "metadata" }];
     case "source_kind":
-      return [source.kind];
+      return [{ value: normalizeText(source.kind), location: "metadata" }];
     case "file_name":
-      return [source.fileName ?? ""];
+      return [{ value: normalizeText(source.fileName ?? ""), location: "metadata" }];
     case "file_path":
-      return [source.filePath ?? ""];
+      return [{ value: normalizeText(source.filePath ?? ""), location: "metadata" }];
     case "folder_path":
-      return [source.folderPath ?? ""];
+      return [{ value: normalizeText(source.folderPath ?? ""), location: "metadata" }];
     case "tag":
-      return source.tags ?? [];
+      return (source.tags ?? []).map((value) => ({
+        value: normalizeText(value),
+        location: "metadata" as const,
+      }));
     case "json_field":
-      return rule.jsonField ? [source.jsonFields?.[rule.jsonField] ?? ""] : [];
+      return rule.jsonField
+        ? [{
+            value: normalizeText(source.jsonFields?.[rule.jsonField] ?? ""),
+            location: "metadata",
+          }]
+        : [];
   }
 }
 
-function ruleMatches(source: KnowledgeSourceDraft, rule: ClassificationRule): boolean {
-  const expected = normalizeText(rule.value);
-  return sourceFieldValues(source, rule).some((rawValue) => {
-    const value = normalizeText(rawValue);
-    return rule.operator === "equals" ? value === expected : value.includes(expected);
+function ruleMatchLocation(
+  source: KnowledgeSourceDraft,
+  rule: ClassificationRule,
+  cache: SourceEvaluationCache,
+): RuleMatchLocation | null {
+  const profile = rulePhraseProfile(rule.value);
+  const expected = profile.normalized;
+  const expectedLength = profile.compactLength;
+  const match = normalizedSourceFieldValues(source, rule, cache).find(({
+    value,
+    compactValue,
+    location,
+  }) => {
+    if (rule.operator === "equals") return value === expected;
+    if (semanticIncludes(value, expected, compactValue)) return true;
+    if (location !== "title" || expectedLength < 4) return false;
+    const titleLength = Array.from(cache.compactTitle).length;
+    if (titleLength > expectedLength * 2.5) return false;
+    // 允许“转成带中文的版本”匹配“转成中文版本”这类标题内插变体，
+    // 但只在短标题和高双字重合时启用，不对长正文做模糊命中。
+    return diceSimilarity(cache.titleTokens, profile.tokens) >= 0.62;
   });
+  return match?.location ?? null;
 }
 
 function evaluateExplicitRules(
   source: KnowledgeSourceDraft,
-  topic: KnowledgeTopicCandidate,
   rules: ClassificationRule[],
+  cache: SourceEvaluationCache,
 ): SignalEvaluation {
-  const matched = rules.filter(
-    (rule) => rule.enabled && rule.topicId === topic.id && ruleMatches(source, rule),
-  );
+  const matched = rules
+    .filter((rule) => rule.enabled)
+    .map((rule) => ({ rule, location: ruleMatchLocation(source, rule, cache) }))
+    .filter((item): item is { rule: ClassificationRule; location: RuleMatchLocation } =>
+      item.location !== null);
   if (!matched.length) return { normalizedScore: 0, reasons: [] };
-  const included = matched.filter((rule) => rule.effect !== "exclude");
-  const excluded = matched.filter((rule) => rule.effect === "exclude");
-  const includedStrength = included.length
-    ? Math.max(...included.map((rule) => rule.strength))
+  const included = matched.filter(({ rule }) => rule.effect !== "exclude");
+  const excluded = matched.filter(({ rule }) => rule.effect === "exclude");
+  const includedStrengths = included.map(({ rule, location }) =>
+    rule.strength * (location === "lead_body" ? 0.68 : 1));
+  const includedStrength = includedStrengths.length
+    ? Math.min(
+        1,
+        Math.max(...includedStrengths)
+          + Math.min(0.24, Math.max(0, includedStrengths.length - 1) * 0.12),
+      )
     : 0;
   const excludedStrength = excluded.length
-    ? Math.max(...excluded.map((rule) => rule.strength))
+    ? Math.max(...excluded.map(({ rule }) => rule.strength))
     : 0;
   return {
     normalizedScore: Math.max(-1, Math.min(1, includedStrength - excludedStrength)),
     reasons: [
-      ...included.map((rule) => rule.reason),
-      ...excluded.map((rule) => `排除规则：${rule.reason}`),
+      ...included.map(({ rule, location }) =>
+        `${location === "title" ? "标题主题短语" : location === "lead_body" ? "正文核心段" : "来源元数据"}：${rule.reason}`),
+      ...excluded.map(({ rule }) => `排除规则：${rule.reason}`),
     ],
   };
 }
 
 function evaluateAliasesAndEntities(
-  source: KnowledgeSourceDraft,
   topic: KnowledgeTopicCandidate,
+  cache: SourceEvaluationCache,
 ): SignalEvaluation {
-  const title = normalizeText(source.title);
-  const text = normalizeText(`${source.title} ${source.text}`);
-  const candidates = [topic.name, ...topic.aliases, ...topic.entities]
+  const candidates = [topic.name, ...topic.aliases, ...topic.entities, ...topic.keywords]
     .map((value) => normalizeText(value))
     .filter(Boolean);
-  const titleHits = candidates.filter((candidate) => title.includes(candidate));
-  const textHits = candidates.filter((candidate) => !title.includes(candidate) && text.includes(candidate));
-  const normalizedScore = clamp01(titleHits.length * 0.72 + textHits.length * 0.22);
+  const titleHits = candidates.filter((candidate) =>
+    semanticIncludes(cache.normalizedTitle, candidate, cache.compactTitle));
+  const textHits = candidates.filter(
+    (candidate) =>
+      !semanticIncludes(cache.normalizedTitle, candidate, cache.compactTitle)
+      && semanticIncludes(cache.normalizedLeadBody, candidate, cache.compactLeadBody),
+  );
+  const fuzzyTitleSimilarity = titleHits.length
+    ? 0
+    : Math.max(
+        0,
+        ...candidates
+          .map((candidate) => rulePhraseProfile(candidate))
+          .filter((profile) => profile.compactLength >= 4)
+          .map((profile) => diceSimilarity(cache.titleTokens, profile.tokens)),
+      );
+  const fuzzyTitleScore = fuzzyTitleSimilarity >= 0.62 ? 0.58 : 0;
+  const normalizedScore = clamp01(
+    titleHits.length * 0.76 + fuzzyTitleScore + textHits.length * 0.14,
+  );
   const reasons: string[] = [];
   if (titleHits.length) reasons.push(`标题命中：${titleHits.slice(0, 3).join("、")}`);
+  if (fuzzyTitleScore) {
+    reasons.push(`标题与主题短语高度相似 ${Math.round(fuzzyTitleSimilarity * 100)}%`);
+  }
   if (textHits.length) reasons.push(`正文实体命中：${textHits.slice(0, 4).join("、")}`);
   return { normalizedScore, reasons };
 }
 
 function evaluateFullText(
-  source: KnowledgeSourceDraft,
   topic: KnowledgeTopicCandidate,
+  cache: SourceEvaluationCache,
   externalScore?: number,
   externalReason?: string,
 ): SignalEvaluation {
@@ -181,12 +303,9 @@ function evaluateFullText(
   }
   const topicTitleTokens = tokenSet([topic.name, ...topic.aliases, ...topic.keywords].join(" "));
   const topicDocumentTokens = tokenSet(`${topic.searchDocument} ${topic.entities.join(" ")}`);
-  const titleScore = diceSimilarity(tokenSet(source.title), topicTitleTokens);
-  const documentScore = diceSimilarity(
-    tokenSet(deterministicTextSample(source.text)),
-    topicDocumentTokens,
-  );
-  const normalizedScore = clamp01(titleScore * 0.62 + documentScore * 0.38);
+  const titleScore = diceSimilarity(cache.titleTokens, topicTitleTokens);
+  const documentScore = diceSimilarity(cache.leadBodyTokens, topicDocumentTokens);
+  const normalizedScore = clamp01(titleScore * 0.72 + documentScore * 0.28);
   return {
     normalizedScore,
     reasons: normalizedScore > 0.12 ? [`本地全文相似度 ${Math.round(normalizedScore * 100)}%`] : [],
@@ -194,16 +313,12 @@ function evaluateFullText(
 }
 
 function evaluateSetSimilarity(
-  source: KnowledgeSourceDraft,
   topic: KnowledgeTopicCandidate,
+  cache: SourceEvaluationCache,
 ): SignalEvaluation {
-  const titleTokens = tokenSet(source.title);
-  const sourceTokens = tokenSet(
-    `${deterministicTextSample(source.text)} ${(source.tags ?? []).join(" ")}`,
-  );
   const topicTokens = tokenSet(`${topic.name} ${topic.aliases.join(" ")} ${topic.keywords.join(" ")}`);
-  const titleScore = jaccardSimilarity(titleTokens, topicTokens);
-  const bodyScore = jaccardSimilarity(sourceTokens, topicTokens);
+  const titleScore = jaccardSimilarity(cache.titleTokens, topicTokens);
+  const bodyScore = jaccardSimilarity(cache.sourceSetTokens, topicTokens);
   const score = Math.max(titleScore * 1.8, bodyScore);
   return {
     normalizedScore: clamp01(score * 2.4),
@@ -251,29 +366,34 @@ function toSignalScore(
   };
 }
 
-function scoreTopic(context: ClassificationContext, topic: KnowledgeTopicCandidate): ClassificationSuggestion {
+function scoreTopic(
+  context: ClassificationContext,
+  topic: KnowledgeTopicCandidate,
+  topicRules: ClassificationRule[],
+  sourceCache: SourceEvaluationCache,
+): ClassificationSuggestion {
   const externalSearch = context.searchSignals?.find((signal) => signal.topicId === topic.id);
   const signalScores = [
     toSignalScore(
       "explicit_rules",
-      evaluateExplicitRules(context.source, topic, context.rules),
+      evaluateExplicitRules(context.source, topicRules, sourceCache),
     ),
     toSignalScore(
       "aliases_entities",
-      evaluateAliasesAndEntities(context.source, topic),
+      evaluateAliasesAndEntities(topic, sourceCache),
     ),
     toSignalScore(
       "full_text",
       evaluateFullText(
-        context.source,
         topic,
+        sourceCache,
         externalSearch?.normalizedScore,
         externalSearch?.reason,
       ),
     ),
     toSignalScore(
       "set_similarity",
-      evaluateSetSimilarity(context.source, topic),
+      evaluateSetSimilarity(topic, sourceCache),
     ),
     toSignalScore("history", evaluateHistory(context, topic)),
   ];
@@ -328,6 +448,13 @@ export function classifySource(
       throw new Error(`分类规则强度必须位于 0 到 1：${rule.id}`);
     }
   }
+  const sourceCache = createSourceEvaluationCache(context.source);
+  const rulesByTopic = new Map<string, ClassificationRule[]>();
+  for (const rule of context.rules) {
+    const topicRules = rulesByTopic.get(rule.topicId) ?? [];
+    topicRules.push(rule);
+    rulesByTopic.set(rule.topicId, topicRules);
+  }
 
   return {
     algorithmVersion: CLASSIFIER_ALGORITHM_VERSION,
@@ -335,7 +462,8 @@ export function classifySource(
     generatedAt,
     suggestions: context.topics
       .filter((topic) => topic.status !== "archived")
-      .map((topic) => scoreTopic(context, topic))
+      .map((topic) =>
+        scoreTopic(context, topic, rulesByTopic.get(topic.id) ?? [], sourceCache))
       .filter(hasSufficientTopicEvidence)
       .sort((left, right) => {
         if (right.confidence !== left.confidence) return right.confidence - left.confidence;

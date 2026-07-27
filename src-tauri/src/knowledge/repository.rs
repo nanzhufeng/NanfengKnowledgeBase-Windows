@@ -3125,6 +3125,25 @@ pub fn list_classification_suggestions(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn list_classification_run_source_ids(
+    connection: &Connection,
+    classifier_version: &str,
+) -> AppResult<Vec<i64>> {
+    if classifier_version.trim().is_empty() {
+        return Err(AppError::Validation("分类器版本不能为空".to_string()));
+    }
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT source_item_id
+         FROM classification_suggestions
+         WHERE source_item_id IS NOT NULL
+           AND classifier_version = ?1
+           AND status = 'pending'
+         ORDER BY source_item_id",
+    )?;
+    let rows = statement.query_map([classifier_version], |row| row.get::<_, i64>(0))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn confirm_classification(
     connection: &mut Connection,
     input: &ConfirmKnowledgeClassificationInput,
@@ -3751,7 +3770,15 @@ fn normalized_bm25_signals(
     topics: &[ClassificationTopicContext],
 ) -> AppResult<Vec<ClassificationSearchSignal>> {
     let mut raw_scores = Vec::new();
-    let source_haystack = format!("{} {}", source.title, source.text).to_lowercase();
+    // 标题与正文开头构成分类主体。完整原文仍保留在 FTS 中用于检索，但不能让
+    // 长对话后半段偶然出现的词汇改变主题归属。
+    let source_title = source.title.to_lowercase();
+    let source_lead = source
+        .text
+        .chars()
+        .take(12_000)
+        .collect::<String>()
+        .to_lowercase();
     for topic in topics.iter().filter(|topic| topic.status != "archived") {
         let mut terms = vec![topic.name.clone()];
         terms.extend(topic.aliases.iter().cloned());
@@ -3764,10 +3791,15 @@ fn normalized_bm25_signals(
         if terms.is_empty() {
             continue;
         }
-        let matched_terms = terms
+        let title_matches = terms
             .iter()
-            .filter(|term| source_haystack.contains(&term.to_lowercase()))
+            .filter(|term| source_title.contains(&term.to_lowercase()))
             .count();
+        let lead_matches = terms
+            .iter()
+            .filter(|term| source_lead.contains(&term.to_lowercase()))
+            .count();
+        let matched_terms = title_matches + lead_matches;
         // source_items_fts 为保真原文索引，可能包含原始 JSON 元数据。
         // 只有同一短语也出现在用户可见投影中时，BM25 才能成为分类证据。
         if matched_terms == 0 {
@@ -3803,7 +3835,7 @@ fn normalized_bm25_signals(
     Ok(raw_scores
         .into_iter()
         .map(|(topic_id, raw_score, matched_terms)| {
-            let coverage = (0.55 + 0.15 * matched_terms.min(3) as f64).min(1.0);
+            let coverage = (0.50 + 0.13 * matched_terms.min(3) as f64).min(0.89);
             let normalized_score = ((raw_score / maximum) * coverage * 10_000.0).round() / 10_000.0;
             ClassificationSearchSignal {
                 topic_id,
@@ -5020,7 +5052,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_v3_exposes_direct_evidence_for_reported_unmatched_subjects() {
+    fn catalog_v5_exposes_direct_evidence_for_reported_unmatched_subjects() {
         let mut connection = database::open_memory_database().expect("database");
         let proposal = get_personal_catalog_proposal();
         apply_personal_catalog(

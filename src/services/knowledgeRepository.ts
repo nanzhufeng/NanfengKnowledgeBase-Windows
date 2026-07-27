@@ -641,6 +641,13 @@ export class KnowledgeRepository {
     );
   }
 
+  async listClassificationRunSourceIds(classifierVersion: string): Promise<number[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(z.number().int().positive()).parse(
+      await invoke("list_knowledge_classification_run_source_ids", { classifierVersion }),
+    );
+  }
+
   async confirmClassification(input: {
     sourceItemId: number;
     topicId: number;

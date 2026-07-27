@@ -22,7 +22,9 @@ import {
 } from "../domain/importedContent";
 import {
   autoOrganizeImportedSources,
+  suggestionsForPersistence,
   undoAutoOrganization,
+  upgradeOutdatedInboxSuggestions,
 } from "../services/knowledgeAutoOrganizer";
 import {
   KnowledgeRepository,
@@ -195,6 +197,7 @@ export function KnowledgeWorkspace({
   const sourceTextRequestSequence = useRef(0);
   const preparedCatalogVersion = useRef<string | null>(null);
   const catalogPreparation = useRef<Promise<void> | null>(null);
+  const classificationUpgradeStarted = useRef(false);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>([]);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -295,6 +298,11 @@ export function KnowledgeWorkspace({
       : selectedReadableContent.fullText
     : sourcePreviewText;
   const currentPendingSuggestions = suggestions.filter(
+    (item) => item.status === "pending"
+      && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION
+      && item.suggestedTopicId !== null,
+  );
+  const hasCurrentClassificationRun = suggestions.some(
     (item) => item.status === "pending"
       && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
   );
@@ -407,13 +415,7 @@ export function KnowledgeWorkspace({
     return repository.saveSuggestions({
       sourceItemId,
       classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
-      suggestions: result.suggestions.slice(0, 5).map((suggestion) => ({
-        topicId: Number(suggestion.topicId),
-        score: suggestion.confidence,
-        decision: suggestion.action,
-        reasons: suggestion.reasons,
-        signalScoresJson: JSON.stringify(suggestion.signalScores),
-      })),
+      suggestions: suggestionsForPersistence(result),
     });
   };
 
@@ -425,6 +427,34 @@ export function KnowledgeWorkspace({
   }, []);
 
   useEffect(() => {
+    if (
+      mode !== "inbox"
+      || !topics.length
+      || !inbox.length
+      || classificationUpgradeStarted.current
+    ) return;
+    classificationUpgradeStarted.current = true;
+    void upgradeOutdatedInboxSuggestions(repository, (progress) => {
+      if (progress.total > 0 && progress.completed > 0 && progress.completed % 100 === 0) {
+        onNotify(`新版主题建议后台整理中：${progress.completed}/${progress.total}`);
+      }
+    })
+      .then(async (progress) => {
+        if (!progress.total) return;
+        if (selectedId) {
+          setSuggestions(await repository.listSuggestions(selectedId));
+        }
+        onNotify(
+          `新版主题建议已覆盖全部收录箱：补算 ${progress.completed} 条，有建议 ${progress.matched} 条，无充分证据 ${progress.unmatched} 条${progress.failures ? `，失败 ${progress.failures} 条` : ""}`,
+          { durationMs: 12_000 },
+        );
+      })
+      .catch((error) => {
+        onNotify(error instanceof Error ? error.message : "新版主题建议后台整理失败");
+      });
+  }, [inbox.length, mode, onNotify, repository, selectedId, topics.length]);
+
+  useEffect(() => {
     if (!selectedId || mode !== "inbox") {
       setSuggestions([]);
       return;
@@ -433,7 +463,11 @@ export function KnowledgeWorkspace({
     setAutoSuggestingSourceId(selectedId);
     void repository.listSuggestions(selectedId)
       .then(async (items) => {
-        if (items.length || !topics.length) return items;
+        const hasCurrentRun = items.some(
+          (item) => item.status === "pending"
+            && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
+        );
+        if (hasCurrentRun || !topics.length) return items;
         return computeAndSaveSuggestions(selectedId);
       })
       .then((items) => {
@@ -902,12 +936,13 @@ export function KnowledgeWorkspace({
       const persisted = await computeAndSaveSuggestions(selected.id);
       await reload();
       setSuggestions(persisted);
-      setSelectedTopicId(persisted[0]?.suggestedTopicId ?? null);
+      const persistedCandidates = persisted.filter((item) => item.suggestedTopicId !== null);
+      setSelectedTopicId(persistedCandidates[0]?.suggestedTopicId ?? null);
       onNotify(
-        persisted.length
+        persistedCandidates.length
           ? "已按可读正文重新计算并保存证据充分的分类建议"
           : "没有找到证据充分的主题，已清除旧的不可靠建议；可手动选择或新建主题",
-        { durationMs: persisted.length ? 6_000 : 10_000 },
+        { durationMs: persistedCandidates.length ? 6_000 : 10_000 },
       );
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "分类失败，来源仍保留在收录箱");
@@ -1910,7 +1945,7 @@ export function KnowledgeWorkspace({
                     <Sparkles size={16} />
                     {autoSuggestingSourceId === selected.id
                       ? "自动整理中…"
-                      : currentPendingSuggestions.length
+                      : hasCurrentClassificationRun
                         ? "重新计算建议"
                         : hasStalePendingSuggestions
                           ? "按新版重新计算"
@@ -1955,7 +1990,9 @@ export function KnowledgeWorkspace({
                 })}
                 {!currentPendingSuggestions.length ? (
                   <p className="knowledge-suggestion-empty">
-                    {hasStalePendingSuggestions
+                    {hasCurrentClassificationRun
+                      ? "本版分类已完成，但当前没有证据充分的自动建议。可手动选择，或到主题浏览器新建更准确的主题。"
+                      : hasStalePendingSuggestions
                       ? "旧版建议已隐藏，请按新版重新计算；不会自动采用旧结果。"
                       : "当前没有证据充分的自动建议。可手动选择，或到主题浏览器新建更准确的主题。"}
                   </p>

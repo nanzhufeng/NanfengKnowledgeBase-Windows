@@ -337,6 +337,20 @@ pub fn list_knowledge_classification_suggestions(
 }
 
 #[tauri::command]
+pub fn list_knowledge_classification_run_source_ids(
+    state: State<'_, AppState>,
+    classifier_version: String,
+) -> Result<Vec<i64>, CommandError> {
+    let connection = command(state.connection())?;
+    command(
+        crate::knowledge::repository::list_classification_run_source_ids(
+            &connection,
+            &classifier_version,
+        ),
+    )
+}
+
+#[tauri::command]
 pub fn confirm_knowledge_classification(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::ConfirmKnowledgeClassificationInput,

@@ -82,6 +82,7 @@ pub fn run() {
             commands::update_knowledge_topic,
             commands::save_knowledge_classification_suggestions,
             commands::list_knowledge_classification_suggestions,
+            commands::list_knowledge_classification_run_source_ids,
             commands::confirm_knowledge_classification,
             commands::undo_knowledge_classification,
             commands::get_knowledge_topic_detail,
