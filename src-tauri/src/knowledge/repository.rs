@@ -710,6 +710,15 @@ pub struct CreateKnowledgeDomainInput {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateKnowledgeDomainInput {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateKnowledgeTopicInput {
     pub domain_id: i64,
     pub parent_topic_id: Option<i64>,
@@ -718,6 +727,15 @@ pub struct CreateKnowledgeTopicInput {
     pub description: String,
     #[serde(default = "default_topic_kind")]
     pub topic_kind: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKnowledgeTopicInput {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
 }
 
 fn default_topic_kind() -> String {
@@ -3250,6 +3268,35 @@ pub fn create_domain(
     })
 }
 
+pub fn update_domain(
+    connection: &Connection,
+    input: &UpdateKnowledgeDomainInput,
+) -> AppResult<KnowledgeDomainRow> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err(AppError::Validation("领域名称不能为空".to_string()));
+    }
+    let updated = connection.execute(
+        "UPDATE domains
+         SET name = ?1, normalized_name = ?2, description = ?3, updated_at = ?4
+         WHERE id = ?5",
+        params![
+            name,
+            normalize_name(name),
+            input.description.trim(),
+            Utc::now().to_rfc3339(),
+            input.id,
+        ],
+    )?;
+    if updated != 1 {
+        return Err(AppError::NotFound("领域不存在".to_string()));
+    }
+    list_domains(connection)?
+        .into_iter()
+        .find(|domain| domain.id == input.id)
+        .ok_or_else(|| AppError::NotFound("领域不存在".to_string()))
+}
+
 pub fn create_topic(
     connection: &Connection,
     input: &CreateKnowledgeTopicInput,
@@ -3300,6 +3347,35 @@ pub fn create_topic(
         sort_order: 0,
         source_count: 0,
     })
+}
+
+pub fn update_topic(
+    connection: &Connection,
+    input: &UpdateKnowledgeTopicInput,
+) -> AppResult<KnowledgeTopicRow> {
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err(AppError::Validation("主题名称不能为空".to_string()));
+    }
+    let updated = connection.execute(
+        "UPDATE topics
+         SET name = ?1, normalized_name = ?2, description = ?3, updated_at = ?4
+         WHERE id = ?5",
+        params![
+            name,
+            normalize_name(name),
+            input.description.trim(),
+            Utc::now().to_rfc3339(),
+            input.id,
+        ],
+    )?;
+    if updated != 1 {
+        return Err(AppError::NotFound("主题不存在".to_string()));
+    }
+    list_topics(connection)?
+        .into_iter()
+        .find(|topic| topic.id == input.id)
+        .ok_or_else(|| AppError::NotFound("主题不存在".to_string()))
 }
 
 fn count_topic_rows(connection: &Connection, table: &str, topic_id: i64) -> AppResult<i64> {
@@ -4277,6 +4353,56 @@ mod tests {
             assert_eq!(topic.depth, depth);
             parent = Some(topic.id);
         }
+    }
+
+    #[test]
+    fn domains_and_topics_can_be_renamed_without_changing_their_identity() {
+        let connection = database::open_memory_database().expect("database");
+        let domain = create_domain(
+            &connection,
+            &CreateKnowledgeDomainInput {
+                name: "旧领域".to_string(),
+                description: "旧说明".to_string(),
+            },
+        )
+        .expect("domain");
+        let topic = create_topic(
+            &connection,
+            &CreateKnowledgeTopicInput {
+                domain_id: domain.id,
+                parent_topic_id: None,
+                name: "旧主题".to_string(),
+                description: "旧主题说明".to_string(),
+                topic_kind: "subject".to_string(),
+            },
+        )
+        .expect("topic");
+
+        let updated_domain = update_domain(
+            &connection,
+            &UpdateKnowledgeDomainInput {
+                id: domain.id,
+                name: "新领域".to_string(),
+                description: "新说明".to_string(),
+            },
+        )
+        .expect("update domain");
+        let updated_topic = update_topic(
+            &connection,
+            &UpdateKnowledgeTopicInput {
+                id: topic.id,
+                name: "新主题".to_string(),
+                description: "新主题说明".to_string(),
+            },
+        )
+        .expect("update topic");
+
+        assert_eq!(updated_domain.id, domain.id);
+        assert_eq!(updated_domain.public_id, domain.public_id);
+        assert_eq!(updated_domain.name, "新领域");
+        assert_eq!(updated_topic.id, topic.id);
+        assert_eq!(updated_topic.public_id, topic.public_id);
+        assert_eq!(updated_topic.name, "新主题");
     }
 
     #[test]

@@ -471,6 +471,16 @@ export class KnowledgeRepository {
     }));
   }
 
+  async updateDomain(input: {
+    id: number;
+    name: string;
+    description?: string;
+  }): Promise<KnowledgeDomainRow> {
+    return domainRowSchema.parse(await invoke("update_knowledge_domain", {
+      input: { ...input, description: input.description ?? "" },
+    }));
+  }
+
   async prepareClassificationContext(sourceItemId: number): Promise<ClassificationContext> {
     return classificationContextSchema.parse(
       await invoke("prepare_knowledge_classification_context", { sourceItemId }),
@@ -603,6 +613,16 @@ export class KnowledgeRepository {
         description: input.description ?? "",
         topicKind: input.topicKind ?? "subject",
       },
+    }));
+  }
+
+  async updateTopic(input: {
+    id: number;
+    name: string;
+    description?: string;
+  }): Promise<KnowledgeTopicRow> {
+    return topicRowSchema.parse(await invoke("update_knowledge_topic", {
+      input: { ...input, description: input.description ?? "" },
     }));
   }
 

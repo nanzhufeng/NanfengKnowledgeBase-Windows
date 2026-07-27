@@ -175,7 +175,7 @@ pub fn open_attachment(
 ) -> AppResult<()> {
     let attachment = get_attachment(connection, attachment_id)?;
     let path = controlled_attachment_file(paths, &attachment.stored_path)?;
-    open::that(path).map_err(|error| AppError::Io(std::io::Error::other(error.to_string())))
+    crate::external_open::open_path(&path)
 }
 
 pub fn remove_attachment(

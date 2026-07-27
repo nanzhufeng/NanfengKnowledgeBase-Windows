@@ -281,12 +281,36 @@ pub fn create_knowledge_domain(
 }
 
 #[tauri::command]
+pub fn update_knowledge_domain(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateKnowledgeDomainInput,
+) -> Result<crate::knowledge::repository::KnowledgeDomainRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_domain(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
 pub fn create_knowledge_topic(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateKnowledgeTopicInput,
 ) -> Result<crate::knowledge::repository::KnowledgeTopicRow, CommandError> {
     let connection = command(state.connection())?;
     command(crate::knowledge::repository::create_topic(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn update_knowledge_topic(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateKnowledgeTopicInput,
+) -> Result<crate::knowledge::repository::KnowledgeTopicRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_topic(
         &connection,
         &input,
     ))
@@ -1043,6 +1067,11 @@ pub fn open_attachment(state: State<'_, AppState>, attachment_id: i64) -> Result
         &state.paths,
         attachment_id,
     ))
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), CommandError> {
+    command(crate::external_open::open_url(&url))
 }
 
 #[tauri::command]

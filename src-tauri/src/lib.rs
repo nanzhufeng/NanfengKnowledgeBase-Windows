@@ -3,6 +3,7 @@ pub mod chatgpt_export;
 mod commands;
 mod database;
 mod error;
+mod external_open;
 mod importer;
 pub mod knowledge;
 pub mod maintenance;
@@ -23,7 +24,6 @@ use tauri_plugin_log::{Target, TargetKind};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let instance_guard = match TcpListener::bind("127.0.0.1:47633") {
                 Ok(listener) => listener,
@@ -77,7 +77,9 @@ pub fn run() {
             commands::delete_knowledge_classification_rule,
             commands::prepare_knowledge_classification_context,
             commands::create_knowledge_domain,
+            commands::update_knowledge_domain,
             commands::create_knowledge_topic,
+            commands::update_knowledge_topic,
             commands::save_knowledge_classification_suggestions,
             commands::list_knowledge_classification_suggestions,
             commands::confirm_knowledge_classification,
@@ -143,6 +145,7 @@ pub fn run() {
             commands::list_attachments,
             commands::add_attachment,
             commands::open_attachment,
+            commands::open_external_url,
             commands::remove_attachment,
         ])
         .run(tauri::generate_context!())

@@ -87,6 +87,7 @@ pub struct ImportResult {
     pub status: String,
     pub imported_count: usize,
     pub first_imported_record: Option<ImportedRecordRef>,
+    pub imported_source_item_ids: Vec<i64>,
     pub skipped_count: usize,
     pub errors: Vec<String>,
 }
@@ -542,6 +543,7 @@ pub fn confirm_import(
             status: "cancelled".to_string(),
             imported_count: 0,
             first_imported_record: None,
+            imported_source_item_ids: Vec::new(),
             skipped_count: records.len(),
             errors: Vec::new(),
         });
@@ -573,6 +575,7 @@ pub fn confirm_import(
 
     let mut imported_count = 0usize;
     let mut first_imported_record = None;
+    let mut imported_source_item_ids = Vec::new();
     let mut imported_title_samples = Vec::new();
     let mut imported_conversation_ids = std::collections::HashMap::<String, i64>::new();
     let mut errors = Vec::new();
@@ -650,6 +653,12 @@ pub fn confirm_import(
                         title: record.title.clone(),
                     });
                 }
+                let source_item_id = connection.query_row(
+                    "SELECT id FROM source_items WHERE legacy_record_id = ?1",
+                    [record.id],
+                    |row| row.get::<_, i64>(0),
+                )?;
+                imported_source_item_ids.push(source_item_id);
                 if let Some(external_id) = record_input
                     .sources
                     .iter()
@@ -736,6 +745,7 @@ pub fn confirm_import(
         status: status.to_string(),
         imported_count,
         first_imported_record,
+        imported_source_item_ids,
         skipped_count,
         errors,
     })

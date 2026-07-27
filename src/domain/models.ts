@@ -282,6 +282,7 @@ export const importResultSchema = z.object({
     id: z.number().int(),
     title: z.string(),
   }).nullable(),
+  importedSourceItemIds: z.array(z.number().int()).optional().default([]),
   skippedCount: z.number().int(),
   errors: z.array(z.string()),
 });

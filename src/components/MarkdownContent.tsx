@@ -2,7 +2,8 @@ import { isValidElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
+import type { ReadableSourceMessage } from "../domain/importedContent";
 
 type CalloutTone = "info" | "tip" | "success" | "warning" | "danger" | "question" | "quote";
 
@@ -71,10 +72,48 @@ export function calloutToneFromText(value: string): CalloutTone | null {
 
 async function openExternalLink(href: string) {
   if ("__TAURI_INTERNALS__" in window) {
-    await openUrl(href);
+    await invoke("open_external_url", { url: href });
     return;
   }
   window.open(href, "_blank", "noopener,noreferrer");
+}
+
+function formatReadableDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.replace("T", " ").slice(0, 16);
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+export function ReadableMessageContent({
+  message,
+  compact = false,
+  children,
+}: {
+  message: ReadableSourceMessage;
+  compact?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <section className={`source-message ${message.role === "用户" ? "human" : "assistant"} ${compact ? "compact" : ""}`}>
+      <div className="source-message-header">
+        <strong>{message.role}</strong>
+        {message.createdAt ? <span>{formatReadableDateTime(message.createdAt)}</span> : null}
+      </div>
+      {message.text ? (
+        message.role === "助手"
+          ? <AssistantMessageContent value={message.text} />
+          : <MarkdownContent value={message.text} />
+      ) : null}
+      {children}
+    </section>
+  );
 }
 
 export function isSafeEmbeddedImageSource(src: string | undefined): boolean {

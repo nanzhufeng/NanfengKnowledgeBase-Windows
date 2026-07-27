@@ -25,6 +25,7 @@ export type ImportBatchSummary = {
   skippedCount: number;
   failureCount: number;
   firstImportedRecordId?: number;
+  importedSourceItemIds: number[];
 };
 
 function fileNameFromPath(path: string): string {
@@ -91,6 +92,7 @@ export async function importReadyQueue(
     importedCount: 0,
     skippedCount: 0,
     failureCount: 0,
+    importedSourceItemIds: [],
   };
   for (const item of items.filter((candidate) => candidate.status === "ready" && candidate.preview)) {
     const importing = { ...item, status: "importing" as const, error: undefined };
@@ -100,6 +102,7 @@ export async function importReadyQueue(
       summary.importedCount += result.importedCount;
       summary.skippedCount += result.skippedCount;
       summary.firstImportedRecordId ??= result.firstImportedRecord?.id;
+      summary.importedSourceItemIds.push(...result.importedSourceItemIds);
       if (result.errors.length) summary.failureCount += 1;
       onUpdate({
         ...importing,

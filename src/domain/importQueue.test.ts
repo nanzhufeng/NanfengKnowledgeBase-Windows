@@ -80,6 +80,7 @@ describe("import queue", () => {
         skippedCount: 1,
         errors: [],
         firstImportedRecord: null,
+        importedSourceItemIds: [21, 22],
       };
     });
     const updates: ImportQueueItem[] = [];
@@ -91,6 +92,7 @@ describe("import queue", () => {
       importedCount: 2,
       skippedCount: 1,
       failureCount: 1,
+      importedSourceItemIds: [21, 22],
     });
     expect(updates.at(-1)?.status).toBe("completed");
   });
@@ -111,6 +113,7 @@ describe("import queue", () => {
       skippedCount: 0,
       errors: ["第 4 条写入失败"],
       firstImportedRecord: { id: 9, title: "第一条" },
+      importedSourceItemIds: [31, 32, 33],
     }), (update) => updates.push(update));
 
     expect(result.failureCount).toBe(1);

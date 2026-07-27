@@ -81,6 +81,11 @@ import {
   type RecordRepository,
 } from "./services/recordRepository";
 import {
+  autoOrganizeImportedSources,
+  type KnowledgeAutoOrganizationResult,
+  undoAutoOrganization,
+} from "./services/knowledgeAutoOrganizer";
+import {
   readImportedContent,
   resolveImportedTitle,
   shouldDisplaySummary,
@@ -234,6 +239,17 @@ function formatFileSize(sizeBytes: number): string {
   return `${(sizeBytes / 1024).toFixed(1)} KB`;
 }
 
+function autoOrganizationNotice(result: KnowledgeAutoOrganizationResult): string {
+  const parts = [
+    `已分析 ${result.analyzedCount} 条`,
+    `自动归类 ${result.autoClassifiedCount} 条`,
+    `待确认 ${result.awaitingConfirmationCount} 条`,
+  ];
+  if (result.catalogBootstrapped) parts.push("已建立可编辑默认目录");
+  if (result.failures.length) parts.push(`${result.failures.length} 条保留在收录箱`);
+  return `自动整理完成：${parts.join("，")}`;
+}
+
 type RecordListItem = IntelligenceRecord | RecordSummary;
 
 function recordSourceLabel(record: RecordListItem): string {
@@ -370,8 +386,8 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 }
 
 const LazyMarkdownContent = lazy(() => import("./components/MarkdownContent"));
-const LazyAssistantMessageContent = lazy(() =>
-  import("./components/MarkdownContent").then((module) => ({ default: module.AssistantMessageContent })));
+const LazyReadableMessageContent = lazy(() =>
+  import("./components/MarkdownContent").then((module) => ({ default: module.ReadableMessageContent })));
 const LazyKnowledgeWorkspace = lazy(() =>
   import("./components/KnowledgeWorkspace").then((module) => ({ default: module.KnowledgeWorkspace })));
 
@@ -379,8 +395,20 @@ function MarkdownContent(props: { value: string; className?: string }) {
   return <Suspense fallback={<div className="markdown-loading">正在渲染内容…</div>}><LazyMarkdownContent {...props} /></Suspense>;
 }
 
-function AssistantMessageContent({ value }: { value: string }) {
-  return <Suspense fallback={<div className="markdown-loading">正在渲染内容…</div>}><LazyAssistantMessageContent value={value} /></Suspense>;
+function ReadableMessageContent({
+  message,
+  compact,
+  children,
+}: {
+  message: ReadableSourceMessage;
+  compact?: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Suspense fallback={<div className="markdown-loading">正在渲染内容…</div>}>
+      <LazyReadableMessageContent message={message} compact={compact}>{children}</LazyReadableMessageContent>
+    </Suspense>
+  );
 }
 
 function AppCard({
@@ -1285,16 +1313,7 @@ function ConversationMessage({
   }, [attachments]);
 
   return (
-    <section className={`source-message ${message.role === "用户" ? "human" : "assistant"} ${compact ? "compact" : ""}`}>
-      <div className="source-message-header">
-        <strong>{message.role}</strong>
-        {message.createdAt ? <span>{formatRecordDateTime(message.createdAt)}</span> : null}
-      </div>
-      {message.text ? (
-        message.role === "助手"
-          ? <AssistantMessageContent value={message.text} />
-          : <MarkdownContent value={message.text} />
-      ) : null}
+    <ReadableMessageContent message={message} compact={compact}>
       {message.assets.length ? (
         <div className="source-assets">
           {message.assets.map((asset, index) => {
@@ -1361,7 +1380,7 @@ function ConversationMessage({
           })}
         </div>
       ) : null}
-    </section>
+    </ReadableMessageContent>
   );
 }
 
@@ -1615,7 +1634,11 @@ function DetailPanel({
               </span>
             </div>
           </div>
-        ) : <p className="judgment-text">{record.currentJudgment || "尚未填写当前判断。"}</p>}
+        ) : (
+          <div className="judgment-text">
+            <MarkdownContent value={record.currentJudgment || "尚未填写当前判断。"} />
+          </div>
+        )}
         <ul className="judgment-points">
           {(record.confirmedFacts.length ? record.confirmedFacts : ["暂无结构化事实，可在记录编辑中补充。"])
             .slice(0, 3)
@@ -2325,6 +2348,24 @@ function ImportCenter({
         `批量导入完成：导入 ${summary.importedCount} 条，跳过 ${summary.skippedCount} 条${summary.failureCount ? `，${summary.failureCount} 个文件需检查` : ""}`,
         { durationMs: 7_000 },
       );
+      if (summary.importedSourceItemIds.length) {
+        onNotify(`已开始根据正文自动整理 ${summary.importedSourceItemIds.length} 条新来源`);
+        void autoOrganizeImportedSources(summary.importedSourceItemIds)
+          .then((result) => onNotify(autoOrganizationNotice(result), {
+            durationMs: 12_000,
+            actionLabel: result.operationIds.length ? "撤销自动归类" : undefined,
+            onAction: result.operationIds.length
+              ? async () => {
+                await undoAutoOrganization(result.operationIds);
+                onNotify("本批自动归类已撤销，来源已返回收录箱");
+              }
+              : undefined,
+          }))
+          .catch((error) => onNotify(
+            error instanceof Error ? error.message : "自动整理失败；来源仍保留在收录箱",
+            { durationMs: 9_000 },
+          ));
+      }
     } finally {
       setBatchImporting(false);
     }
@@ -2646,6 +2687,27 @@ function JsonMapping({
       onJobChanged();
       onCompleted?.(result);
       onNotify(`已导入 ${result.importedCount} 条，跳过 ${result.skippedCount} 条`);
+      if (result.importedSourceItemIds.length) {
+        onNotify(`已开始根据正文自动整理 ${result.importedSourceItemIds.length} 条新来源`);
+        void autoOrganizeImportedSources(result.importedSourceItemIds)
+          .then((organization) => onNotify(
+            autoOrganizationNotice(organization),
+            {
+              durationMs: 12_000,
+              actionLabel: organization.operationIds.length ? "撤销自动归类" : undefined,
+              onAction: organization.operationIds.length
+                ? async () => {
+                  await undoAutoOrganization(organization.operationIds);
+                  onNotify("本批自动归类已撤销，来源已返回收录箱");
+                }
+                : undefined,
+            },
+          ))
+          .catch((error) => onNotify(
+            error instanceof Error ? error.message : "自动整理失败；来源仍保留在收录箱",
+            { durationMs: 9_000 },
+          ));
+      }
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "导入失败");
     } finally {

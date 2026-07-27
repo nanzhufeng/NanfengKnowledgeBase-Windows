@@ -14,6 +14,14 @@ import {
 } from "lucide-react";
 import { CLASSIFIER_ALGORITHM_VERSION, classifySource } from "../knowledge/deterministicClassifier";
 import {
+  readImportedContent,
+  type ReadableSourceMessage,
+} from "../domain/importedContent";
+import {
+  autoOrganizeImportedSources,
+  undoAutoOrganization,
+} from "../services/knowledgeAutoOrganizer";
+import {
   KnowledgeRepository,
   type EvidenceLocator,
   type KnowledgeClassificationSuggestionRow,
@@ -31,11 +39,34 @@ import {
   type TopicRelationSuggestion,
   type TopicSplitPreview,
 } from "../services/knowledgeRepository";
-import MarkdownContent from "./MarkdownContent";
+import MarkdownContent, { ReadableMessageContent } from "./MarkdownContent";
 
 type Mode = "inbox" | "topics" | "organize";
 const INITIAL_INBOX_LIMIT = 120;
 const SOURCE_PREVIEW_LIMIT = 20_000;
+
+function limitReadableMessages(
+  messages: ReadableSourceMessage[],
+  characterLimit: number,
+): ReadableSourceMessage[] {
+  let remaining = characterLimit;
+  const visible: ReadableSourceMessage[] = [];
+  for (const message of messages) {
+    if (remaining <= 0 && visible.length) break;
+    const characters = Array.from(message.text);
+    const allowance = Math.max(remaining, 0);
+    const truncated = characters.length > allowance;
+    visible.push({
+      ...message,
+      text: truncated
+        ? `${characters.slice(0, allowance).join("").trimEnd()}\n\n……`
+        : message.text,
+    });
+    remaining -= Math.min(characters.length, allowance);
+    if (truncated) break;
+  }
+  return visible;
+}
 
 function topicPath(topic: KnowledgeTopicRow, topics: KnowledgeTopicRow[]): string[] {
   const result = [topic.name];
@@ -106,9 +137,18 @@ export function KnowledgeWorkspace({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [domainName, setDomainName] = useState("");
+  const [domainDescription, setDomainDescription] = useState("");
   const [topicName, setTopicName] = useState("");
+  const [topicDescription, setTopicDescription] = useState("");
   const [topicDomainId, setTopicDomainId] = useState<number | null>(null);
   const [topicParentId, setTopicParentId] = useState<number | null>(null);
+  const [editDomainId, setEditDomainId] = useState<number | null>(null);
+  const [editDomainName, setEditDomainName] = useState("");
+  const [editDomainDescription, setEditDomainDescription] = useState("");
+  const [editTopicId, setEditTopicId] = useState<number | null>(null);
+  const [editTopicName, setEditTopicName] = useState("");
+  const [editTopicDescription, setEditTopicDescription] = useState("");
+  const [autoSuggestingSourceId, setAutoSuggestingSourceId] = useState<number | null>(null);
   const [browserTopicId, setBrowserTopicId] = useState<number | null>(null);
   const [topicDetail, setTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [judgmentText, setJudgmentText] = useState("");
@@ -174,9 +214,25 @@ export function KnowledgeWorkspace({
   const sourcePreviewText = sourcePreviewIsTruncated
     ? selectedOriginalText.slice(0, SOURCE_PREVIEW_LIMIT)
     : selectedOriginalText;
+  const selectedReadableContent = useMemo(
+    () => selectedOriginalText === null ? null : readImportedContent(selectedOriginalText),
+    [selectedOriginalText],
+  );
+  const visibleSourceMessages = useMemo(() => {
+    if (!selectedReadableContent?.messages.length) return [];
+    return sourcePreviewIsTruncated
+      ? limitReadableMessages(selectedReadableContent.messages, SOURCE_PREVIEW_LIMIT)
+      : selectedReadableContent.messages;
+  }, [selectedReadableContent, sourcePreviewIsTruncated]);
+  const readableSourceText = selectedReadableContent
+    ? sourcePreviewIsTruncated
+      ? selectedReadableContent.fullText.slice(0, SOURCE_PREVIEW_LIMIT)
+      : selectedReadableContent.fullText
+    : sourcePreviewText;
 
   const reload = async () => {
-    const [
+    let catalogBootstrapped = false;
+    let [
       nextInbox,
       nextDomains,
       nextTopics,
@@ -193,6 +249,14 @@ export function KnowledgeWorkspace({
       repository.listEntities(),
       repository.listClassificationRules(),
     ]);
+    if (!nextTopics.length && nextInbox.length && nextCatalog) {
+      await repository.applyPersonalCatalog(nextCatalog.version);
+      catalogBootstrapped = true;
+      [nextDomains, nextTopics] = await Promise.all([
+        repository.listDomains(),
+        repository.listTopics(),
+      ]);
+    }
     setInbox(nextInbox);
     setDomains(nextDomains);
     setTopics(nextTopics);
@@ -205,12 +269,39 @@ export function KnowledgeWorkspace({
         ? current
         : nextInbox[0]?.id ?? null);
     setTopicDomainId((current) => current ?? nextDomains[0]?.id ?? null);
+    setEditDomainId((current) =>
+      current && nextDomains.some((domain) => domain.id === current)
+        ? current
+        : nextDomains[0]?.id ?? null);
+    setEditTopicId((current) =>
+      current && nextTopics.some((topic) => topic.id === current)
+        ? current
+        : nextTopics[0]?.id ?? null);
     setAliasTopicId((current) => current ?? nextTopics[0]?.id ?? null);
     setRuleTopicId((current) => current ?? nextTopics[0]?.id ?? null);
     setBrowserTopicId((current) =>
       current && nextTopics.some((topic) => topic.id === current)
         ? current
         : nextTopics[0]?.id ?? null);
+    if (catalogBootstrapped) {
+      onNotify("已根据现有笔记启用可编辑默认领域与主题；不会覆盖原文");
+    }
+  };
+
+  const computeAndSaveSuggestions = async (sourceItemId: number) => {
+    const context = await repository.prepareClassificationContext(sourceItemId);
+    const result = classifySource(context);
+    return repository.saveSuggestions({
+      sourceItemId,
+      classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
+      suggestions: result.suggestions.slice(0, 5).map((suggestion) => ({
+        topicId: Number(suggestion.topicId),
+        score: suggestion.confidence,
+        decision: suggestion.action,
+        reasons: suggestion.reasons,
+        signalScoresJson: JSON.stringify(suggestion.signalScores),
+      })),
+    });
   };
 
   useEffect(() => {
@@ -221,17 +312,44 @@ export function KnowledgeWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!selectedId) {
+    if (!selectedId || mode !== "inbox") {
       setSuggestions([]);
       return;
     }
+    let cancelled = false;
+    setAutoSuggestingSourceId(selectedId);
     void repository.listSuggestions(selectedId)
+      .then(async (items) => {
+        if (items.length || !topics.length) return items;
+        return computeAndSaveSuggestions(selectedId);
+      })
       .then((items) => {
+        if (cancelled) return;
         setSuggestions(items);
         setSelectedTopicId(items.find((item) => item.status === "pending")?.suggestedTopicId ?? null);
       })
-      .catch(() => setSuggestions([]));
-  }, [repository, selectedId]);
+      .catch(() => {
+        if (!cancelled) setSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAutoSuggestingSourceId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, repository, selectedId, topics.length]);
+
+  useEffect(() => {
+    const domain = domains.find((candidate) => candidate.id === editDomainId);
+    setEditDomainName(domain?.name ?? "");
+    setEditDomainDescription(domain?.description ?? "");
+  }, [domains, editDomainId]);
+
+  useEffect(() => {
+    const topic = topics.find((candidate) => candidate.id === editTopicId);
+    setEditTopicName(topic?.name ?? "");
+    setEditTopicDescription(topic?.description ?? "");
+  }, [editTopicId, topics]);
 
   useEffect(() => {
     const sequence = ++sourceTextRequestSequence.current;
@@ -663,24 +781,43 @@ export function KnowledgeWorkspace({
     }
     setBusy(true);
     try {
-      const context = await repository.prepareClassificationContext(selected.id);
-      const result = classifySource(context);
-      const persisted = await repository.saveSuggestions({
-        sourceItemId: selected.id,
-        classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
-        suggestions: result.suggestions.slice(0, 5).map((suggestion) => ({
-          topicId: Number(suggestion.topicId),
-          score: suggestion.confidence,
-          decision: suggestion.action,
-          reasons: suggestion.reasons,
-          signalScoresJson: JSON.stringify(suggestion.signalScores),
-        })),
-      });
+      const persisted = await computeAndSaveSuggestions(selected.id);
       setSuggestions(persisted);
       setSelectedTopicId(persisted[0]?.suggestedTopicId ?? null);
       onNotify("已生成并保存本地确定性分类建议");
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "分类失败，来源仍保留在收录箱");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const autoOrganizeLoadedInbox = async () => {
+    if (!inbox.length) return;
+    setBusy(true);
+    onNotify(`正在自动整理已加载的 ${inbox.length} 条来源；原文不会被改写`);
+    try {
+      const result = await autoOrganizeImportedSources(
+        inbox.map((item) => item.id),
+        repository,
+      );
+      await reload();
+      onNotify(
+        `自动整理完成：分析 ${result.analyzedCount} 条，自动归类 ${result.autoClassifiedCount} 条，待确认 ${result.awaitingConfirmationCount} 条${result.failures.length ? `，${result.failures.length} 条保留在收录箱` : ""}`,
+        {
+          durationMs: 12_000,
+          actionLabel: result.operationIds.length ? "撤销自动归类" : undefined,
+          onAction: result.operationIds.length
+            ? async () => {
+              await undoAutoOrganization(result.operationIds, repository);
+              await reload();
+              onNotify("本批自动归类已撤销");
+            }
+            : undefined,
+        },
+      );
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "自动整理失败；来源仍保留在收录箱");
     } finally {
       setBusy(false);
     }
@@ -777,12 +914,21 @@ export function KnowledgeWorkspace({
           <div className="knowledge-card knowledge-create-card">
             <h2>建立领域与主题</h2>
             <label>新领域<input value={domainName} onChange={(event) => setDomainName(event.target.value)} placeholder="例如：影视制作" /></label>
+            <label>领域说明<input value={domainDescription} onChange={(event) => setDomainDescription(event.target.value)} placeholder="这个领域长期管理什么" /></label>
             <button disabled={!domainName.trim()} onClick={async () => {
-              const created = await repository.createDomain(domainName.trim());
-              setDomainName("");
-              await reload();
-              setTopicDomainId(created.id);
-              onNotify("领域已创建");
+              setBusy(true);
+              try {
+                const created = await repository.createDomain(domainName.trim(), domainDescription.trim());
+                setDomainName("");
+                setDomainDescription("");
+                await reload();
+                setTopicDomainId(created.id);
+                onNotify("领域已创建");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "领域创建失败");
+              } finally {
+                setBusy(false);
+              }
             }}><Plus size={16} />创建领域</button>
             <label>所属领域<select value={topicDomainId ?? ""} onChange={(event) => setTopicDomainId(Number(event.target.value))}>
               <option value="">请选择</option>
@@ -795,17 +941,73 @@ export function KnowledgeWorkspace({
               ))}
             </select></label>
             <label>主题名称<input value={topicName} onChange={(event) => setTopicName(event.target.value)} placeholder="长期可复用的主题" /></label>
+            <label>主题说明<input value={topicDescription} onChange={(event) => setTopicDescription(event.target.value)} placeholder="主题范围、关键词或判断边界" /></label>
             <button disabled={!topicDomainId || !topicName.trim()} onClick={async () => {
-              await repository.createTopic({
-                domainId: topicDomainId!,
-                parentTopicId: topicParentId,
-                name: topicName.trim(),
-              });
-              setTopicName("");
-              setTopicParentId(null);
-              await reload();
-              onNotify("主题已创建");
+              setBusy(true);
+              try {
+                await repository.createTopic({
+                  domainId: topicDomainId!,
+                  parentTopicId: topicParentId,
+                  name: topicName.trim(),
+                  description: topicDescription.trim(),
+                });
+                setTopicName("");
+                setTopicDescription("");
+                setTopicParentId(null);
+                await reload();
+                onNotify("主题已创建");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "主题创建失败");
+              } finally {
+                setBusy(false);
+              }
             }}><Plus size={16} />创建主题</button>
+            <div className="knowledge-editor-divider" />
+            <h2>编辑已有目录</h2>
+            <label>选择领域<select value={editDomainId ?? ""} onChange={(event) => setEditDomainId(event.target.value ? Number(event.target.value) : null)}>
+              <option value="">请选择</option>
+              {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}
+            </select></label>
+            <label>领域名称<input value={editDomainName} onChange={(event) => setEditDomainName(event.target.value)} disabled={!editDomainId} /></label>
+            <label>领域说明<input value={editDomainDescription} onChange={(event) => setEditDomainDescription(event.target.value)} disabled={!editDomainId} /></label>
+            <button disabled={busy || !editDomainId || !editDomainName.trim()} onClick={async () => {
+              setBusy(true);
+              try {
+                await repository.updateDomain({
+                  id: editDomainId!,
+                  name: editDomainName.trim(),
+                  description: editDomainDescription.trim(),
+                });
+                await reload();
+                onNotify("领域信息已更新，现有主题和来源关系保持不变");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "领域更新失败");
+              } finally {
+                setBusy(false);
+              }
+            }}>保存领域修改</button>
+            <label>选择主题<select value={editTopicId ?? ""} onChange={(event) => setEditTopicId(event.target.value ? Number(event.target.value) : null)}>
+              <option value="">请选择</option>
+              {topics.map((topic) => <option key={topic.id} value={topic.id}>{topicPath(topic, topics).join(" / ")}</option>)}
+            </select></label>
+            <label>主题名称<input value={editTopicName} onChange={(event) => setEditTopicName(event.target.value)} disabled={!editTopicId} /></label>
+            <label>主题说明<input value={editTopicDescription} onChange={(event) => setEditTopicDescription(event.target.value)} disabled={!editTopicId} /></label>
+            <button disabled={busy || !editTopicId || !editTopicName.trim()} onClick={async () => {
+              setBusy(true);
+              try {
+                await repository.updateTopic({
+                  id: editTopicId!,
+                  name: editTopicName.trim(),
+                  description: editTopicDescription.trim(),
+                });
+                await reload();
+                onNotify("主题信息已更新，分类关系和历史保持不变");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "主题更新失败");
+              } finally {
+                setBusy(false);
+              }
+            }}>保存主题修改</button>
           </div>
           <div className="knowledge-card knowledge-tree-card">
             <h2>当前主题树 <span>{topics.length} 个主题</span></h2>
@@ -1529,7 +1731,12 @@ export function KnowledgeWorkspace({
     <main className="knowledge-page knowledge-inbox-page">
       <header className="knowledge-page-header">
         <div><span>来源先归档，再分类</span><h1>收录箱</h1><p>已加载 {inbox.length} 条待确认来源；分类失败不会丢失来源。</p></div>
-        <Inbox size={28} />
+        <div className="knowledge-header-actions">
+          <button disabled={busy || !inbox.length} onClick={() => void autoOrganizeLoadedInbox()}>
+            <Sparkles size={16} />自动整理已加载来源
+          </button>
+          <Inbox size={28} />
+        </div>
       </header>
       <section className="knowledge-inbox-layout">
         <div className="knowledge-card knowledge-inbox-list">
@@ -1568,13 +1775,35 @@ export function KnowledgeWorkspace({
             <>
               <div className="knowledge-detail-heading">
                 <div><span>{selected.sourceType}</span><h2>{selected.title}</h2></div>
-                <button onClick={() => void generateSuggestions()} disabled={busy || !topics.length}><Sparkles size={16} />{busy ? "计算中…" : "生成分类建议"}</button>
+                <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
+                  <Sparkles size={16} />
+                  {autoSuggestingSourceId === selected.id
+                    ? "自动整理中…"
+                    : suggestions.some((item) => item.status === "pending")
+                      ? "重新计算建议"
+                      : "生成分类建议"}
+                </button>
               </div>
               <div className="knowledge-source-preview">
-                {sourcePreviewText === null
+                {selectedReadableContent === null
                   ? <div className="page-loading"><span className="save-spinner" />正在读取当前来源正文…</div>
                   : <>
-                    <MarkdownContent value={sourcePreviewText || "来源正文为空"} />
+                    {visibleSourceMessages.length ? (
+                      <div className="knowledge-conversation-reader">
+                        {visibleSourceMessages.map((message, index) => (
+                          <ReadableMessageContent
+                            key={`${message.role}-${message.createdAt ?? index}-${index}`}
+                            message={message}
+                            compact
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <MarkdownContent
+                        value={readableSourceText || "来源正文为空"}
+                        className="source-plain-text"
+                      />
+                    )}
                     {sourcePreviewIsTruncated ? (
                       <div className="knowledge-source-preview-limit">
                         <span>正文较长，已先显示前 {SOURCE_PREVIEW_LIMIT.toLocaleString("zh-CN")} 字，避免切换时卡顿。</span>
