@@ -2,7 +2,7 @@
 
 ## 2026-07-27 正式知识生产 checkpoint（最终回归与文档固化）
 
-- 本地 checkpoint 分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`；未推送远端。
+- 本地代码 checkpoint：分支 `codex/nanfeng-knowledge-production-checkpoint-20260727`，提交 `bf7d97e`（`feat: checkpoint knowledge production integration`）；未推送远端。
 - 当前代码基线保持：正式知识入口、migration v3、`KnowledgeRepository`、分类确认/撤销、主题判断/证据/问题、研究上下文、合并预览/提交/撤销、拆分只读预览和人工确认关系。
 - 本轮没有重跑已经完成的 901 条隔离迁移，也没有读写 `D:\南枫知识库`；继续采用既有证据：901 个活动 Record、901 个 Source Item、901 个收录项、446 个附件登记、migration 1/2/3、完整性 `ok`、外键违规 0、第二次运行幂等。
 - 最终全量回归：前端 46/46、Rust 53/53、Sites 4/4、Playwright 无界面 16/16、TypeScript 与 Vite 生产构建通过，`git diff --check` 通过。
