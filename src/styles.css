@@ -3793,6 +3793,48 @@ textarea:focus-visible,
   overscroll-behavior: contain;
 }
 
+.knowledge-source-filters {
+  position: sticky;
+  z-index: 2;
+  top: -10px;
+  display: grid;
+  padding: 10px 2px 8px;
+  gap: 8px;
+  background: #fff;
+}
+
+.knowledge-source-filters input {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid #d4dce8;
+  border-radius: 9px;
+  color: #173766;
+  background: #f8fafc;
+}
+
+.knowledge-source-filters > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.knowledge-source-filters button {
+  min-height: 32px;
+  border: 1px solid #dce3ed;
+  border-radius: 8px;
+  color: #607087;
+  background: #fff;
+  cursor: pointer;
+}
+
+.knowledge-source-filters button.active {
+  border-color: #ff9b60;
+  color: #bd4d0b;
+  background: #fff5ed;
+  font-weight: 800;
+}
+
 .knowledge-inbox-list > button {
   position: relative;
   display: grid;
@@ -4014,6 +4056,40 @@ textarea:focus-visible,
   gap: 18px;
 }
 
+.knowledge-read-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.knowledge-read-layout .knowledge-create-card {
+  display: none;
+}
+
+.knowledge-structure-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+}
+
+.knowledge-structure-editor {
+  align-self: start;
+}
+
+.knowledge-structure-editor > summary,
+.knowledge-advanced-maintenance > summary {
+  cursor: pointer;
+  color: #173766;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.knowledge-structure-editor[open] > summary,
+.knowledge-advanced-maintenance[open] > summary {
+  margin-bottom: 14px;
+}
+
+.knowledge-advanced-maintenance {
+  margin-top: 18px;
+  padding: 16px 18px;
+}
+
 .knowledge-create-card,
 .knowledge-tree-card,
 .knowledge-governance-list {
@@ -4117,8 +4193,26 @@ textarea:focus-visible,
 }
 
 .knowledge-topic-detail {
+  display: flex;
+  flex-direction: column;
   margin-top: 18px;
   padding: 20px;
+}
+
+.knowledge-topic-detail > .knowledge-evolution-columns {
+  order: 1;
+}
+
+.knowledge-topic-detail > .knowledge-detail-columns {
+  order: 2;
+}
+
+.knowledge-topic-detail > .knowledge-decision-workspace {
+  order: 3;
+}
+
+.knowledge-topic-detail > .knowledge-note-workspace {
+  order: 4;
 }
 
 .knowledge-topic-detail-header {
@@ -4297,15 +4391,46 @@ textarea:focus-visible,
   opacity: .66;
 }
 
-.knowledge-proposition-list > article > div > span {
+.knowledge-proposition-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.knowledge-proposition-list .knowledge-proposition-meta > span {
   display: inline-block;
-  margin-bottom: 6px;
   padding: 3px 7px;
   border-radius: 999px;
   background: #f1ecfa;
   color: #7652b5;
   font-size: 10px;
   font-weight: 800;
+}
+
+.knowledge-invalidation,
+.knowledge-decision-link {
+  display: grid;
+  gap: 3px;
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #53647b;
+  background: #f5f7fa;
+  font-size: 11px;
+}
+
+.knowledge-invalidation strong,
+.knowledge-decision-link strong {
+  color: #7a4eaa;
+}
+
+.knowledge-validity-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+  color: #7c899b;
 }
 
 .knowledge-proposition-list footer {
@@ -4403,6 +4528,23 @@ textarea:focus-visible,
   gap: 7px;
 }
 
+.knowledge-inline-editor > .knowledge-compact-fields,
+.knowledge-compact-fields,
+.knowledge-validity-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.knowledge-compact-fields label,
+.knowledge-validity-fields label {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  color: #617087;
+  font-size: 11px;
+}
+
 .knowledge-inline-editor button:first-child {
   border-color: #7652b5;
   background: #7652b5;
@@ -4425,6 +4567,122 @@ textarea:focus-visible,
   gap: 5px;
   color: #526178;
   font-size: 11px;
+}
+
+.knowledge-decision-workspace {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e1e6ef;
+}
+
+.knowledge-decision-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, .9fr);
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.knowledge-decision-list,
+.knowledge-decision-editor {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.knowledge-decision-list > article,
+.knowledge-decision-editor {
+  padding: 15px;
+  border: 1px solid #dce4ef;
+  border-radius: 11px;
+  background: #f8fafc;
+}
+
+.knowledge-decision-list > article {
+  border-left: 3px solid #2b61a7;
+  background: #fff;
+}
+
+.knowledge-decision-list header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.knowledge-decision-list header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.knowledge-decision-list header small,
+.knowledge-decision-list > article > small {
+  color: #78869a;
+}
+
+.knowledge-decision-list button,
+.knowledge-decision-editor button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #d5deeb;
+  border-radius: 8px;
+  color: #315072;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.knowledge-decision-list p {
+  white-space: pre-wrap;
+}
+
+.knowledge-decision-list p > strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #173766;
+}
+
+.knowledge-decision-list ul {
+  margin: 5px 0 8px;
+  padding-left: 20px;
+  color: #526178;
+}
+
+.knowledge-decision-editor h4 {
+  margin: 0;
+  color: #173766;
+}
+
+.knowledge-decision-editor input,
+.knowledge-decision-editor select,
+.knowledge-decision-editor textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #ccd5e3;
+  border-radius: 8px;
+  color: #16375f;
+  background: #fff;
+  font: inherit;
+}
+
+.knowledge-decision-editor textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.knowledge-decision-editor > div:last-child {
+  display: flex;
+  gap: 7px;
+}
+
+.knowledge-decision-editor > div:last-child button:first-child {
+  border-color: #2b61a7;
+  color: #fff;
+  background: #2b61a7;
+}
+
+.knowledge-source-organized {
+  color: #526178;
 }
 
 .knowledge-note-workspace {
@@ -4980,6 +5238,7 @@ textarea:focus-visible,
   .knowledge-governance-grid,
   .knowledge-classification-management,
   .knowledge-evolution-columns,
+  .knowledge-decision-layout,
   .knowledge-note-workspace {
     grid-template-columns: 1fr;
   }

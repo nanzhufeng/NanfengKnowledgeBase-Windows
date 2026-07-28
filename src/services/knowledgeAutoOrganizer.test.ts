@@ -62,17 +62,23 @@ describe("autoOrganizeImportedSources", () => {
         id: 91,
         suggestedTopicId: 7,
       }]),
-      confirmClassification: vi.fn(),
+      confirmClassification: vi.fn().mockResolvedValue({ operationId: 400 }),
     };
 
     const result = await autoOrganizeImportedSources([31], repository as never);
 
     expect(result.catalogBootstrapped).toBe(true);
     expect(result.analyzedCount).toBe(1);
+    expect(result.autoClassifiedCount).toBe(1);
     expect(result.awaitingConfirmationCount).toBe(1);
     expect(repository.applyPersonalCatalog).toHaveBeenCalledWith("catalog-v1");
     expect(repository.saveSuggestions).toHaveBeenCalledTimes(1);
-    expect(repository.confirmClassification).not.toHaveBeenCalled();
+    expect(repository.confirmClassification).toHaveBeenCalledWith({
+      sourceItemId: 31,
+      topicId: 7,
+      suggestionId: 91,
+      confidence: expect.any(Number),
+    });
   });
 
   it("automatically accepts only a high-confidence eligible suggestion", async () => {
@@ -114,7 +120,7 @@ describe("autoOrganizeImportedSources", () => {
       applyPersonalCatalog: vi.fn().mockResolvedValue({}),
       prepareClassificationContext: vi.fn().mockResolvedValue(unsupportedContext),
       saveSuggestions: vi.fn().mockResolvedValue([]),
-      confirmClassification: vi.fn(),
+      confirmClassification: vi.fn().mockResolvedValue({ operationId: 402 }),
     };
 
     const result = await autoOrganizeImportedSources([33], repository as never);
@@ -169,5 +175,10 @@ describe("autoOrganizeImportedSources", () => {
         suggestions: [expect.objectContaining({ topicId: null })],
       }),
     );
+    expect(repository.confirmClassification).toHaveBeenCalledTimes(1);
+    expect(repository.confirmClassification).toHaveBeenCalledWith(expect.objectContaining({
+      sourceItemId: 43,
+      topicId: 7,
+    }));
   });
 });

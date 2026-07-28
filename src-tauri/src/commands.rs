@@ -81,6 +81,18 @@ pub fn list_knowledge_inbox(
 }
 
 #[tauri::command]
+pub fn list_knowledge_source_archive(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeInboxItem>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_source_archive(
+        &connection,
+        limit.unwrap_or(500),
+    ))
+}
+
+#[tauri::command]
 pub fn get_knowledge_source_original_text(
     state: State<'_, AppState>,
     source_item_id: i64,
@@ -478,6 +490,30 @@ pub fn supersede_knowledge_proposition(
     command(crate::knowledge::repository::supersede_proposition(
         &connection,
         proposition_id,
+    ))
+}
+
+#[tauri::command]
+pub fn create_knowledge_decision(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::CreateTopicDecisionInput,
+) -> Result<crate::knowledge::repository::TopicDecisionRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::create_decision(
+        &connection,
+        &input,
+    ))
+}
+
+#[tauri::command]
+pub fn update_knowledge_decision(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateTopicDecisionInput,
+) -> Result<crate::knowledge::repository::TopicDecisionRow, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_decision(
+        &connection,
+        &input,
     ))
 }
 

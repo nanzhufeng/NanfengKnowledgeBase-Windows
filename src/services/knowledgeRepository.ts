@@ -20,6 +20,9 @@ const inboxItemSchema = z.object({
   duplicateState: z.string(),
   freshnessState: z.string(),
   pendingSuggestionCount: z.number().int(),
+  assignedTopicCount: z.number().int(),
+  primaryTopicId: z.number().int().nullable(),
+  primaryTopicName: z.string().nullable(),
 });
 
 const domainRowSchema = z.object({
@@ -287,6 +290,7 @@ const topicSourceRowSchema = z.object({
 const topicJudgmentRowSchema = z.object({
   id: z.number().int(),
   publicId: z.string(),
+  propositionId: z.number().int().nullable(),
   statementMarkdown: z.string(),
   state: z.string(),
   confidence: z.number(),
@@ -299,6 +303,7 @@ const topicEvidenceRowSchema = z.object({
   id: z.number().int(),
   publicId: z.string(),
   sourceItemId: z.number().int(),
+  propositionId: z.number().int().nullable(),
   sourceTitle: z.string(),
   contentMarkdown: z.string(),
   stance: z.string(),
@@ -307,6 +312,10 @@ const topicEvidenceRowSchema = z.object({
   validityStatus: z.string(),
   locatorJson: z.string(),
   locatorLabel: z.string(),
+  confirmedAt: z.string().nullable(),
+  validFrom: z.string().nullable(),
+  validUntil: z.string().nullable(),
+  reviewAt: z.string().nullable(),
   createdAt: z.string(),
 });
 
@@ -352,6 +361,36 @@ const topicPropositionRowSchema = z.object({
   topicId: z.number().int(),
   statementMarkdown: z.string(),
   status: z.enum(["open", "supported", "rejected", "superseded"]),
+  propositionKind: z.enum(["claim", "hypothesis"]),
+  hypothesisGroup: z.string(),
+  confidence: z.number().min(0).max(100),
+  invalidationCondition: z.string(),
+  validityStatus: z.enum(["active", "possibly_outdated", "expired"]),
+  confirmedAt: z.string().nullable(),
+  validFrom: z.string().nullable(),
+  validUntil: z.string().nullable(),
+  reviewAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const topicDecisionRowSchema = z.object({
+  id: z.number().int(),
+  publicId: z.string(),
+  topicId: z.number().int(),
+  propositionId: z.number().int().nullable(),
+  judgmentSnapshotId: z.number().int().nullable(),
+  title: z.string(),
+  decisionMarkdown: z.string(),
+  decidedAt: z.string(),
+  status: z.enum(["active", "reversed", "superseded"]),
+  knownRisks: z.array(z.string()),
+  expectedResult: z.string(),
+  actualActions: z.array(z.string()),
+  reviewAt: z.string().nullable(),
+  resultStatus: z.enum(["pending", "in_progress", "succeeded", "failed", "mixed", "cancelled"]),
+  finalResult: z.string(),
+  retrospective: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -378,6 +417,7 @@ const topicDetailSchema = z.object({
   questions: z.array(topicQuestionRowSchema),
   notes: z.array(knowledgeNoteRowSchema),
   propositions: z.array(topicPropositionRowSchema),
+  decisions: z.array(topicDecisionRowSchema),
   turningPoints: z.array(topicTurningPointRowSchema),
 });
 
@@ -389,6 +429,7 @@ export type KnowledgeOperationResult = z.infer<typeof operationResultSchema>;
 export type KnowledgeTopicDetail = z.infer<typeof topicDetailSchema>;
 export type KnowledgeNoteRow = z.infer<typeof knowledgeNoteRowSchema>;
 export type TopicPropositionRow = z.infer<typeof topicPropositionRowSchema>;
+export type TopicDecisionRow = z.infer<typeof topicDecisionRowSchema>;
 export type TopicTurningPointRow = z.infer<typeof topicTurningPointRowSchema>;
 export type TopicMergePreview = z.infer<typeof topicMergePreviewSchema>;
 export type TopicMergeResult = z.infer<typeof topicMergeResultSchema>;
@@ -447,6 +488,13 @@ export class KnowledgeRepository {
   async listInbox(limit = 120): Promise<KnowledgeInboxItem[]> {
     if (!this.desktopAvailable) return [];
     return z.array(inboxItemSchema).parse(await invoke("list_knowledge_inbox", { limit }));
+  }
+
+  async listSourceArchive(limit = 120): Promise<KnowledgeInboxItem[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(inboxItemSchema).parse(
+      await invoke("list_knowledge_source_archive", { limit }),
+    );
   }
 
   async getSourceOriginalText(sourceItemId: number): Promise<string> {
@@ -731,9 +779,28 @@ export class KnowledgeRepository {
     topicId: number;
     statementMarkdown: string;
     status: TopicPropositionRow["status"];
+    propositionKind: TopicPropositionRow["propositionKind"];
+    hypothesisGroup?: string;
+    confidence: number;
+    invalidationCondition?: string;
+    validityStatus: TopicPropositionRow["validityStatus"];
+    confirmedAt?: string | null;
+    validFrom?: string | null;
+    validUntil?: string | null;
+    reviewAt?: string | null;
   }): Promise<TopicPropositionRow> {
     return topicPropositionRowSchema.parse(
-      await invoke("create_knowledge_proposition", { input }),
+      await invoke("create_knowledge_proposition", {
+        input: {
+          ...input,
+          hypothesisGroup: input.hypothesisGroup ?? "",
+          invalidationCondition: input.invalidationCondition ?? "",
+          confirmedAt: input.confirmedAt ?? null,
+          validFrom: input.validFrom ?? null,
+          validUntil: input.validUntil ?? null,
+          reviewAt: input.reviewAt ?? null,
+        },
+      }),
     );
   }
 
@@ -741,9 +808,28 @@ export class KnowledgeRepository {
     id: number;
     statementMarkdown: string;
     status: TopicPropositionRow["status"];
+    propositionKind: TopicPropositionRow["propositionKind"];
+    hypothesisGroup?: string;
+    confidence: number;
+    invalidationCondition?: string;
+    validityStatus: TopicPropositionRow["validityStatus"];
+    confirmedAt?: string | null;
+    validFrom?: string | null;
+    validUntil?: string | null;
+    reviewAt?: string | null;
   }): Promise<TopicPropositionRow> {
     return topicPropositionRowSchema.parse(
-      await invoke("update_knowledge_proposition", { input }),
+      await invoke("update_knowledge_proposition", {
+        input: {
+          ...input,
+          hypothesisGroup: input.hypothesisGroup ?? "",
+          invalidationCondition: input.invalidationCondition ?? "",
+          confirmedAt: input.confirmedAt ?? null,
+          validFrom: input.validFrom ?? null,
+          validUntil: input.validUntil ?? null,
+          reviewAt: input.reviewAt ?? null,
+        },
+      }),
     );
   }
 
@@ -770,6 +856,7 @@ export class KnowledgeRepository {
 
   async addTopicJudgment(input: {
     topicId: number;
+    propositionId?: number | null;
     statementMarkdown: string;
     confidence: number;
     state?: string;
@@ -778,6 +865,7 @@ export class KnowledgeRepository {
     return topicJudgmentRowSchema.parse(await invoke("add_knowledge_topic_judgment", {
       input: {
         ...input,
+        propositionId: input.propositionId ?? null,
         state: input.state ?? "current",
         changeReason: input.changeReason ?? "",
       },
@@ -787,21 +875,31 @@ export class KnowledgeRepository {
   async addTopicEvidence(input: {
     topicId: number;
     sourceItemId: number;
+    propositionId?: number | null;
     contentMarkdown: string;
     stance?: string;
     credibility?: number;
     verificationStatus?: string;
     validityStatus?: string;
     locator?: EvidenceLocator;
+    confirmedAt?: string | null;
+    validFrom?: string | null;
+    validUntil?: string | null;
+    reviewAt?: string | null;
   }) {
     const { locator, ...rest } = input;
     return topicEvidenceRowSchema.parse(await invoke("add_knowledge_topic_evidence", {
       input: {
         ...rest,
+        propositionId: input.propositionId ?? null,
         stance: input.stance ?? "context",
         credibility: input.credibility ?? 0,
         verificationStatus: input.verificationStatus ?? "unverified",
         validityStatus: input.validityStatus ?? "active",
+        confirmedAt: input.confirmedAt ?? null,
+        validFrom: input.validFrom ?? null,
+        validUntil: input.validUntil ?? null,
+        reviewAt: input.reviewAt ?? null,
         locatorJson: locator?.kind && locator.kind !== "none"
           ? JSON.stringify({
             kind: locator.kind,
@@ -809,6 +907,71 @@ export class KnowledgeRepository {
             quote: locator.quote?.trim() ?? "",
           })
           : "{}",
+      },
+    }));
+  }
+
+  async createDecision(input: {
+    topicId: number;
+    propositionId?: number | null;
+    judgmentSnapshotId?: number | null;
+    title: string;
+    decisionMarkdown: string;
+    decidedAt?: string;
+    status?: TopicDecisionRow["status"];
+    knownRisks?: string[];
+    expectedResult?: string;
+    actualActions?: string[];
+    reviewAt?: string | null;
+    resultStatus?: TopicDecisionRow["resultStatus"];
+    finalResult?: string;
+    retrospective?: string;
+  }): Promise<TopicDecisionRow> {
+    return topicDecisionRowSchema.parse(await invoke("create_knowledge_decision", {
+      input: {
+        ...input,
+        propositionId: input.propositionId ?? null,
+        judgmentSnapshotId: input.judgmentSnapshotId ?? null,
+        decidedAt: input.decidedAt ?? "",
+        status: input.status ?? "active",
+        knownRisks: input.knownRisks ?? [],
+        expectedResult: input.expectedResult ?? "",
+        actualActions: input.actualActions ?? [],
+        reviewAt: input.reviewAt ?? null,
+        resultStatus: input.resultStatus ?? "pending",
+        finalResult: input.finalResult ?? "",
+        retrospective: input.retrospective ?? "",
+      },
+    }));
+  }
+
+  async updateDecision(input: {
+    id: number;
+    propositionId?: number | null;
+    judgmentSnapshotId?: number | null;
+    title: string;
+    decisionMarkdown: string;
+    decidedAt: string;
+    status: TopicDecisionRow["status"];
+    knownRisks?: string[];
+    expectedResult?: string;
+    actualActions?: string[];
+    reviewAt?: string | null;
+    resultStatus: TopicDecisionRow["resultStatus"];
+    finalResult?: string;
+    retrospective?: string;
+  }): Promise<TopicDecisionRow> {
+    return topicDecisionRowSchema.parse(await invoke("update_knowledge_decision", {
+      input: {
+        ...input,
+        propositionId: input.propositionId ?? null,
+        judgmentSnapshotId: input.judgmentSnapshotId ?? null,
+        knownRisks: input.knownRisks ?? [],
+        expectedResult: input.expectedResult ?? "",
+        actualActions: input.actualActions ?? [],
+        reviewAt: input.reviewAt ?? null,
+        finalResult: input.finalResult ?? "",
+        retrospective: input.retrospective ?? "",
       },
     }));
   }

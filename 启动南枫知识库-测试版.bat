@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 
 set "PROJECT_DIR=%~dp0"
-set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\knowledge-base-build-v6"
+set "TEST_TARGET_DIR=%PROJECT_DIR%.runtime-qa\knowledge-reasoning-v1-build"
 set "APP_EXE=%TEST_TARGET_DIR%\release\nanfeng-knowledge-base.exe"
 set "LOG_DIR=%PROJECT_DIR%.runtime-qa\launcher"
 set "LAUNCH_LOG=%LOG_DIR%\latest.log"

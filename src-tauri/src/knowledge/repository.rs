@@ -26,6 +26,9 @@ pub struct KnowledgeInboxItem {
     pub duplicate_state: String,
     pub freshness_state: String,
     pub pending_suggestion_count: i64,
+    pub assigned_topic_count: i64,
+    pub primary_topic_id: Option<i64>,
+    pub primary_topic_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -471,6 +474,7 @@ pub struct TopicSourceRow {
 pub struct TopicJudgmentRow {
     pub id: i64,
     pub public_id: String,
+    pub proposition_id: Option<i64>,
     pub statement_markdown: String,
     pub state: String,
     pub confidence: f64,
@@ -485,6 +489,7 @@ pub struct TopicEvidenceRow {
     pub id: i64,
     pub public_id: String,
     pub source_item_id: i64,
+    pub proposition_id: Option<i64>,
     pub source_title: String,
     pub content_markdown: String,
     pub stance: String,
@@ -493,6 +498,10 @@ pub struct TopicEvidenceRow {
     pub validity_status: String,
     pub locator_json: String,
     pub locator_label: String,
+    pub confirmed_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    pub review_at: Option<String>,
     pub created_at: String,
 }
 
@@ -518,6 +527,38 @@ pub struct TopicPropositionRow {
     pub topic_id: i64,
     pub statement_markdown: String,
     pub status: String,
+    pub proposition_kind: String,
+    pub hypothesis_group: String,
+    pub confidence: f64,
+    pub invalidation_condition: String,
+    pub validity_status: String,
+    pub confirmed_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    pub review_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicDecisionRow {
+    pub id: i64,
+    pub public_id: String,
+    pub topic_id: i64,
+    pub proposition_id: Option<i64>,
+    pub judgment_snapshot_id: Option<i64>,
+    pub title: String,
+    pub decision_markdown: String,
+    pub decided_at: String,
+    pub status: String,
+    pub known_risks: Vec<String>,
+    pub expected_result: String,
+    pub actual_actions: Vec<String>,
+    pub review_at: Option<String>,
+    pub result_status: String,
+    pub final_result: String,
+    pub retrospective: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -603,6 +644,7 @@ pub struct KnowledgeTopicDetail {
     pub questions: Vec<TopicQuestionRow>,
     pub notes: Vec<KnowledgeNoteRow>,
     pub propositions: Vec<TopicPropositionRow>,
+    pub decisions: Vec<TopicDecisionRow>,
     pub turning_points: Vec<TopicTurningPointRow>,
 }
 
@@ -610,6 +652,7 @@ pub struct KnowledgeTopicDetail {
 #[serde(rename_all = "camelCase")]
 pub struct AddTopicJudgmentInput {
     pub topic_id: i64,
+    pub proposition_id: Option<i64>,
     pub statement_markdown: String,
     pub confidence: f64,
     #[serde(default = "default_judgment_state")]
@@ -627,6 +670,7 @@ fn default_judgment_state() -> String {
 pub struct AddTopicEvidenceInput {
     pub topic_id: i64,
     pub source_item_id: i64,
+    pub proposition_id: Option<i64>,
     pub content_markdown: String,
     #[serde(default = "default_evidence_stance")]
     pub stance: String,
@@ -638,6 +682,10 @@ pub struct AddTopicEvidenceInput {
     pub validity_status: String,
     #[serde(default)]
     pub locator_json: String,
+    pub confirmed_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    pub review_at: Option<String>,
 }
 
 fn default_evidence_stance() -> String {
@@ -659,6 +707,20 @@ pub struct CreateTopicPropositionInput {
     pub statement_markdown: String,
     #[serde(default = "default_proposition_status")]
     pub status: String,
+    #[serde(default = "default_proposition_kind")]
+    pub proposition_kind: String,
+    #[serde(default)]
+    pub hypothesis_group: String,
+    #[serde(default = "default_proposition_confidence")]
+    pub confidence: f64,
+    #[serde(default)]
+    pub invalidation_condition: String,
+    #[serde(default = "default_proposition_validity_status")]
+    pub validity_status: String,
+    pub confirmed_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    pub review_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -667,10 +729,92 @@ pub struct UpdateTopicPropositionInput {
     pub id: i64,
     pub statement_markdown: String,
     pub status: String,
+    pub proposition_kind: String,
+    #[serde(default)]
+    pub hypothesis_group: String,
+    pub confidence: f64,
+    #[serde(default)]
+    pub invalidation_condition: String,
+    pub validity_status: String,
+    pub confirmed_at: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    pub review_at: Option<String>,
 }
 
 fn default_proposition_status() -> String {
     "open".to_string()
+}
+
+fn default_proposition_kind() -> String {
+    "claim".to_string()
+}
+
+fn default_proposition_confidence() -> f64 {
+    50.0
+}
+
+fn default_proposition_validity_status() -> String {
+    "active".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTopicDecisionInput {
+    pub topic_id: i64,
+    pub proposition_id: Option<i64>,
+    pub judgment_snapshot_id: Option<i64>,
+    pub title: String,
+    pub decision_markdown: String,
+    #[serde(default)]
+    pub decided_at: String,
+    #[serde(default = "default_decision_status")]
+    pub status: String,
+    #[serde(default)]
+    pub known_risks: Vec<String>,
+    #[serde(default)]
+    pub expected_result: String,
+    #[serde(default)]
+    pub actual_actions: Vec<String>,
+    pub review_at: Option<String>,
+    #[serde(default = "default_decision_result_status")]
+    pub result_status: String,
+    #[serde(default)]
+    pub final_result: String,
+    #[serde(default)]
+    pub retrospective: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTopicDecisionInput {
+    pub id: i64,
+    pub proposition_id: Option<i64>,
+    pub judgment_snapshot_id: Option<i64>,
+    pub title: String,
+    pub decision_markdown: String,
+    pub decided_at: String,
+    pub status: String,
+    #[serde(default)]
+    pub known_risks: Vec<String>,
+    #[serde(default)]
+    pub expected_result: String,
+    #[serde(default)]
+    pub actual_actions: Vec<String>,
+    pub review_at: Option<String>,
+    pub result_status: String,
+    #[serde(default)]
+    pub final_result: String,
+    #[serde(default)]
+    pub retrospective: String,
+}
+
+fn default_decision_status() -> String {
+    "active".to_string()
+}
+
+fn default_decision_result_status() -> String {
+    "pending".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -857,10 +1001,15 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
                 source.title, source.platform, source.original_at,
                 source.imported_at, source.read_state, source.organization_state,
                 source.duplicate_state, source.freshness_state,
-                COUNT(suggestion.id)
+                COUNT(DISTINCT suggestion.id),
+                COUNT(DISTINCT source_topic.topic_id),
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.id END),
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END)
          FROM source_items source
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
+         LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
+         LEFT JOIN topics topic ON topic.id = source_topic.topic_id
          WHERE source.organization_state = 'inbox' AND source.status = 'active'
            AND length(trim(source.original_text)) > 0
            AND (
@@ -896,6 +1045,71 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
             duplicate_state: row.get(10)?,
             freshness_state: row.get(11)?,
             pending_suggestion_count: row.get(12)?,
+            assigned_topic_count: row.get(13)?,
+            primary_topic_id: row.get(14)?,
+            primary_topic_name: row.get(15)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn list_source_archive(
+    connection: &Connection,
+    limit: usize,
+) -> AppResult<Vec<KnowledgeInboxItem>> {
+    let limit = limit.clamp(1, 2_000) as i64;
+    let mut statement = connection.prepare(
+        "SELECT source.id, source.public_id, source.legacy_record_id, source.source_type,
+                source.title, source.platform, source.original_at,
+                source.imported_at, source.read_state, source.organization_state,
+                source.duplicate_state, source.freshness_state,
+                COUNT(DISTINCT suggestion.id),
+                COUNT(DISTINCT source_topic.topic_id),
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.id END),
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END)
+         FROM source_items source
+         LEFT JOIN classification_suggestions suggestion
+           ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
+         LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
+         LEFT JOIN topics topic ON topic.id = source_topic.topic_id
+         WHERE source.status = 'active'
+           AND length(trim(source.original_text)) > 0
+           AND (
+             CASE
+               WHEN json_valid(source.original_text) THEN
+                 CASE
+                   WHEN json_type(source.original_text, '$.chat_messages') = 'array'
+                     AND json_array_length(source.original_text, '$.chat_messages') = 0
+                     AND length(trim(COALESCE(json_extract(source.original_text, '$.name'), ''))) = 0
+                     AND length(trim(COALESCE(json_extract(source.original_text, '$.summary'), ''))) = 0
+                   THEN 0
+                   ELSE 1
+                 END
+               ELSE 1
+             END
+           ) = 1
+         GROUP BY source.id
+         ORDER BY COALESCE(source.original_at, source.imported_at) DESC, source.id DESC
+         LIMIT ?1",
+    )?;
+    let rows = statement.query_map([limit], |row| {
+        Ok(KnowledgeInboxItem {
+            id: row.get(0)?,
+            public_id: row.get(1)?,
+            legacy_record_id: row.get(2)?,
+            source_type: row.get(3)?,
+            title: row.get(4)?,
+            platform: row.get(5)?,
+            original_at: row.get(6)?,
+            imported_at: row.get(7)?,
+            read_state: row.get(8)?,
+            organization_state: row.get(9)?,
+            duplicate_state: row.get(10)?,
+            freshness_state: row.get(11)?,
+            pending_suggestion_count: row.get(12)?,
+            assigned_topic_count: row.get(13)?,
+            primary_topic_id: row.get(14)?,
+            primary_topic_name: row.get(15)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1826,7 +2040,10 @@ pub fn list_propositions(
     topic_id: i64,
 ) -> AppResult<Vec<TopicPropositionRow>> {
     let mut statement = connection.prepare(
-        "SELECT id, public_id, topic_id, statement_markdown, status, created_at, updated_at
+        "SELECT id, public_id, topic_id, statement_markdown, status,
+                proposition_kind, hypothesis_group, confidence,
+                invalidation_condition, validity_status, confirmed_at,
+                valid_from, valid_until, review_at, created_at, updated_at
          FROM propositions
          WHERE topic_id = ?1
          ORDER BY CASE status
@@ -1840,8 +2057,17 @@ pub fn list_propositions(
             topic_id: row.get(2)?,
             statement_markdown: row.get(3)?,
             status: row.get(4)?,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
+            proposition_kind: row.get(5)?,
+            hypothesis_group: row.get(6)?,
+            confidence: row.get(7)?,
+            invalidation_condition: row.get(8)?,
+            validity_status: row.get(9)?,
+            confirmed_at: row.get(10)?,
+            valid_from: row.get(11)?,
+            valid_until: row.get(12)?,
+            review_at: row.get(13)?,
+            created_at: row.get(14)?,
+            updated_at: row.get(15)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1851,18 +2077,38 @@ pub fn create_proposition(
     connection: &Connection,
     input: &CreateTopicPropositionInput,
 ) -> AppResult<TopicPropositionRow> {
-    validate_proposition(input.statement_markdown.as_str(), input.status.as_str())?;
+    validate_proposition(
+        input.statement_markdown.as_str(),
+        input.status.as_str(),
+        input.proposition_kind.as_str(),
+        input.confidence,
+        input.validity_status.as_str(),
+    )?;
     require_active_topic(connection, input.topic_id)?;
     let now = Utc::now().to_rfc3339();
     connection.execute(
         "INSERT INTO propositions(
-           public_id, topic_id, statement_markdown, status, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+           public_id, topic_id, statement_markdown, status,
+           proposition_kind, hypothesis_group, confidence,
+           invalidation_condition, validity_status, confirmed_at,
+           valid_from, valid_until, review_at, created_at, updated_at
+         ) VALUES (
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14
+         )",
         params![
             format!("proposition-{}", Uuid::new_v4()),
             input.topic_id,
             input.statement_markdown.trim(),
             input.status,
+            input.proposition_kind,
+            input.hypothesis_group.trim(),
+            input.confidence,
+            input.invalidation_condition.trim(),
+            input.validity_status,
+            normalize_optional_text(input.confirmed_at.as_deref()),
+            normalize_optional_text(input.valid_from.as_deref()),
+            normalize_optional_text(input.valid_until.as_deref()),
+            normalize_optional_text(input.review_at.as_deref()),
             now,
         ],
     )?;
@@ -1873,14 +2119,32 @@ pub fn update_proposition(
     connection: &Connection,
     input: &UpdateTopicPropositionInput,
 ) -> AppResult<TopicPropositionRow> {
-    validate_proposition(input.statement_markdown.as_str(), input.status.as_str())?;
+    validate_proposition(
+        input.statement_markdown.as_str(),
+        input.status.as_str(),
+        input.proposition_kind.as_str(),
+        input.confidence,
+        input.validity_status.as_str(),
+    )?;
     let changed = connection.execute(
         "UPDATE propositions
-         SET statement_markdown = ?1, status = ?2, updated_at = ?3
-         WHERE id = ?4",
+         SET statement_markdown = ?1, status = ?2, proposition_kind = ?3,
+             hypothesis_group = ?4, confidence = ?5, invalidation_condition = ?6,
+             validity_status = ?7, confirmed_at = ?8, valid_from = ?9,
+             valid_until = ?10, review_at = ?11, updated_at = ?12
+         WHERE id = ?13",
         params![
             input.statement_markdown.trim(),
             input.status,
+            input.proposition_kind,
+            input.hypothesis_group.trim(),
+            input.confidence,
+            input.invalidation_condition.trim(),
+            input.validity_status,
+            normalize_optional_text(input.confirmed_at.as_deref()),
+            normalize_optional_text(input.valid_from.as_deref()),
+            normalize_optional_text(input.valid_until.as_deref()),
+            normalize_optional_text(input.review_at.as_deref()),
             Utc::now().to_rfc3339(),
             input.id,
         ],
@@ -1902,8 +2166,132 @@ pub fn supersede_proposition(
             id: proposition.id,
             statement_markdown: proposition.statement_markdown,
             status: "superseded".to_string(),
+            proposition_kind: proposition.proposition_kind,
+            hypothesis_group: proposition.hypothesis_group,
+            confidence: proposition.confidence,
+            invalidation_condition: proposition.invalidation_condition,
+            validity_status: proposition.validity_status,
+            confirmed_at: proposition.confirmed_at,
+            valid_from: proposition.valid_from,
+            valid_until: proposition.valid_until,
+            review_at: proposition.review_at,
         },
     )
+}
+
+pub fn list_decisions(connection: &Connection, topic_id: i64) -> AppResult<Vec<TopicDecisionRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, public_id, topic_id, proposition_id, judgment_snapshot_id,
+                title, decision_markdown, decided_at, status, known_risks_json,
+                expected_result, actual_actions_json, review_at, result_status,
+                final_result, retrospective, created_at, updated_at
+         FROM decisions
+         WHERE topic_id = ?1
+         ORDER BY decided_at DESC, id DESC",
+    )?;
+    let rows = statement.query_map([topic_id], decision_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn create_decision(
+    connection: &Connection,
+    input: &CreateTopicDecisionInput,
+) -> AppResult<TopicDecisionRow> {
+    validate_decision(
+        connection,
+        input.topic_id,
+        input.proposition_id,
+        input.judgment_snapshot_id,
+        input.title.as_str(),
+        input.decision_markdown.as_str(),
+        input.status.as_str(),
+        input.result_status.as_str(),
+    )?;
+    let now = Utc::now().to_rfc3339();
+    let decided_at = if input.decided_at.trim().is_empty() {
+        now.clone()
+    } else {
+        input.decided_at.trim().to_string()
+    };
+    connection.execute(
+        "INSERT INTO decisions(
+           public_id, topic_id, proposition_id, judgment_snapshot_id,
+           title, decision_markdown, decided_at, status, known_risks_json,
+           expected_result, actual_actions_json, review_at, result_status,
+           final_result, retrospective, created_at, updated_at
+         ) VALUES (
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16
+         )",
+        params![
+            format!("decision-{}", Uuid::new_v4()),
+            input.topic_id,
+            input.proposition_id,
+            input.judgment_snapshot_id,
+            input.title.trim(),
+            input.decision_markdown.trim(),
+            decided_at,
+            input.status,
+            serde_json::to_string(&input.known_risks)?,
+            input.expected_result.trim(),
+            serde_json::to_string(&input.actual_actions)?,
+            normalize_optional_text(input.review_at.as_deref()),
+            input.result_status,
+            input.final_result.trim(),
+            input.retrospective.trim(),
+            now,
+        ],
+    )?;
+    get_decision(connection, connection.last_insert_rowid())
+}
+
+pub fn update_decision(
+    connection: &Connection,
+    input: &UpdateTopicDecisionInput,
+) -> AppResult<TopicDecisionRow> {
+    let topic_id = connection
+        .query_row(
+            "SELECT topic_id FROM decisions WHERE id = ?1",
+            [input.id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| AppError::NotFound("决策记录不存在".to_string()))?;
+    validate_decision(
+        connection,
+        topic_id,
+        input.proposition_id,
+        input.judgment_snapshot_id,
+        input.title.as_str(),
+        input.decision_markdown.as_str(),
+        input.status.as_str(),
+        input.result_status.as_str(),
+    )?;
+    connection.execute(
+        "UPDATE decisions
+         SET proposition_id = ?1, judgment_snapshot_id = ?2, title = ?3,
+             decision_markdown = ?4, decided_at = ?5, status = ?6,
+             known_risks_json = ?7, expected_result = ?8, actual_actions_json = ?9,
+             review_at = ?10, result_status = ?11, final_result = ?12,
+             retrospective = ?13, updated_at = ?14
+         WHERE id = ?15",
+        params![
+            input.proposition_id,
+            input.judgment_snapshot_id,
+            input.title.trim(),
+            input.decision_markdown.trim(),
+            input.decided_at.trim(),
+            input.status,
+            serde_json::to_string(&input.known_risks)?,
+            input.expected_result.trim(),
+            serde_json::to_string(&input.actual_actions)?,
+            normalize_optional_text(input.review_at.as_deref()),
+            input.result_status,
+            input.final_result.trim(),
+            input.retrospective.trim(),
+            Utc::now().to_rfc3339(),
+            input.id,
+        ],
+    )?;
+    get_decision(connection, input.id)
 }
 
 pub fn list_turning_points(
@@ -2040,7 +2428,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
     };
     let judgments = {
         let mut statement = connection.prepare(
-            "SELECT id, public_id, statement_markdown, state, confidence,
+            "SELECT id, public_id, proposition_id, statement_markdown, state, confidence,
                     change_reason, effective_at, created_at
              FROM judgment_snapshots
              WHERE topic_id = ?1
@@ -2050,12 +2438,13 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
             Ok(TopicJudgmentRow {
                 id: row.get(0)?,
                 public_id: row.get(1)?,
-                statement_markdown: row.get(2)?,
-                state: row.get(3)?,
-                confidence: row.get(4)?,
-                change_reason: row.get(5)?,
-                effective_at: row.get(6)?,
-                created_at: row.get(7)?,
+                proposition_id: row.get(2)?,
+                statement_markdown: row.get(3)?,
+                state: row.get(4)?,
+                confidence: row.get(5)?,
+                change_reason: row.get(6)?,
+                effective_at: row.get(7)?,
+                created_at: row.get(8)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -2063,9 +2452,11 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
     let evidence = {
         let mut statement = connection.prepare(
             "SELECT evidence.id, evidence.public_id, evidence.source_item_id,
-                    source.title, evidence.content_markdown, evidence.stance,
+                    evidence.proposition_id, source.title, evidence.content_markdown, evidence.stance,
                     evidence.credibility, evidence.verification_status,
-                    evidence.validity_status, evidence.locator_json, evidence.created_at
+                    evidence.validity_status, evidence.locator_json,
+                    evidence.confirmed_at, evidence.valid_from, evidence.valid_until,
+                    evidence.review_at, evidence.created_at
              FROM evidence
              JOIN source_items source ON source.id = evidence.source_item_id
              WHERE evidence.topic_id = ?1
@@ -2076,15 +2467,20 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
                 id: row.get(0)?,
                 public_id: row.get(1)?,
                 source_item_id: row.get(2)?,
-                source_title: row.get(3)?,
-                content_markdown: row.get(4)?,
-                stance: row.get(5)?,
-                credibility: row.get(6)?,
-                verification_status: row.get(7)?,
-                validity_status: row.get(8)?,
-                locator_json: row.get(9)?,
-                locator_label: evidence_locator_label(&row.get::<_, String>(9)?),
-                created_at: row.get(10)?,
+                proposition_id: row.get(3)?,
+                source_title: row.get(4)?,
+                content_markdown: row.get(5)?,
+                stance: row.get(6)?,
+                credibility: row.get(7)?,
+                verification_status: row.get(8)?,
+                validity_status: row.get(9)?,
+                locator_json: row.get(10)?,
+                locator_label: evidence_locator_label(&row.get::<_, String>(10)?),
+                confirmed_at: row.get(11)?,
+                valid_from: row.get(12)?,
+                valid_until: row.get(13)?,
+                review_at: row.get(14)?,
+                created_at: row.get(15)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -2121,6 +2517,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
         evidence,
         questions,
         propositions: list_propositions(connection, topic_id)?,
+        decisions: list_decisions(connection, topic_id)?,
         turning_points: list_turning_points(connection, topic_id)?,
     })
 }
@@ -2794,13 +3191,16 @@ pub fn add_topic_judgment(
     ) {
         return Err(AppError::Validation("判断状态无效".to_string()));
     }
+    if let Some(proposition_id) = input.proposition_id {
+        require_topic_proposition(connection, input.topic_id, proposition_id)?;
+    }
     let transaction = connection.transaction()?;
     let previous_id = transaction
         .query_row(
             "SELECT id FROM judgment_snapshots
-             WHERE topic_id = ?1 AND replaced_by_id IS NULL
+             WHERE topic_id = ?1 AND proposition_id IS ?2 AND replaced_by_id IS NULL
              ORDER BY effective_at DESC, id DESC LIMIT 1",
-            [input.topic_id],
+            params![input.topic_id, input.proposition_id],
             |row| row.get::<_, i64>(0),
         )
         .ok();
@@ -2808,12 +3208,13 @@ pub fn add_topic_judgment(
     let public_id = format!("judgment-{}", Uuid::new_v4());
     transaction.execute(
         "INSERT INTO judgment_snapshots(
-           public_id, topic_id, statement_markdown, state, confidence,
+           public_id, topic_id, proposition_id, statement_markdown, state, confidence,
            change_reason, effective_at, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         params![
             public_id,
             input.topic_id,
+            input.proposition_id,
             statement,
             input.state,
             input.confidence,
@@ -2832,6 +3233,7 @@ pub fn add_topic_judgment(
     Ok(TopicJudgmentRow {
         id,
         public_id,
+        proposition_id: input.proposition_id,
         statement_markdown: statement.to_string(),
         state: input.state.clone(),
         confidence: input.confidence,
@@ -2875,25 +3277,36 @@ pub fn add_topic_evidence(
             |row| row.get::<_, String>(0),
         )
         .map_err(|_| AppError::Validation("证据来源必须先归入当前主题".to_string()))?;
+    if let Some(proposition_id) = input.proposition_id {
+        require_topic_proposition(connection, input.topic_id, proposition_id)?;
+    }
     let now = Utc::now().to_rfc3339();
     let public_id = format!("evidence-{}", Uuid::new_v4());
     let locator_json =
         validate_evidence_locator(source_type.as_str(), input.locator_json.as_str())?;
     connection.execute(
         "INSERT INTO evidence(
-           public_id, topic_id, source_item_id, content_markdown, stance,
-           credibility, verification_status, validity_status, locator_json, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+           public_id, topic_id, source_item_id, proposition_id, content_markdown, stance,
+           credibility, verification_status, validity_status, locator_json,
+           confirmed_at, valid_from, valid_until, review_at, created_at
+         ) VALUES (
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+         )",
         params![
             public_id,
             input.topic_id,
             input.source_item_id,
+            input.proposition_id,
             content,
             input.stance,
             input.credibility,
             input.verification_status,
             input.validity_status,
             locator_json,
+            normalize_optional_text(input.confirmed_at.as_deref()),
+            normalize_optional_text(input.valid_from.as_deref()),
+            normalize_optional_text(input.valid_until.as_deref()),
+            normalize_optional_text(input.review_at.as_deref()),
             now,
         ],
     )?;
@@ -2993,10 +3406,46 @@ pub fn compile_topic_context(connection: &Connection, topic_id: i64) -> AppResul
         .collect::<Vec<_>>();
     if !active_propositions.is_empty() {
         sections.push(format!(
-            "## 命题\n\n{}",
+            "## 命题与竞争假设\n\n{}",
             active_propositions
                 .iter()
-                .map(|item| format!("- [{}] {}", item.status, item.statement_markdown))
+                .map(|item| format!(
+                    "- [{} / {} / {}%] {}{}{}",
+                    item.proposition_kind,
+                    item.status,
+                    item.confidence.round(),
+                    item.statement_markdown,
+                    if item.hypothesis_group.is_empty() {
+                        String::new()
+                    } else {
+                        format!("（假设组：{}）", item.hypothesis_group)
+                    },
+                    if item.invalidation_condition.is_empty() {
+                        String::new()
+                    } else {
+                        format!("；失效条件：{}", item.invalidation_condition)
+                    }
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !detail.decisions.is_empty() {
+        sections.push(format!(
+            "## 决策账本\n\n{}",
+            detail
+                .decisions
+                .iter()
+                .map(|item| format!(
+                    "- {}（{} / {}）：{}\n  - 预期：{}\n  - 结果：{}\n  - 复盘：{}",
+                    item.title,
+                    item.decided_at,
+                    item.result_status,
+                    item.decision_markdown,
+                    item.expected_result,
+                    item.final_result,
+                    item.retrospective
+                ))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
@@ -4128,12 +4577,29 @@ fn infer_entity_type(value: &str) -> &'static str {
     }
 }
 
-fn validate_proposition(statement_markdown: &str, status: &str) -> AppResult<()> {
+fn validate_proposition(
+    statement_markdown: &str,
+    status: &str,
+    proposition_kind: &str,
+    confidence: f64,
+    validity_status: &str,
+) -> AppResult<()> {
     if statement_markdown.trim().is_empty() {
         return Err(AppError::Validation("命题内容不能为空".to_string()));
     }
     if !matches!(status, "open" | "supported" | "rejected" | "superseded") {
         return Err(AppError::Validation("命题状态无效".to_string()));
+    }
+    if !matches!(proposition_kind, "claim" | "hypothesis") {
+        return Err(AppError::Validation("命题类型无效".to_string()));
+    }
+    if !(0.0..=100.0).contains(&confidence) {
+        return Err(AppError::Validation(
+            "命题置信度必须在 0 到 100 之间".to_string(),
+        ));
+    }
+    if !matches!(validity_status, "active" | "possibly_outdated" | "expired") {
+        return Err(AppError::Validation("命题有效状态无效".to_string()));
     }
     Ok(())
 }
@@ -4141,7 +4607,10 @@ fn validate_proposition(statement_markdown: &str, status: &str) -> AppResult<()>
 fn get_proposition(connection: &Connection, proposition_id: i64) -> AppResult<TopicPropositionRow> {
     connection
         .query_row(
-            "SELECT id, public_id, topic_id, statement_markdown, status, created_at, updated_at
+            "SELECT id, public_id, topic_id, statement_markdown, status,
+                    proposition_kind, hypothesis_group, confidence,
+                    invalidation_condition, validity_status, confirmed_at,
+                    valid_from, valid_until, review_at, created_at, updated_at
              FROM propositions WHERE id = ?1",
             [proposition_id],
             |row| {
@@ -4151,12 +4620,115 @@ fn get_proposition(connection: &Connection, proposition_id: i64) -> AppResult<To
                     topic_id: row.get(2)?,
                     statement_markdown: row.get(3)?,
                     status: row.get(4)?,
-                    created_at: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    proposition_kind: row.get(5)?,
+                    hypothesis_group: row.get(6)?,
+                    confidence: row.get(7)?,
+                    invalidation_condition: row.get(8)?,
+                    validity_status: row.get(9)?,
+                    confirmed_at: row.get(10)?,
+                    valid_from: row.get(11)?,
+                    valid_until: row.get(12)?,
+                    review_at: row.get(13)?,
+                    created_at: row.get(14)?,
+                    updated_at: row.get(15)?,
                 })
             },
         )
         .map_err(|_| AppError::NotFound("命题不存在".to_string()))
+}
+
+fn require_topic_proposition(
+    connection: &Connection,
+    topic_id: i64,
+    proposition_id: i64,
+) -> AppResult<()> {
+    connection
+        .query_row(
+            "SELECT 1 FROM propositions WHERE id = ?1 AND topic_id = ?2",
+            params![proposition_id, topic_id],
+            |_| Ok(()),
+        )
+        .map_err(|_| AppError::Validation("引用的命题不属于当前主题".to_string()))
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn decision_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicDecisionRow> {
+    let known_risks_json = row.get::<_, String>(9)?;
+    let actual_actions_json = row.get::<_, String>(11)?;
+    Ok(TopicDecisionRow {
+        id: row.get(0)?,
+        public_id: row.get(1)?,
+        topic_id: row.get(2)?,
+        proposition_id: row.get(3)?,
+        judgment_snapshot_id: row.get(4)?,
+        title: row.get(5)?,
+        decision_markdown: row.get(6)?,
+        decided_at: row.get(7)?,
+        status: row.get(8)?,
+        known_risks: serde_json::from_str(&known_risks_json).unwrap_or_default(),
+        expected_result: row.get(10)?,
+        actual_actions: serde_json::from_str(&actual_actions_json).unwrap_or_default(),
+        review_at: row.get(12)?,
+        result_status: row.get(13)?,
+        final_result: row.get(14)?,
+        retrospective: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+    })
+}
+
+fn validate_decision(
+    connection: &Connection,
+    topic_id: i64,
+    proposition_id: Option<i64>,
+    judgment_snapshot_id: Option<i64>,
+    title: &str,
+    decision_markdown: &str,
+    status: &str,
+    result_status: &str,
+) -> AppResult<()> {
+    require_active_topic(connection, topic_id)?;
+    if title.trim().is_empty() || decision_markdown.trim().is_empty() {
+        return Err(AppError::Validation(
+            "决策标题和决策内容不能为空".to_string(),
+        ));
+    }
+    if !matches!(status, "active" | "reversed" | "superseded") {
+        return Err(AppError::Validation("决策状态无效".to_string()));
+    }
+    if !matches!(
+        result_status,
+        "pending" | "in_progress" | "succeeded" | "failed" | "mixed" | "cancelled"
+    ) {
+        return Err(AppError::Validation("决策结果状态无效".to_string()));
+    }
+    if let Some(proposition_id) = proposition_id {
+        require_topic_proposition(connection, topic_id, proposition_id)?;
+    }
+    if let Some(judgment_snapshot_id) = judgment_snapshot_id {
+        require_topic_judgment(connection, topic_id, judgment_snapshot_id)?;
+    }
+    Ok(())
+}
+
+fn get_decision(connection: &Connection, decision_id: i64) -> AppResult<TopicDecisionRow> {
+    connection
+        .query_row(
+            "SELECT id, public_id, topic_id, proposition_id, judgment_snapshot_id,
+                    title, decision_markdown, decided_at, status, known_risks_json,
+                    expected_result, actual_actions_json, review_at, result_status,
+                    final_result, retrospective, created_at, updated_at
+             FROM decisions WHERE id = ?1",
+            [decision_id],
+            decision_from_row,
+        )
+        .map_err(|_| AppError::NotFound("决策记录不存在".to_string()))
 }
 
 fn require_topic_judgment(
@@ -4678,10 +5250,17 @@ mod tests {
         )
         .expect("confirm");
         assert!(list_inbox(&connection, 20).expect("inbox").is_empty());
+        let archive = list_source_archive(&connection, 20).expect("source archive");
+        assert_eq!(archive.len(), 1);
+        assert_eq!(archive[0].organization_state, "organized");
+        assert_eq!(archive[0].assigned_topic_count, 1);
+        assert_eq!(archive[0].primary_topic_id, Some(topic.id));
+        assert_eq!(archive[0].primary_topic_name.as_deref(), Some("本地知识库"));
         add_topic_judgment(
             &mut connection,
             &AddTopicJudgmentInput {
                 topic_id: topic.id,
+                proposition_id: None,
                 statement_markdown: "当前判断正文".to_string(),
                 confidence: 78.0,
                 state: "current".to_string(),
@@ -4694,6 +5273,7 @@ mod tests {
             &AddTopicEvidenceInput {
                 topic_id: topic.id,
                 source_item_id: source_id,
+                proposition_id: None,
                 content_markdown: "原始来源中的证据".to_string(),
                 stance: "support".to_string(),
                 credibility: 80.0,
@@ -4702,6 +5282,10 @@ mod tests {
                 locator_json:
                     r#"{"kind":"text_quote","value":"GPU 与本地知识库","quote":"GPU 与本地知识库"}"#
                         .to_string(),
+                confirmed_at: None,
+                valid_from: None,
+                valid_until: None,
+                review_at: None,
             },
         )
         .expect("evidence");
@@ -5569,6 +6153,15 @@ mod tests {
                 topic_id: topic.id,
                 statement_markdown: "离线渲染更适合当前项目".to_string(),
                 status: "open".to_string(),
+                proposition_kind: "claim".to_string(),
+                hypothesis_group: String::new(),
+                confidence: 50.0,
+                invalidation_condition: String::new(),
+                validity_status: "active".to_string(),
+                confirmed_at: None,
+                valid_from: None,
+                valid_until: None,
+                review_at: None,
             },
         )
         .expect("proposition");
@@ -5578,6 +6171,15 @@ mod tests {
                 id: proposition.id,
                 statement_markdown: "离线渲染在当前交付周期内更稳定".to_string(),
                 status: "supported".to_string(),
+                proposition_kind: "claim".to_string(),
+                hypothesis_group: String::new(),
+                confidence: 75.0,
+                invalidation_condition: "交付周期发生变化".to_string(),
+                validity_status: "active".to_string(),
+                confirmed_at: None,
+                valid_from: None,
+                valid_until: None,
+                review_at: None,
             },
         )
         .expect("updated proposition");
@@ -5587,6 +6189,7 @@ mod tests {
             &mut connection,
             &AddTopicJudgmentInput {
                 topic_id: topic.id,
+                proposition_id: Some(proposition.id),
                 statement_markdown: "先使用实时渲染".to_string(),
                 confidence: 65.0,
                 state: "tentative".to_string(),
@@ -5598,6 +6201,7 @@ mod tests {
             &mut connection,
             &AddTopicJudgmentInput {
                 topic_id: topic.id,
+                proposition_id: Some(proposition.id),
                 statement_markdown: "改用离线渲染".to_string(),
                 confidence: 88.0,
                 state: "current".to_string(),
@@ -5605,6 +6209,48 @@ mod tests {
             },
         )
         .expect("second judgment");
+        let decision = create_decision(
+            &connection,
+            &CreateTopicDecisionInput {
+                topic_id: topic.id,
+                proposition_id: Some(proposition.id),
+                judgment_snapshot_id: Some(second.id),
+                title: "采用离线渲染".to_string(),
+                decision_markdown: "本轮交付优先保证稳定性。".to_string(),
+                decided_at: String::new(),
+                status: "active".to_string(),
+                known_risks: vec!["单帧修改反馈较慢".to_string()],
+                expected_result: "减少最终输出差异".to_string(),
+                actual_actions: vec!["冻结渲染参数".to_string()],
+                review_at: Some("2026-08-15".to_string()),
+                result_status: "in_progress".to_string(),
+                final_result: String::new(),
+                retrospective: String::new(),
+            },
+        )
+        .expect("decision");
+        let decision = update_decision(
+            &connection,
+            &UpdateTopicDecisionInput {
+                id: decision.id,
+                proposition_id: Some(proposition.id),
+                judgment_snapshot_id: Some(second.id),
+                title: decision.title,
+                decision_markdown: decision.decision_markdown,
+                decided_at: decision.decided_at,
+                status: decision.status,
+                known_risks: decision.known_risks,
+                expected_result: decision.expected_result,
+                actual_actions: decision.actual_actions,
+                review_at: decision.review_at,
+                result_status: "succeeded".to_string(),
+                final_result: "按期稳定交付".to_string(),
+                retrospective: "稳定性收益高于修改成本".to_string(),
+            },
+        )
+        .expect("updated decision");
+        assert_eq!(decision.result_status, "succeeded");
+        assert_eq!(decision.final_result, "按期稳定交付");
         assert!(
             list_turning_points(&connection, topic.id)
                 .expect("turning points before confirmation")
@@ -5645,9 +6291,11 @@ mod tests {
         assert_eq!(proposition.status, "superseded");
         let detail = get_topic_detail(&connection, topic.id).expect("detail");
         assert_eq!(detail.propositions.len(), 1);
+        assert_eq!(detail.decisions.len(), 1);
         assert_eq!(detail.turning_points.len(), 1);
         let context = compile_topic_context(&connection, topic.id).expect("context");
         assert!(context.contains("关键转折"));
+        assert!(context.contains("采用离线渲染"));
         assert!(!context.contains("离线渲染在当前交付周期内更稳定"));
     }
 
@@ -5777,6 +6425,7 @@ mod tests {
             &mut connection,
             &AddTopicJudgmentInput {
                 topic_id: source_topic.id,
+                proposition_id: None,
                 statement_markdown: "合并前判断".to_string(),
                 confidence: 80.0,
                 state: "current".to_string(),
@@ -5789,12 +6438,17 @@ mod tests {
             &AddTopicEvidenceInput {
                 topic_id: source_topic.id,
                 source_item_id: inbox[0].id,
+                proposition_id: None,
                 content_markdown: "合并前证据".to_string(),
                 stance: "support".to_string(),
                 credibility: 80.0,
                 verification_status: "unverified".to_string(),
                 validity_status: "active".to_string(),
                 locator_json: "{}".to_string(),
+                confirmed_at: None,
+                valid_from: None,
+                valid_until: None,
+                review_at: None,
             },
         )
         .expect("evidence");

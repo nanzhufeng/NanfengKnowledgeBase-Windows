@@ -2,6 +2,7 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  BookOpenText,
   Braces,
   Building2,
   Check,
@@ -134,9 +135,9 @@ import { versionDifferences } from "./domain/versionDiff";
 import { connectionOpacity } from "./connectionGeometry";
 
 type Page =
-  | "inbox"
+  | "sources"
   | "topics"
-  | "organize"
+  | "knowledge"
   | "records"
   | "favorites"
   | "tracking"
@@ -201,10 +202,10 @@ const iconMap: Record<RecordIconKey, React.ComponentType<{ size?: number }>> = {
 };
 
 const navItems: NavItem[] = [
-  { id: "inbox", label: "收录箱", icon: Inbox },
-  { id: "topics", label: "主题浏览器", icon: FolderTree },
-  { id: "organize", label: "整理工作台", icon: Sparkles },
-  { id: "records", label: "来源档案", icon: Files },
+  { id: "sources", label: "来源档案", icon: Files },
+  { id: "topics", label: "主题结构", icon: FolderTree },
+  { id: "knowledge", label: "知识视图", icon: BookOpenText },
+  { id: "records", label: "全部记录", icon: Inbox },
   { id: "favorites", label: "我的收藏", icon: Star },
   { id: "tracking", label: "持续跟踪", icon: RadioTower },
   { id: "updates", label: "判断更新", icon: FileCheck2, tone: "danger" },
@@ -3547,7 +3548,7 @@ function SettingsPage({
 
 export function App() {
   const repository = useMemo(() => getRecordRepository(), []);
-  const [page, setPage] = useState<Page>("inbox");
+  const [page, setPage] = useState<Page>("sources");
   const [allRecords, setAllRecords] = useState<RecordSummary[]>([]);
   const [visibleRecords, setVisibleRecords] = useState<RecordSummary[]>([]);
   const [trashRecords, setTrashRecords] = useState<RecordSummary[]>([]);
@@ -4029,7 +4030,7 @@ export function App() {
             onStorageChanged={setStorageStats}
           />
         ) : null}
-        {page === "inbox" || page === "topics" || page === "organize" ? (
+        {page === "sources" || page === "topics" || page === "knowledge" ? (
           <Suspense fallback={<div className="page-loading"><span className="save-spinner" />正在加载知识工作台…</div>}>
             <LazyKnowledgeWorkspace mode={page} onNotify={notify} />
           </Suspense>

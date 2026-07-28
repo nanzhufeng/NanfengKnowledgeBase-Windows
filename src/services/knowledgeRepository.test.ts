@@ -33,6 +33,9 @@ describe("KnowledgeRepository inbox performance contract", () => {
           duplicateState: "unique",
           freshnessState: "current",
           pendingSuggestionCount: 0,
+          assignedTopicCount: 0,
+          primaryTopicId: null,
+          primaryTopicName: null,
         }]);
       }
       if (command === "get_knowledge_source_original_text") {
@@ -52,6 +55,33 @@ describe("KnowledgeRepository inbox performance contract", () => {
       "get_knowledge_source_original_text",
       { sourceItemId: 42 },
     );
+  });
+
+  it("loads organized and pending sources through the unified archive command", async () => {
+    invoke.mockResolvedValue([{
+      id: 43,
+      publicId: "source-43",
+      legacyRecordId: 10,
+      sourceType: "markdown",
+      title: "已归类来源",
+      platform: "",
+      originalAt: "2026-07-20",
+      importedAt: "2026-07-27T10:00:00+08:00",
+      readState: "read",
+      organizationState: "organized",
+      duplicateState: "unique",
+      freshnessState: "current",
+      pendingSuggestionCount: 0,
+      assignedTopicCount: 1,
+      primaryTopicId: 7,
+      primaryTopicName: "知识系统设计",
+    }]);
+
+    const archive = await new KnowledgeRepository().listSourceArchive();
+
+    expect(invoke).toHaveBeenCalledWith("list_knowledge_source_archive", { limit: 120 });
+    expect(archive[0].primaryTopicName).toBe("知识系统设计");
+    expect(archive[0].organizationState).toBe("organized");
   });
 });
 
@@ -228,12 +258,17 @@ describe("KnowledgeRepository knowledge evolution", () => {
       credibility: 85,
       verificationStatus: "verified",
       validityStatus: "active",
+      propositionId: null,
       locatorJson: JSON.stringify({
         kind: "timecode",
         value: "00:12:30",
         quote: "关键表述",
       }),
       locatorLabel: "时间码：00:12:30",
+      confirmedAt: null,
+      validFrom: null,
+      validUntil: null,
+      reviewAt: null,
       createdAt: "2026-07-27T10:00:00+08:00",
     });
 
@@ -261,6 +296,11 @@ describe("KnowledgeRepository knowledge evolution", () => {
         credibility: 85,
         verificationStatus: "verified",
         validityStatus: "active",
+        propositionId: null,
+        confirmedAt: null,
+        validFrom: null,
+        validUntil: null,
+        reviewAt: null,
         locatorJson: JSON.stringify({
           kind: "timecode",
           value: "00:12:30",

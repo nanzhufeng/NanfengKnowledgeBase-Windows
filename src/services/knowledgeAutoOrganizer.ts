@@ -109,19 +109,19 @@ export async function autoOrganizeImportedSources(
         result.unmatchedCount += 1;
         continue;
       }
-      if (top.action === "auto_eligible") {
-        const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
-        const operation = await repository.confirmClassification({
-          sourceItemId,
-          topicId: Number(top.topicId),
-          suggestionId: savedTop?.id ?? null,
-          confidence: top.confidence,
-        });
-        result.operationIds.push(operation.operationId);
-        result.autoClassifiedCount += 1;
-      } else {
-        result.awaitingConfirmationCount += 1;
-      }
+      // 分类器只会返回达到直接证据门槛的候选。自动整理把最高候选写成
+      // 可撤销的主主题关联；低分与低边际结果仍在来源档案中保留核对入口，
+      // 但不再要求用户逐条确认后才能看到知识成果。
+      const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
+      const operation = await repository.confirmClassification({
+        sourceItemId,
+        topicId: Number(top.topicId),
+        suggestionId: savedTop?.id ?? null,
+        confidence: top.confidence,
+      });
+      result.operationIds.push(operation.operationId);
+      result.autoClassifiedCount += 1;
+      if (top.action !== "auto_eligible") result.awaitingConfirmationCount += 1;
     } catch (error) {
       result.failures.push(
         error instanceof Error ? error.message : `来源 ${sourceItemId} 自动分类失败`,
@@ -168,13 +168,24 @@ export async function upgradeOutdatedInboxSuggestions(
     try {
       const context = await repository.prepareClassificationContext(sourceItemId);
       const classification = classifySource(context);
-      await repository.saveSuggestions({
+      const persisted = await repository.saveSuggestions({
         sourceItemId,
         classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
         suggestions: suggestionsForPersistence(classification),
       });
-      if (classification.suggestions.length) progress.matched += 1;
-      else progress.unmatched += 1;
+      const top = classification.suggestions[0];
+      if (top) {
+        const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
+        await repository.confirmClassification({
+          sourceItemId,
+          topicId: Number(top.topicId),
+          suggestionId: savedTop?.id ?? null,
+          confidence: top.confidence,
+        });
+        progress.matched += 1;
+      } else {
+        progress.unmatched += 1;
+      }
     } catch {
       progress.failures += 1;
     }

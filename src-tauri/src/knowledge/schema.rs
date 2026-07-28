@@ -2,7 +2,10 @@
 use rusqlite::{Connection, Error, Result};
 
 #[cfg(test)]
-pub(crate) const KNOWLEDGE_SCHEMA_VERSION: i64 = 2;
+pub(crate) const KNOWLEDGE_SCHEMA_VERSION: i64 = 3;
+
+pub(crate) const KNOWLEDGE_REASONING_SCHEMA_SQL: &str =
+    include_str!("../../migrations/0004_knowledge_reasoning.sql");
 
 pub(crate) const KNOWLEDGE_SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS knowledge_schema_contract (
@@ -476,11 +479,19 @@ pub(crate) fn create_knowledge_schema(connection: &mut Connection) -> Result<()>
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     let transaction = connection.transaction()?;
     transaction.execute_batch(KNOWLEDGE_SCHEMA_SQL)?;
-    let stored_version = transaction.query_row(
+    let mut stored_version = transaction.query_row(
         "SELECT version FROM knowledge_schema_contract WHERE singleton = 1",
         [],
         |row| row.get::<_, i64>(0),
     )?;
+    if stored_version == 2 {
+        transaction.execute_batch(KNOWLEDGE_REASONING_SCHEMA_SQL)?;
+        stored_version = transaction.query_row(
+            "SELECT version FROM knowledge_schema_contract WHERE singleton = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+    }
     if stored_version != KNOWLEDGE_SCHEMA_VERSION {
         return Err(Error::InvalidQuery);
     }

@@ -40,13 +40,14 @@ import {
   type KnowledgeTopicRow,
   type PersonalCatalogProposal,
   type TopicMergePreview,
+  type TopicDecisionRow,
   type TopicPropositionRow,
   type TopicRelationSuggestion,
   type TopicSplitPreview,
 } from "../services/knowledgeRepository";
 import MarkdownContent, { ReadableMessageContent } from "./MarkdownContent";
 
-type Mode = "inbox" | "topics" | "organize";
+type Mode = "sources" | "topics" | "knowledge";
 const INITIAL_INBOX_LIMIT = 120;
 const SOURCE_PREVIEW_LIMIT = 20_000;
 
@@ -189,6 +190,8 @@ export function KnowledgeWorkspace({
   const repository = useMemo(() => new KnowledgeRepository(), []);
   const [inbox, setInbox] = useState<KnowledgeInboxItem[]>([]);
   const [inboxLimit, setInboxLimit] = useState(INITIAL_INBOX_LIMIT);
+  const [sourceFilter, setSourceFilter] = useState<"all" | "pending" | "organized">("all");
+  const [sourceSearch, setSourceSearch] = useState("");
   const [loadedSourceText, setLoadedSourceText] = useState<{
     sourceItemId: number;
     text: string;
@@ -222,8 +225,10 @@ export function KnowledgeWorkspace({
   const [topicDetail, setTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [judgmentText, setJudgmentText] = useState("");
   const [judgmentReason, setJudgmentReason] = useState("");
+  const [judgmentPropositionId, setJudgmentPropositionId] = useState<number | null>(null);
   const [evidenceText, setEvidenceText] = useState("");
   const [evidenceSourceId, setEvidenceSourceId] = useState<number | null>(null);
+  const [evidencePropositionId, setEvidencePropositionId] = useState<number | null>(null);
   const [evidenceStance, setEvidenceStance] = useState<"support" | "oppose" | "context">("context");
   const [evidenceCredibility, setEvidenceCredibility] = useState(60);
   const [evidenceVerificationStatus, setEvidenceVerificationStatus] = useState("unverified");
@@ -231,10 +236,35 @@ export function KnowledgeWorkspace({
   const [evidenceLocatorKind, setEvidenceLocatorKind] = useState<EvidenceLocator["kind"]>("none");
   const [evidenceLocatorValue, setEvidenceLocatorValue] = useState("");
   const [evidenceQuote, setEvidenceQuote] = useState("");
+  const [evidenceConfirmedAt, setEvidenceConfirmedAt] = useState("");
+  const [evidenceValidUntil, setEvidenceValidUntil] = useState("");
+  const [evidenceReviewAt, setEvidenceReviewAt] = useState("");
   const [questionText, setQuestionText] = useState("");
   const [propositionEditId, setPropositionEditId] = useState<number | null>(null);
   const [propositionText, setPropositionText] = useState("");
   const [propositionStatus, setPropositionStatus] = useState<TopicPropositionRow["status"]>("open");
+  const [propositionKind, setPropositionKind] = useState<TopicPropositionRow["propositionKind"]>("claim");
+  const [propositionHypothesisGroup, setPropositionHypothesisGroup] = useState("");
+  const [propositionConfidence, setPropositionConfidence] = useState(50);
+  const [propositionInvalidation, setPropositionInvalidation] = useState("");
+  const [propositionValidity, setPropositionValidity] =
+    useState<TopicPropositionRow["validityStatus"]>("active");
+  const [propositionConfirmedAt, setPropositionConfirmedAt] = useState("");
+  const [propositionValidUntil, setPropositionValidUntil] = useState("");
+  const [propositionReviewAt, setPropositionReviewAt] = useState("");
+  const [decisionEditId, setDecisionEditId] = useState<number | null>(null);
+  const [decisionTitle, setDecisionTitle] = useState("");
+  const [decisionText, setDecisionText] = useState("");
+  const [decisionPropositionId, setDecisionPropositionId] = useState<number | null>(null);
+  const [decisionJudgmentId, setDecisionJudgmentId] = useState<number | null>(null);
+  const [decisionKnownRisks, setDecisionKnownRisks] = useState("");
+  const [decisionExpectedResult, setDecisionExpectedResult] = useState("");
+  const [decisionActions, setDecisionActions] = useState("");
+  const [decisionReviewAt, setDecisionReviewAt] = useState("");
+  const [decisionResultStatus, setDecisionResultStatus] =
+    useState<TopicDecisionRow["resultStatus"]>("pending");
+  const [decisionFinalResult, setDecisionFinalResult] = useState("");
+  const [decisionRetrospective, setDecisionRetrospective] = useState("");
   const [turningFromJudgmentId, setTurningFromJudgmentId] = useState<number | null>(null);
   const [turningToJudgmentId, setTurningToJudgmentId] = useState<number | null>(null);
   const [turningTitle, setTurningTitle] = useState("");
@@ -254,7 +284,6 @@ export function KnowledgeWorkspace({
   const [splitPreview, setSplitPreview] = useState<TopicSplitPreview | null>(null);
   const [relationSuggestions, setRelationSuggestions] = useState<TopicRelationSuggestion[]>([]);
   const [catalogProposal, setCatalogProposal] = useState<PersonalCatalogProposal | null>(null);
-  const [catalogReviewed, setCatalogReviewed] = useState(false);
   const [topicAliases, setTopicAliases] = useState<KnowledgeTopicAliasRow[]>([]);
   const [entities, setEntities] = useState<KnowledgeEntityRow[]>([]);
   const [classificationRules, setClassificationRules] = useState<KnowledgeClassificationRuleRow[]>([]);
@@ -274,6 +303,16 @@ export function KnowledgeWorkspace({
   const [ruleEnabled, setRuleEnabled] = useState(true);
 
   const selected = inbox.find((item) => item.id === selectedId) ?? null;
+  const visibleSources = useMemo(() => {
+    const query = sourceSearch.trim().toLocaleLowerCase("zh-CN");
+    return inbox.filter((item) => {
+      if (sourceFilter === "pending" && item.organizationState !== "inbox") return false;
+      if (sourceFilter === "organized" && item.organizationState === "inbox") return false;
+      if (!query) return true;
+      return [item.title, item.platform, item.sourceType, item.primaryTopicName ?? ""]
+        .some((value) => value.toLocaleLowerCase("zh-CN").includes(query));
+    });
+  }, [inbox, sourceFilter, sourceSearch]);
   const selectedOriginalText = loadedSourceText?.sourceItemId === selectedId
     ? loadedSourceText.text
     : null;
@@ -323,7 +362,7 @@ export function KnowledgeWorkspace({
       nextEntities,
       nextRules,
     ] = await Promise.all([
-      repository.listInbox(inboxLimit),
+      repository.listSourceArchive(inboxLimit),
       repository.listDomains(),
       repository.listTopics(),
       repository.getPersonalCatalogProposal(),
@@ -428,7 +467,7 @@ export function KnowledgeWorkspace({
 
   useEffect(() => {
     if (
-      mode !== "inbox"
+      mode !== "sources"
       || !topics.length
       || !inbox.length
       || classificationUpgradeStarted.current
@@ -455,7 +494,8 @@ export function KnowledgeWorkspace({
   }, [inbox.length, mode, onNotify, repository, selectedId, topics.length]);
 
   useEffect(() => {
-    if (!selectedId || mode !== "inbox") {
+    const current = inbox.find((item) => item.id === selectedId);
+    if (!selectedId || mode !== "sources" || current?.organizationState !== "inbox") {
       setSuggestions([]);
       return;
     }
@@ -487,7 +527,7 @@ export function KnowledgeWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [mode, repository, selectedId, topics.length]);
+  }, [inbox, mode, repository, selectedId, topics.length]);
 
   useEffect(() => {
     const domain = domains.find((candidate) => candidate.id === editDomainId);
@@ -504,7 +544,7 @@ export function KnowledgeWorkspace({
   useEffect(() => {
     const sequence = ++sourceTextRequestSequence.current;
     setSourceDetailOpen(false);
-    if (!selectedId || mode !== "inbox") {
+    if (!selectedId || mode !== "sources") {
       setLoadedSourceText(null);
       return;
     }
@@ -523,7 +563,7 @@ export function KnowledgeWorkspace({
   }, [mode, repository, selectedId]);
 
   useEffect(() => {
-    if (!browserTopicId || mode !== "topics") {
+    if (!browserTopicId || mode !== "knowledge") {
       setTopicDetail(null);
       return;
     }
@@ -538,7 +578,7 @@ export function KnowledgeWorkspace({
   }, [browserTopicId, mode, repository]);
 
   useEffect(() => {
-    if (mode !== "organize") return;
+    if (mode !== "topics") return;
     void repository.suggestTopicRelations()
       .then(setRelationSuggestions)
       .catch((error) => onNotify(error instanceof Error ? error.message : "关系建议读取失败"));
@@ -625,24 +665,6 @@ export function KnowledgeWorkspace({
       onNotify("主题关系已写入");
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "主题关系写入失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const applyCatalog = async () => {
-    if (!catalogProposal || !catalogReviewed) return;
-    setBusy(true);
-    try {
-      const result = await repository.applyPersonalCatalog(catalogProposal.version);
-      preparedCatalogVersion.current = catalogProposal.version;
-      await reload();
-      setCatalogReviewed(false);
-      onNotify(
-        `个人目录已确认：新增 ${result.createdDomains} 个领域、${result.createdTopics} 个主题，清理 ${result.deletedRules} 条旧版系统规则，已有内容未覆盖`,
-      );
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "个人目录写入失败");
     } finally {
       setBusy(false);
     }
@@ -857,6 +879,14 @@ export function KnowledgeWorkspace({
     setPropositionEditId(null);
     setPropositionText("");
     setPropositionStatus("open");
+    setPropositionKind("claim");
+    setPropositionHypothesisGroup("");
+    setPropositionConfidence(50);
+    setPropositionInvalidation("");
+    setPropositionValidity("active");
+    setPropositionConfirmedAt("");
+    setPropositionValidUntil("");
+    setPropositionReviewAt("");
   };
 
   const saveProposition = async () => {
@@ -868,12 +898,28 @@ export function KnowledgeWorkspace({
           id: propositionEditId,
           statementMarkdown: propositionText.trim(),
           status: propositionStatus,
+          propositionKind,
+          hypothesisGroup: propositionHypothesisGroup,
+          confidence: propositionConfidence,
+          invalidationCondition: propositionInvalidation,
+          validityStatus: propositionValidity,
+          confirmedAt: propositionConfirmedAt || null,
+          validUntil: propositionValidUntil || null,
+          reviewAt: propositionReviewAt || null,
         });
       } else {
         await repository.createProposition({
           topicId: topicDetail.topic.id,
           statementMarkdown: propositionText.trim(),
           status: propositionStatus,
+          propositionKind,
+          hypothesisGroup: propositionHypothesisGroup,
+          confidence: propositionConfidence,
+          invalidationCondition: propositionInvalidation,
+          validityStatus: propositionValidity,
+          confirmedAt: propositionConfirmedAt || null,
+          validUntil: propositionValidUntil || null,
+          reviewAt: propositionReviewAt || null,
         });
       }
       const wasEditing = propositionEditId !== null;
@@ -897,6 +943,79 @@ export function KnowledgeWorkspace({
       onNotify("命题已标记为被替代，历史未删除");
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "命题状态更新失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetDecisionEditor = () => {
+    setDecisionEditId(null);
+    setDecisionTitle("");
+    setDecisionText("");
+    setDecisionPropositionId(null);
+    setDecisionJudgmentId(null);
+    setDecisionKnownRisks("");
+    setDecisionExpectedResult("");
+    setDecisionActions("");
+    setDecisionReviewAt("");
+    setDecisionResultStatus("pending");
+    setDecisionFinalResult("");
+    setDecisionRetrospective("");
+  };
+
+  const beginEditDecision = (decision: TopicDecisionRow) => {
+    setDecisionEditId(decision.id);
+    setDecisionTitle(decision.title);
+    setDecisionText(decision.decisionMarkdown);
+    setDecisionPropositionId(decision.propositionId);
+    setDecisionJudgmentId(decision.judgmentSnapshotId);
+    setDecisionKnownRisks(decision.knownRisks.join("\n"));
+    setDecisionExpectedResult(decision.expectedResult);
+    setDecisionActions(decision.actualActions.join("\n"));
+    setDecisionReviewAt(decision.reviewAt ?? "");
+    setDecisionResultStatus(decision.resultStatus);
+    setDecisionFinalResult(decision.finalResult);
+    setDecisionRetrospective(decision.retrospective);
+  };
+
+  const saveDecision = async () => {
+    if (!topicDetail || !decisionTitle.trim() || !decisionText.trim()) return;
+    setBusy(true);
+    try {
+      const shared = {
+        propositionId: decisionPropositionId,
+        judgmentSnapshotId: decisionJudgmentId,
+        title: decisionTitle.trim(),
+        decisionMarkdown: decisionText.trim(),
+        knownRisks: decisionKnownRisks.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        expectedResult: decisionExpectedResult.trim(),
+        actualActions: decisionActions.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+        reviewAt: decisionReviewAt || null,
+        resultStatus: decisionResultStatus,
+        finalResult: decisionFinalResult.trim(),
+        retrospective: decisionRetrospective.trim(),
+      };
+      if (decisionEditId) {
+        const existing = topicDetail.decisions.find((item) => item.id === decisionEditId);
+        if (!existing) throw new Error("决策记录不存在");
+        await repository.updateDecision({
+          id: decisionEditId,
+          decidedAt: existing.decidedAt,
+          status: existing.status,
+          ...shared,
+        });
+      } else {
+        await repository.createDecision({
+          topicId: topicDetail.topic.id,
+          ...shared,
+        });
+      }
+      const wasEditing = decisionEditId !== null;
+      resetDecisionEditor();
+      await reloadTopicDetail();
+      onNotify(wasEditing ? "决策账本已更新" : "决策已写入账本");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "决策账本保存失败");
     } finally {
       setBusy(false);
     }
@@ -952,12 +1071,15 @@ export function KnowledgeWorkspace({
   };
 
   const autoOrganizeLoadedInbox = async () => {
-    if (!inbox.length) return;
+    const pendingSourceIds = inbox
+      .filter((item) => item.organizationState === "inbox")
+      .map((item) => item.id);
+    if (!pendingSourceIds.length) return;
     setBusy(true);
-    onNotify(`正在自动整理已加载的 ${inbox.length} 条来源；原文不会被改写`);
+    onNotify(`正在自动整理 ${pendingSourceIds.length} 条待归类来源；原文不会被改写`);
     try {
       const result = await autoOrganizeImportedSources(
-        inbox.map((item) => item.id),
+        pendingSourceIds,
         repository,
       );
       await reload();
@@ -1017,59 +1139,14 @@ export function KnowledgeWorkspace({
     return <div className="page-loading"><span className="save-spinner" />正在读取正式知识结构…</div>;
   }
 
-  if (mode === "topics") {
+  if (mode === "knowledge") {
     return (
       <main className="knowledge-page">
         <header className="knowledge-page-header">
-          <div><span>长期结构</span><h1>主题浏览器</h1><p>数据库保存任意深度；界面默认展开前四层。</p></div>
+          <div><span>跨时期知识成果</span><h1>知识视图</h1><p>按领域、主题和命题阅读判断演化；来源与笔记作为证据关联。</p></div>
           <FolderTree size={28} />
         </header>
-        {catalogProposal ? (
-          <section className="knowledge-card knowledge-catalog-proposal">
-            <div className="knowledge-panel-title">
-              <Layers3 size={20} />
-              <div>
-                <h2>{catalogProposal.title}</h2>
-                <p>{catalogProposal.note}</p>
-              </div>
-            </div>
-            <details>
-              <summary>
-                审阅 {catalogProposal.domains.length} 个领域、{catalogProposal.topics.length} 个主题
-              </summary>
-              <div className="knowledge-catalog-grid">
-                {catalogProposal.domains.map((domain) => (
-                  <article key={domain.key}>
-                    <strong>{domain.name}</strong>
-                    <small>{domain.description}</small>
-                    <span>
-                      {catalogProposal.topics
-                        .filter((topic) => topic.domainKey === domain.key)
-                        .map((topic) => topic.name)
-                        .join("、")}
-                    </span>
-                  </article>
-                ))}
-              </div>
-            </details>
-            <label className="knowledge-confirm-check">
-              <input
-                type="checkbox"
-                checked={catalogReviewed}
-                onChange={(event) => setCatalogReviewed(event.target.checked)}
-              />
-              我已审阅；确认后只补齐缺失项，不覆盖现有主题
-            </label>
-            <button
-              className="knowledge-primary-action"
-              disabled={busy || !catalogReviewed}
-              onClick={() => void applyCatalog()}
-            >
-              <Check size={16} />确认并补齐个人目录
-            </button>
-          </section>
-        ) : null}
-        <section className="knowledge-topic-layout">
+        <section className="knowledge-topic-layout knowledge-read-layout">
           <div className="knowledge-card knowledge-create-card">
             <h2>建立领域与主题</h2>
             <label>新领域<input value={domainName} onChange={(event) => setDomainName(event.target.value)} placeholder="例如：影视制作" /></label>
@@ -1215,21 +1292,38 @@ export function KnowledgeWorkspace({
                   <article className="knowledge-timeline-item" key={judgment.id}>
                     <strong>{Math.round(judgment.confidence)}% · {judgment.state}</strong>
                     <MarkdownContent value={judgment.statementMarkdown} />
-                    <small>{judgment.effectiveAt}{judgment.changeReason ? ` · ${judgment.changeReason}` : ""}</small>
+                    <small>
+                      {judgment.effectiveAt}{judgment.changeReason ? ` · ${judgment.changeReason}` : ""}
+                      {judgment.propositionId
+                        ? ` · 命题：${topicDetail.propositions.find((item) => item.id === judgment.propositionId)?.statementMarkdown ?? "已关联"}`
+                        : ""}
+                    </small>
                   </article>
                 ))}
                 {!topicDetail.judgments.length ? <p className="knowledge-empty">尚无判断快照。</p> : null}
+                <select
+                  aria-label="判断关联命题"
+                  value={judgmentPropositionId ?? ""}
+                  onChange={(event) => setJudgmentPropositionId(event.target.value ? Number(event.target.value) : null)}
+                >
+                  <option value="">主题级判断，不关联单一命题</option>
+                  {topicDetail.propositions.filter((item) => item.status !== "superseded").map((item) => (
+                    <option key={item.id} value={item.id}>{item.statementMarkdown}</option>
+                  ))}
+                </select>
                 <textarea value={judgmentText} onChange={(event) => setJudgmentText(event.target.value)} placeholder="新增当前判断（Markdown）" />
                 <input value={judgmentReason} onChange={(event) => setJudgmentReason(event.target.value)} placeholder="变化原因（有变化时填写）" />
                 <button disabled={!judgmentText.trim()} onClick={async () => {
                   await repository.addTopicJudgment({
                     topicId: topicDetail.topic.id,
+                    propositionId: judgmentPropositionId,
                     statementMarkdown: judgmentText,
                     confidence: 70,
                     changeReason: judgmentReason,
                   });
                   setJudgmentText("");
                   setJudgmentReason("");
+                  setJudgmentPropositionId(null);
                   await reloadTopicDetail();
                   onNotify("判断快照已追加，历史未被覆盖");
                 }}><Plus size={15} />追加判断</button>
@@ -1242,9 +1336,22 @@ export function KnowledgeWorkspace({
                     <small>
                       {item.sourceTitle} · 可信度 {Math.round(item.credibility)}% · {item.locatorLabel}
                       {" · "}{item.verificationStatus}/{item.validityStatus}
+                      {item.propositionId
+                        ? ` · 命题：${topicDetail.propositions.find((proposition) => proposition.id === item.propositionId)?.statementMarkdown ?? "已关联"}`
+                        : ""}
                     </small>
                   </article>
                 ))}
+                <select
+                  aria-label="证据关联命题"
+                  value={evidencePropositionId ?? ""}
+                  onChange={(event) => setEvidencePropositionId(event.target.value ? Number(event.target.value) : null)}
+                >
+                  <option value="">背景证据，不关联单一命题</option>
+                  {topicDetail.propositions.filter((item) => item.status !== "superseded").map((item) => (
+                    <option key={item.id} value={item.id}>{item.statementMarkdown}</option>
+                  ))}
+                </select>
                 <select aria-label="证据来源" value={evidenceSourceId ?? ""} onChange={(event) => {
                   const sourceId = event.target.value ? Number(event.target.value) : null;
                   setEvidenceSourceId(sourceId);
@@ -1322,6 +1429,20 @@ export function KnowledgeWorkspace({
                     />
                   </>
                 ) : null}
+                <div className="knowledge-evidence-fields knowledge-validity-fields">
+                  <label>
+                    确认日期
+                    <input type="date" value={evidenceConfirmedAt} onChange={(event) => setEvidenceConfirmedAt(event.target.value)} />
+                  </label>
+                  <label>
+                    有效至
+                    <input type="date" value={evidenceValidUntil} onChange={(event) => setEvidenceValidUntil(event.target.value)} />
+                  </label>
+                  <label>
+                    下次复查
+                    <input type="date" value={evidenceReviewAt} onChange={(event) => setEvidenceReviewAt(event.target.value)} />
+                  </label>
+                </div>
                 <button
                   disabled={
                     !evidenceText.trim()
@@ -1332,6 +1453,7 @@ export function KnowledgeWorkspace({
                   await repository.addTopicEvidence({
                     topicId: topicDetail.topic.id,
                     sourceItemId: evidenceSourceId!,
+                    propositionId: evidencePropositionId,
                     contentMarkdown: evidenceText,
                     stance: evidenceStance,
                     credibility: evidenceCredibility,
@@ -1342,11 +1464,18 @@ export function KnowledgeWorkspace({
                       value: evidenceLocatorValue,
                       quote: evidenceQuote,
                     },
+                    confirmedAt: evidenceConfirmedAt || null,
+                    validUntil: evidenceValidUntil || null,
+                    reviewAt: evidenceReviewAt || null,
                   });
                   setEvidenceText("");
+                  setEvidencePropositionId(null);
                   setEvidenceLocatorKind("none");
                   setEvidenceLocatorValue("");
                   setEvidenceQuote("");
+                  setEvidenceConfirmedAt("");
+                  setEvidenceValidUntil("");
+                  setEvidenceReviewAt("");
                   await reloadTopicDetail();
                   onNotify("证据及来源锚点已保存");
                   }}
@@ -1387,14 +1516,39 @@ export function KnowledgeWorkspace({
                       key={proposition.id}
                     >
                       <div>
-                        <span>{proposition.status}</span>
+                        <div className="knowledge-proposition-meta">
+                          <span>{proposition.propositionKind === "hypothesis" ? "竞争假设" : "命题"}</span>
+                          <span>{proposition.status}</span>
+                          <span>置信度 {proposition.confidence}%</span>
+                          <span>{proposition.validityStatus}</span>
+                          {proposition.hypothesisGroup ? <span>假设组：{proposition.hypothesisGroup}</span> : null}
+                        </div>
                         <MarkdownContent value={proposition.statementMarkdown} />
+                        {proposition.invalidationCondition ? (
+                          <p className="knowledge-invalidation">
+                            <strong>推翻条件</strong>
+                            {proposition.invalidationCondition}
+                          </p>
+                        ) : null}
+                        <div className="knowledge-validity-summary">
+                          {proposition.confirmedAt ? <small>确认：{proposition.confirmedAt}</small> : null}
+                          {proposition.validUntil ? <small>有效至：{proposition.validUntil}</small> : null}
+                          {proposition.reviewAt ? <small>复核：{proposition.reviewAt}</small> : null}
+                        </div>
                       </div>
                       <footer>
                         <button disabled={busy} onClick={() => {
                           setPropositionEditId(proposition.id);
                           setPropositionText(proposition.statementMarkdown);
                           setPropositionStatus(proposition.status);
+                          setPropositionKind(proposition.propositionKind);
+                          setPropositionHypothesisGroup(proposition.hypothesisGroup);
+                          setPropositionConfidence(proposition.confidence);
+                          setPropositionInvalidation(proposition.invalidationCondition);
+                          setPropositionValidity(proposition.validityStatus);
+                          setPropositionConfirmedAt(proposition.confirmedAt ?? "");
+                          setPropositionValidUntil(proposition.validUntil ?? "");
+                          setPropositionReviewAt(proposition.reviewAt ?? "");
                         }}>编辑</button>
                         {proposition.status !== "superseded" ? (
                           <button
@@ -1428,6 +1582,81 @@ export function KnowledgeWorkspace({
                     <option value="rejected">已推翻</option>
                     <option value="superseded">已被替代</option>
                   </select>
+                  <div className="knowledge-compact-fields">
+                    <label>
+                      类型
+                      <select
+                        value={propositionKind}
+                        onChange={(event) => setPropositionKind(
+                          event.target.value as TopicPropositionRow["propositionKind"],
+                        )}
+                      >
+                        <option value="claim">命题</option>
+                        <option value="hypothesis">竞争假设</option>
+                      </select>
+                    </label>
+                    <label>
+                      置信度
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={propositionConfidence}
+                        onChange={(event) => setPropositionConfidence(Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      有效性
+                      <select
+                        value={propositionValidity}
+                        onChange={(event) => setPropositionValidity(
+                          event.target.value as TopicPropositionRow["validityStatus"],
+                        )}
+                      >
+                        <option value="active">有效</option>
+                        <option value="possibly_outdated">可能过期</option>
+                        <option value="expired">已过期</option>
+                      </select>
+                    </label>
+                  </div>
+                  {propositionKind === "hypothesis" ? (
+                    <input
+                      value={propositionHypothesisGroup}
+                      onChange={(event) => setPropositionHypothesisGroup(event.target.value)}
+                      placeholder="竞争假设组，例如：日本楼市复苏路径"
+                    />
+                  ) : null}
+                  <textarea
+                    value={propositionInvalidation}
+                    onChange={(event) => setPropositionInvalidation(event.target.value)}
+                    placeholder="什么新事实出现时，这条命题应被推翻或降级？"
+                  />
+                  <div className="knowledge-validity-fields">
+                    <label>
+                      事实确认日
+                      <input
+                        type="date"
+                        value={propositionConfirmedAt}
+                        onChange={(event) => setPropositionConfirmedAt(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      有效截止日
+                      <input
+                        type="date"
+                        value={propositionValidUntil}
+                        onChange={(event) => setPropositionValidUntil(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      下次复核日
+                      <input
+                        type="date"
+                        value={propositionReviewAt}
+                        onChange={(event) => setPropositionReviewAt(event.target.value)}
+                      />
+                    </label>
+                  </div>
                   <div>
                     <button disabled={busy || !propositionText.trim()} onClick={() => void saveProposition()}>
                       {propositionEditId ? "保存命题" : "创建命题"}
@@ -1521,6 +1750,165 @@ export function KnowledgeWorkspace({
                 </div>
               </section>
             </div>
+            <section className="knowledge-decision-workspace">
+              <div className="knowledge-note-section-title">
+                <div>
+                  <span>记录当时依据、行动与结果</span>
+                  <h3>决策账本</h3>
+                </div>
+                <em>{topicDetail.decisions.length} 条</em>
+              </div>
+              <div className="knowledge-decision-layout">
+                <div className="knowledge-decision-list">
+                  {topicDetail.decisions.map((decision) => {
+                    const linkedProposition = topicDetail.propositions.find(
+                      (item) => item.id === decision.propositionId,
+                    );
+                    const linkedJudgment = topicDetail.judgments.find(
+                      (item) => item.id === decision.judgmentSnapshotId,
+                    );
+                    return (
+                      <article key={decision.id}>
+                        <header>
+                          <div>
+                            <strong>{decision.title}</strong>
+                            <small>{decision.decidedAt} · {decision.resultStatus}</small>
+                          </div>
+                          <button disabled={busy} onClick={() => beginEditDecision(decision)}>编辑</button>
+                        </header>
+                        <MarkdownContent value={decision.decisionMarkdown} />
+                        {linkedProposition ? (
+                          <p className="knowledge-decision-link"><strong>关联命题</strong>{linkedProposition.statementMarkdown}</p>
+                        ) : null}
+                        {linkedJudgment ? (
+                          <p className="knowledge-decision-link"><strong>关联判断</strong>{linkedJudgment.statementMarkdown}</p>
+                        ) : null}
+                        {decision.knownRisks.length ? (
+                          <div><strong>已知风险</strong><ul>{decision.knownRisks.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                        ) : null}
+                        {decision.expectedResult ? <p><strong>预期结果</strong>{decision.expectedResult}</p> : null}
+                        {decision.actualActions.length ? (
+                          <div><strong>实际行动</strong><ul>{decision.actualActions.map((item) => <li key={item}>{item}</li>)}</ul></div>
+                        ) : null}
+                        {decision.finalResult ? <p><strong>最终结果</strong>{decision.finalResult}</p> : null}
+                        {decision.retrospective ? <p><strong>复盘</strong>{decision.retrospective}</p> : null}
+                        {decision.reviewAt ? <small>复核日期：{decision.reviewAt}</small> : null}
+                      </article>
+                    );
+                  })}
+                  {!topicDetail.decisions.length ? (
+                    <p className="knowledge-empty">尚无决策记录。这里保存“为什么这样做”，不会覆盖后来的复盘结果。</p>
+                  ) : null}
+                </div>
+                <div className="knowledge-decision-editor">
+                  <h4>{decisionEditId ? "编辑决策记录" : "记录一项决策"}</h4>
+                  <input
+                    value={decisionTitle}
+                    onChange={(event) => setDecisionTitle(event.target.value)}
+                    placeholder="决策标题"
+                  />
+                  <textarea
+                    value={decisionText}
+                    onChange={(event) => setDecisionText(event.target.value)}
+                    placeholder="当时做了什么决定，依据是什么？"
+                  />
+                  <div className="knowledge-compact-fields">
+                    <label>
+                      关联命题
+                      <select
+                        value={decisionPropositionId ?? ""}
+                        onChange={(event) => setDecisionPropositionId(
+                          event.target.value ? Number(event.target.value) : null,
+                        )}
+                      >
+                        <option value="">不关联</option>
+                        {topicDetail.propositions.map((item) => (
+                          <option key={item.id} value={item.id}>{item.statementMarkdown}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      关联判断
+                      <select
+                        value={decisionJudgmentId ?? ""}
+                        onChange={(event) => setDecisionJudgmentId(
+                          event.target.value ? Number(event.target.value) : null,
+                        )}
+                      >
+                        <option value="">不关联</option>
+                        {topicDetail.judgments.map((item) => (
+                          <option key={item.id} value={item.id}>{item.statementMarkdown}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <textarea
+                    value={decisionKnownRisks}
+                    onChange={(event) => setDecisionKnownRisks(event.target.value)}
+                    placeholder={"已知风险（每行一项）"}
+                  />
+                  <textarea
+                    value={decisionExpectedResult}
+                    onChange={(event) => setDecisionExpectedResult(event.target.value)}
+                    placeholder="预期结果"
+                  />
+                  <textarea
+                    value={decisionActions}
+                    onChange={(event) => setDecisionActions(event.target.value)}
+                    placeholder={"实际行动（每行一项）"}
+                  />
+                  <div className="knowledge-compact-fields">
+                    <label>
+                      结果状态
+                      <select
+                        value={decisionResultStatus}
+                        onChange={(event) => setDecisionResultStatus(
+                          event.target.value as TopicDecisionRow["resultStatus"],
+                        )}
+                      >
+                        <option value="pending">待观察</option>
+                        <option value="in_progress">进行中</option>
+                        <option value="succeeded">达到预期</option>
+                        <option value="failed">未达到预期</option>
+                        <option value="mixed">结果混合</option>
+                        <option value="cancelled">已取消</option>
+                      </select>
+                    </label>
+                    <label>
+                      复核日期
+                      <input
+                        type="date"
+                        value={decisionReviewAt}
+                        onChange={(event) => setDecisionReviewAt(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <textarea
+                    value={decisionFinalResult}
+                    onChange={(event) => setDecisionFinalResult(event.target.value)}
+                    placeholder="最终结果（可以稍后补充）"
+                  />
+                  <textarea
+                    value={decisionRetrospective}
+                    onChange={(event) => setDecisionRetrospective(event.target.value)}
+                    placeholder="复盘：哪些判断正确，哪些条件发生了变化？"
+                  />
+                  <div>
+                    <button
+                      disabled={busy || !decisionTitle.trim() || !decisionText.trim()}
+                      onClick={() => void saveDecision()}
+                    >
+                      {decisionEditId ? "保存决策记录" : "写入决策账本"}
+                    </button>
+                    {decisionEditId ? (
+                      <button className="secondary" disabled={busy} onClick={resetDecisionEditor}>
+                        取消
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </section>
             <div className="knowledge-note-workspace">
               <div className="knowledge-note-list">
                 <div className="knowledge-note-section-title">
@@ -1682,16 +2070,142 @@ export function KnowledgeWorkspace({
     );
   }
 
-  if (mode === "organize") {
+  if (mode === "topics") {
     const duplicateNames = topics.filter((topic, index) =>
       topics.findIndex((other) => other.name.trim().toLowerCase() === topic.name.trim().toLowerCase()) !== index);
     const activeTopics = topics.filter((topic) => topic.status !== "merged");
     return (
       <main className="knowledge-page">
         <header className="knowledge-page-header">
-          <div><span>结构治理</span><h1>整理工作台</h1><p>预览在前、提交可撤销；所有结果来自正式知识表。</p></div>
+          <div><span>自动整理后的结构维护</span><h1>主题结构</h1><p>领域和主题可以编辑；合并、关系与规则只作为低频维护工具。</p></div>
           <Sparkles size={28} />
         </header>
+        <section className="knowledge-topic-layout knowledge-structure-layout">
+          <div className="knowledge-card knowledge-tree-card">
+            <h2>领域与主题 <span>{domains.length} 个领域 · {topics.length} 个主题</span></h2>
+            {!domains.length ? <p className="knowledge-empty">尚未建立领域。系统会在导入后补齐默认目录，也可以在右侧手动创建。</p> : domains.map((domain) => (
+              <div className="knowledge-domain" key={domain.id}>
+                <strong><Layers3 size={17} />{domain.name}</strong>
+                {topics.filter((topic) => topic.domainId === domain.id).map((topic) => (
+                  <button
+                    className={`knowledge-topic-row ${editTopicId === topic.id ? "active" : ""}`}
+                    key={topic.id}
+                    style={{ paddingLeft: `${Math.min(topic.depth - 1, 4) * 22 + 12}px` }}
+                    onClick={() => setEditTopicId(topic.id)}
+                  >
+                    <ChevronRight size={14} />
+                    <span>{topic.name}</span>
+                    <em>{topic.sourceCount} 条来源</em>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          <details className="knowledge-card knowledge-create-card knowledge-structure-editor">
+            <summary>添加或编辑领域与主题</summary>
+            <h2>新增领域</h2>
+            <label>名称<input value={domainName} onChange={(event) => setDomainName(event.target.value)} placeholder="例如：影视制作" /></label>
+            <label>说明<input value={domainDescription} onChange={(event) => setDomainDescription(event.target.value)} placeholder="这个领域长期管理什么" /></label>
+            <button disabled={busy || !domainName.trim()} onClick={async () => {
+              setBusy(true);
+              try {
+                const created = await repository.createDomain(domainName.trim(), domainDescription.trim());
+                setDomainName("");
+                setDomainDescription("");
+                await reload();
+                setTopicDomainId(created.id);
+                onNotify("领域已创建");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "领域创建失败");
+              } finally {
+                setBusy(false);
+              }
+            }}><Plus size={16} />创建领域</button>
+            <div className="knowledge-editor-divider" />
+            <h2>新增主题</h2>
+            <label>所属领域<select value={topicDomainId ?? ""} onChange={(event) => setTopicDomainId(event.target.value ? Number(event.target.value) : null)}>
+              <option value="">请选择</option>
+              {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}
+            </select></label>
+            <label>父主题<select value={topicParentId ?? ""} onChange={(event) => setTopicParentId(event.target.value ? Number(event.target.value) : null)}>
+              <option value="">顶层主题</option>
+              {topics.filter((topic) => topic.domainId === topicDomainId).map((topic) => (
+                <option key={topic.id} value={topic.id}>{"—".repeat(Math.min(topic.depth - 1, 4))} {topic.name}</option>
+              ))}
+            </select></label>
+            <label>名称<input value={topicName} onChange={(event) => setTopicName(event.target.value)} placeholder="长期可复用的主题" /></label>
+            <label>说明<input value={topicDescription} onChange={(event) => setTopicDescription(event.target.value)} placeholder="主题范围和判断边界" /></label>
+            <button disabled={busy || !topicDomainId || !topicName.trim()} onClick={async () => {
+              setBusy(true);
+              try {
+                await repository.createTopic({
+                  domainId: topicDomainId!,
+                  parentTopicId: topicParentId,
+                  name: topicName.trim(),
+                  description: topicDescription.trim(),
+                });
+                setTopicName("");
+                setTopicDescription("");
+                setTopicParentId(null);
+                await reload();
+                onNotify("主题已创建");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "主题创建失败");
+              } finally {
+                setBusy(false);
+              }
+            }}><Plus size={16} />创建主题</button>
+            <div className="knowledge-editor-divider" />
+            <h2>编辑现有结构</h2>
+            <label>领域<select value={editDomainId ?? ""} onChange={(event) => setEditDomainId(event.target.value ? Number(event.target.value) : null)}>
+              <option value="">请选择</option>
+              {domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}
+            </select></label>
+            <label>领域名称<input value={editDomainName} onChange={(event) => setEditDomainName(event.target.value)} disabled={!editDomainId} /></label>
+            <label>领域说明<input value={editDomainDescription} onChange={(event) => setEditDomainDescription(event.target.value)} disabled={!editDomainId} /></label>
+            <button disabled={busy || !editDomainId || !editDomainName.trim()} onClick={async () => {
+              setBusy(true);
+              try {
+                await repository.updateDomain({
+                  id: editDomainId!,
+                  name: editDomainName.trim(),
+                  description: editDomainDescription.trim(),
+                });
+                await reload();
+                onNotify("领域已更新，现有关系保持不变");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "领域更新失败");
+              } finally {
+                setBusy(false);
+              }
+            }}>保存领域</button>
+            <label>主题<select value={editTopicId ?? ""} onChange={(event) => setEditTopicId(event.target.value ? Number(event.target.value) : null)}>
+              <option value="">请选择</option>
+              {activeTopics.map((topic) => <option key={topic.id} value={topic.id}>{topicPath(topic, topics).join(" / ")}</option>)}
+            </select></label>
+            <label>主题名称<input value={editTopicName} onChange={(event) => setEditTopicName(event.target.value)} disabled={!editTopicId} /></label>
+            <label>主题说明<input value={editTopicDescription} onChange={(event) => setEditTopicDescription(event.target.value)} disabled={!editTopicId} /></label>
+            <button disabled={busy || !editTopicId || !editTopicName.trim()} onClick={async () => {
+              setBusy(true);
+              try {
+                await repository.updateTopic({
+                  id: editTopicId!,
+                  name: editTopicName.trim(),
+                  description: editTopicDescription.trim(),
+                });
+                await reload();
+                onNotify("主题已更新，分类与历史关系保持不变");
+              } catch (error) {
+                onNotify(error instanceof Error ? error.message : "主题更新失败");
+              } finally {
+                setBusy(false);
+              }
+            }}>保存主题</button>
+          </details>
+        </section>
+        <details className="knowledge-advanced-maintenance">
+          <summary>高级结构维护：别名、实体、分类规则、合并、拆分与关系</summary>
+          <div className="knowledge-advanced-maintenance-body">
         <section className="knowledge-metrics">
           <div className="knowledge-card"><strong>{inbox.length}</strong><span>待归类来源</span></div>
           <div className="knowledge-card"><strong>{topics.filter((topic) => topic.sourceCount === 0).length}</strong><span>空主题</span></div>
@@ -1882,6 +2396,8 @@ export function KnowledgeWorkspace({
             {!relationSuggestions.length ? <p className="knowledge-empty">当前没有满足确定性门槛的关系候选。</p> : null}
           </div>
         </section>
+          </div>
+        </details>
       </main>
     );
   }
@@ -1890,21 +2406,69 @@ export function KnowledgeWorkspace({
     <>
     <main className="knowledge-page knowledge-inbox-page">
       <header className="knowledge-page-header">
-        <div><span>来源先归档，再分类</span><h1>收录箱</h1><p>已加载 {inbox.length} 条待确认来源；分类失败不会丢失来源。</p></div>
+        <div>
+          <span>原始来源与自动整理结果</span>
+          <h1>来源档案</h1>
+          <p>
+            已加载 {inbox.length} 条有效来源；
+            {inbox.filter((item) => item.organizationState === "inbox").length} 条需要确认，其余已归入主题。
+          </p>
+        </div>
         <div className="knowledge-header-actions">
-          <button disabled={busy || !inbox.length} onClick={() => void autoOrganizeLoadedInbox()}>
-            <Sparkles size={16} />自动整理已加载来源
+          <button
+            disabled={busy || !inbox.some((item) => item.organizationState === "inbox")}
+            onClick={() => void autoOrganizeLoadedInbox()}
+          >
+            <Sparkles size={16} />自动整理待归类来源
           </button>
           <Inbox size={28} />
         </div>
       </header>
       <section className="knowledge-inbox-layout">
         <div className="knowledge-card knowledge-inbox-list">
-          {inbox.map((item) => (
+          <div className="knowledge-source-filters">
+            <input
+              value={sourceSearch}
+              onChange={(event) => setSourceSearch(event.target.value)}
+              placeholder="搜索来源、平台或主题"
+              aria-label="搜索来源档案"
+            />
+            <div>
+              {([
+                ["all", "全部"],
+                ["pending", "待确认"],
+                ["organized", "已归类"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  className={sourceFilter === value ? "active" : ""}
+                  onClick={() => {
+                    setSourceFilter(value);
+                    const next = inbox.find((item) => (
+                      value === "all"
+                      || (value === "pending" && item.organizationState === "inbox")
+                      || (value === "organized" && item.organizationState !== "inbox")
+                    ));
+                    if (next) setSelectedId(next.id);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {visibleSources.map((item) => (
             <button key={item.id} className={item.id === selectedId ? "active" : ""} onClick={() => setSelectedId(item.id)}>
               <span className="knowledge-source-kind">{item.sourceType}</span>
               <strong>{item.title}</strong>
-              <small>{item.originalAt ?? item.importedAt}</small>
+              <small>
+                {item.primaryTopicName
+                  ? `已归类：${item.primaryTopicName}`
+                  : item.organizationState === "inbox"
+                    ? "等待自动归类或异常确认"
+                    : "已整理"}
+                {" · "}{item.originalAt ?? item.importedAt}
+              </small>
               <ChevronRight size={16} />
             </button>
           ))}
@@ -1916,7 +2480,7 @@ export function KnowledgeWorkspace({
                 const nextLimit = inboxLimit + INITIAL_INBOX_LIMIT;
                 setBusy(true);
                 try {
-                  setInbox(await repository.listInbox(nextLimit));
+                  setInbox(await repository.listSourceArchive(nextLimit));
                   setInboxLimit(nextLimit);
                 } catch (error) {
                   onNotify(error instanceof Error ? error.message : "加载更多来源失败");
@@ -1928,7 +2492,7 @@ export function KnowledgeWorkspace({
               加载更多来源
             </button>
           ) : null}
-          {!inbox.length ? <p className="knowledge-empty">收录箱已清空。新导入资料会自动进入这里。</p> : null}
+          {!visibleSources.length ? <p className="knowledge-empty">当前筛选下没有来源。</p> : null}
         </div>
         <div className="knowledge-card knowledge-inbox-detail">
           {selected ? (
@@ -1941,16 +2505,18 @@ export function KnowledgeWorkspace({
                       <Maximize2 size={16} />查看详情
                     </button>
                   ) : null}
-                  <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
-                    <Sparkles size={16} />
-                    {autoSuggestingSourceId === selected.id
-                      ? "自动整理中…"
-                      : hasCurrentClassificationRun
-                        ? "重新计算建议"
-                        : hasStalePendingSuggestions
-                          ? "按新版重新计算"
-                          : "生成分类建议"}
-                  </button>
+                  {selected.organizationState === "inbox" ? (
+                    <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
+                      <Sparkles size={16} />
+                      {autoSuggestingSourceId === selected.id
+                        ? "自动整理中…"
+                        : hasCurrentClassificationRun
+                          ? "重新计算建议"
+                          : hasStalePendingSuggestions
+                            ? "按新版重新计算"
+                            : "生成分类建议"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="knowledge-source-preview">
@@ -1975,6 +2541,7 @@ export function KnowledgeWorkspace({
                     )}
                   </>}
               </div>
+              {selected.organizationState === "inbox" ? (
               <div className="knowledge-suggestion-panel">
                 <h3>主题归属</h3>
                 {currentPendingSuggestions.map((suggestion) => {
@@ -1991,10 +2558,10 @@ export function KnowledgeWorkspace({
                 {!currentPendingSuggestions.length ? (
                   <p className="knowledge-suggestion-empty">
                     {hasCurrentClassificationRun
-                      ? "本版分类已完成，但当前没有证据充分的自动建议。可手动选择，或到主题浏览器新建更准确的主题。"
+                      ? "本版分类已完成，但当前没有证据充分的自动建议。可手动选择，或到主题结构新建更准确的主题。"
                       : hasStalePendingSuggestions
                       ? "旧版建议已隐藏，请按新版重新计算；不会自动采用旧结果。"
-                      : "当前没有证据充分的自动建议。可手动选择，或到主题浏览器新建更准确的主题。"}
+                      : "当前没有证据充分的自动建议。可手动选择，或到主题结构新建更准确的主题。"}
                   </p>
                 ) : null}
                 <label className="knowledge-manual-topic">
@@ -2008,6 +2575,16 @@ export function KnowledgeWorkspace({
                   <Check size={17} />确认归类<ArrowRight size={16} />
                 </button>
               </div>
+              ) : (
+                <div className="knowledge-suggestion-panel knowledge-source-organized">
+                  <h3>整理结果</h3>
+                  <strong>{selected.primaryTopicName ?? "已整理，暂无主要主题名称"}</strong>
+                  <p>
+                    当前来源已进入知识结构，共关联 {selected.assignedTopicCount} 个主题。
+                    分类确认不再占用正文阅读区；需要修正时可在主题结构中维护关系。
+                  </p>
+                </div>
+              )}
             </>
           ) : <p className="knowledge-empty">选择一条来源查看正文和分类解释。</p>}
         </div>

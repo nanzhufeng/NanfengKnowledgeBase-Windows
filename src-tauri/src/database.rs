@@ -20,6 +20,7 @@ const INITIAL_MIGRATION_VERSION: i64 = 1;
 const ORIGINAL_AT_MIGRATION: &str = include_str!("../migrations/0002_original_at.sql");
 const ORIGINAL_AT_MIGRATION_VERSION: i64 = 2;
 const KNOWLEDGE_MIGRATION_VERSION: i64 = 3;
+const KNOWLEDGE_REASONING_MIGRATION_VERSION: i64 = 4;
 const BACKUP_PAGES_PER_STEP: i32 = 512;
 const BACKUP_PAUSE: Duration = Duration::from_millis(1);
 
@@ -109,6 +110,11 @@ pub(crate) fn apply_migrations(connection: &mut Connection) -> AppResult<()> {
         KNOWLEDGE_MIGRATION_VERSION,
         knowledge::schema::KNOWLEDGE_SCHEMA_SQL,
     )?;
+    apply_migration(
+        connection,
+        KNOWLEDGE_REASONING_MIGRATION_VERSION,
+        knowledge::schema::KNOWLEDGE_REASONING_SCHEMA_SQL,
+    )?;
     knowledge::repository::backfill_legacy_records(connection)?;
     Ok(())
 }
@@ -128,7 +134,7 @@ fn create_pre_knowledge_migration_backup(connection: &Connection, path: &Path) -
     let already_applied = connection
         .query_row(
             "SELECT 1 FROM schema_migrations WHERE version = ?1",
-            [KNOWLEDGE_MIGRATION_VERSION],
+            [KNOWLEDGE_REASONING_MIGRATION_VERSION],
             |_| Ok(()),
         )
         .optional()?
@@ -1653,6 +1659,109 @@ mod tests {
             )
             .expect("read fts table");
         assert_eq!(table_count, 1);
+    }
+
+    #[test]
+    fn reasoning_migration_creates_one_verified_pre_migration_backup_and_is_idempotent() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let data_directory = directory.path().join("data");
+        std::fs::create_dir_all(&data_directory).expect("data directory");
+        let path = data_directory.join("app.db");
+        {
+            let mut connection = Connection::open(&path).expect("v3 database");
+            configure_connection(&connection).expect("configure");
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                       version INTEGER PRIMARY KEY,
+                       applied_at TEXT NOT NULL
+                     );",
+                )
+                .expect("migration table");
+            apply_migration(
+                &mut connection,
+                INITIAL_MIGRATION_VERSION,
+                INITIAL_MIGRATION,
+            )
+            .expect("migration 1");
+            apply_migration(
+                &mut connection,
+                ORIGINAL_AT_MIGRATION_VERSION,
+                ORIGINAL_AT_MIGRATION,
+            )
+            .expect("migration 2");
+            apply_migration(
+                &mut connection,
+                KNOWLEDGE_MIGRATION_VERSION,
+                knowledge::schema::KNOWLEDGE_SCHEMA_SQL,
+            )
+            .expect("migration 3");
+            connection
+                .execute_batch(
+                    "INSERT INTO domains(
+                       public_id, name, normalized_name, created_at, updated_at
+                     ) VALUES ('domain-v3', '迁移验证', '迁移验证', '2026-07-28', '2026-07-28');
+                     INSERT INTO topics(
+                       public_id, domain_id, name, normalized_name, created_at, updated_at
+                     ) VALUES (
+                       'topic-v3', last_insert_rowid(), '推理结构', '推理结构',
+                       '2026-07-28', '2026-07-28'
+                     );
+                     INSERT INTO propositions(
+                       public_id, topic_id, statement_markdown, created_at, updated_at
+                     ) VALUES (
+                       'proposition-v3', last_insert_rowid(), '迁移前命题',
+                       '2026-07-28', '2026-07-28'
+                     );",
+                )
+                .expect("v3 knowledge rows");
+        }
+
+        let connection = open_database(&path).expect("apply reasoning migration");
+        let proposition_kind: String = connection
+            .query_row(
+                "SELECT proposition_kind FROM propositions WHERE public_id = 'proposition-v3'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("migrated proposition");
+        assert_eq!(proposition_kind, "claim");
+        assert_eq!(integrity_check(&connection).expect("integrity"), "ok");
+        drop(connection);
+
+        let backup_directory = directory.path().join("backups");
+        let backups = std::fs::read_dir(&backup_directory)
+            .expect("backup directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("backup entries");
+        assert_eq!(backups.len(), 1);
+        let backup = Connection::open(backups[0].path()).expect("backup database");
+        assert_eq!(
+            backup
+                .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .expect("backup integrity"),
+            "ok"
+        );
+        assert_eq!(
+            backup
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('propositions')
+                     WHERE name = 'proposition_kind'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("pre-migration shape"),
+            0
+        );
+        drop(backup);
+
+        drop(open_database(&path).expect("idempotent reopen"));
+        assert_eq!(
+            std::fs::read_dir(&backup_directory)
+                .expect("backup directory after reopen")
+                .count(),
+            1
+        );
     }
 
     #[test]

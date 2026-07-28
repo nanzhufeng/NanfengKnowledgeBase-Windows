@@ -1,31 +1,33 @@
 # 架构所有权
 
-项目遵循根级 `docs/app-development/architecture-baseline.md`。当前最高产品规格已把核心从“记录管理”升级为“知识演化”。下表描述当前代码事实；正式 `D:\南枫知识库` 是否完成 migration v3 必须单独报告，不能由“代码已接入”推断。
+项目遵循根级 `docs/app-development/architecture-baseline.md`。当前最高产品规格已把核心从“记录管理”升级为“知识演化”。下表描述当前代码事实；migration v3 与 migration v4 的正式数据验证必须分层报告，不能由“代码已接入”推断。
 
 ## 知识生产模型（正式代码已接入，正式数据已升级）
 
 | 概念 | 唯一产品含义 | 规则与持久化所有者 | 公开入口 | 主要消费者 | 禁止的平行规则 | 当前证据 |
 |---|---|---|---|---|---|---|
-| Domain | 稳定顶层领域 | `src/knowledge/domain.ts`、`src-tauri/src/knowledge/schema.rs`、`knowledge/repository.rs` | `create/update/listDomains` | 主题浏览器、主题创建和目录编辑 | 页面用标签临时模拟领域；重建对象实现改名 | 创建与编辑命令已接入；改名保留 ID |
-| Topic / Subtopic | 长期主题、唯一主路径和横向关系 | `knowledge/repository.rs` | `create/update/listTopics/getTopicDetail` | 主题浏览器、整理工作台 | 用 Record 标题自动生成主题；改名时新建平行主题 | 正式仓库与 UI 已接入；改名保留 ID；合并旧名称和旧路径写入 redirect 别名且撤销可逆 |
-| Source Item | 保真的导入来源和分类对象 | `importer.rs`、`knowledge/repository.rs` | `listInbox`、migration v3 legacy backfill | 收录箱、主题来源、证据 | 覆盖原件；把来源等同于笔记 | 901 条隔离副本幂等回填已验证；收录箱默认隐藏无正文的空会话但不删除来源 |
+| Domain | 稳定顶层领域 | `src/knowledge/domain.ts`、`src-tauri/src/knowledge/schema.rs`、`knowledge/repository.rs` | `create/update/listDomains` | 主题结构、知识视图 | 页面用标签临时模拟领域；重建对象实现改名 | 创建与编辑命令已接入；改名保留 ID |
+| Topic / Subtopic | 长期主题、唯一主路径和横向关系 | `knowledge/repository.rs` | `create/update/listTopics/getTopicDetail` | 主题结构、知识视图 | 用 Record 标题自动生成主题；改名时新建平行主题 | 正式仓库与 UI 已接入；改名保留 ID；合并旧名称和旧路径写入 redirect 别名且撤销可逆 |
+| Source Item | 保真的导入来源和分类对象 | `importer.rs`、`knowledge/repository.rs` | `listSourceArchive/listInbox`、migration v3 legacy backfill | 来源档案、主题来源、证据 | 覆盖原件；把来源等同于笔记 | 来源档案同时读取已归类和待确认来源；无正文空会话默认隐藏但不删除 |
 | Note | 人工整理与补充说明 | `knowledge/repository.rs` | `create/update/archive/list/getNote` | 主题知识页、研究上下文 | 与原始来源共用可覆盖正文 | 独立 CRUD、软归档、主题/来源关联和 FTS 同步已验证 |
 | Judgment Snapshot | 某时点判断、置信度和变化原因 | `knowledge/repository.rs` | `addTopicJudgment/getTopicDetail` | 主题页、时间线、上下文 | 覆盖旧判断冒充时间线 | 追加写入和读取已接入 |
-| Evidence | 支持/反驳关系和来源锚点 | `knowledge/repository.rs` | `addTopicEvidence/getTopicDetail` | 主题页、上下文 | 无来源证据；页面各自标强弱或保存任意 JSON | 立场/可信度/验证/有效状态分离；锚点按来源类型校验并规范化 |
+| Evidence | 命题的支持/反驳关系、来源锚点和事实有效期 | `knowledge/repository.rs` | `addTopicEvidence/getTopicDetail` | 知识视图、上下文 | 无来源证据；页面各自标强弱或保存任意 JSON；默认永久有效 | 立场/可信度/验证/有效状态分离；可关联命题；锚点按来源类型校验并规范化 |
 | Open Question | 待验证问题及状态 | `knowledge/repository.rs` | `addTopicQuestion/getTopicDetail` | 主题页、上下文 | 与普通待办混用 | 正式命令已接入 |
-| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 可读正文投影：`knowledge/readable_text.rs`；评分：`deterministicClassifier.ts`；编排：`knowledgeAutoOrganizer.ts`；持久化输入/确认：`knowledge/repository.rs` | `prepare/save/list/confirm/undoClassification` | 导入完成、收录箱 | 用原始 JSON 元数据分类；分类器直接写库；页面复制评分规则；用 0 分候选填充界面 | v3 统一检查标题与可见正文，目录覆盖 47 个主要资料主题；BM25 必须有可见短语；无直接证据或低于 45 分不展示；仅 ≥90 自动确认并可撤销 |
-| Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 整理工作台、操作日志 | 无预览直接批量改外键 | 合并、redirect 和撤销已实现；拆分按首版边界仍只预览 |
+| Classification Suggestion | 来源到主题的候选、分数、理由和状态 | 可读正文投影：`knowledge/readable_text.rs`；评分：`deterministicClassifier.ts`；编排：`knowledgeAutoOrganizer.ts`；持久化输入/确认：`knowledge/repository.rs` | `prepare/save/list/confirm/undoClassification` | 导入完成、来源档案例外队列 | 用原始 JSON 元数据分类；分类器直接写库；页面复制评分规则；用 0 分候选填充界面 | 自动分类优先；BM25 必须有可见短语；无直接证据或低于 45 分不展示；仅 ≥90 自动确认并可撤销 |
+| Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 主题结构高级维护、操作日志 | 无预览直接批量改外键 | 合并、redirect 和撤销已实现；拆分按首版边界仍只预览；界面默认折叠 |
 | Research Context | 本地可审阅的研究上下文 | `knowledge/repository.rs` | `compileTopicContext` | 主题页、导出/后续 Codex 交换 | 调模型生成不透明摘要 | 本地确定性编译已接入 |
-| Proposition / Turning Point | 可复用命题与人工确认的判断转折 | `knowledge/repository.rs` | `create/update/supersedeProposition`、`createTurningPoint/getTopicDetail` | 主题页、判断演化、研究上下文 | 从展示文本临时推断身份；填写变化原因自动制造转折 | 命题独立生命周期和用户显式确认的前后判断转折已验证 |
+| Proposition / Competing Hypothesis | 可复用命题；同一假设组允许并列竞争，不强制唯一结论 | `knowledge/repository.rs` | `create/update/supersedeProposition/getTopicDetail` | 知识视图、判断、证据、决策账本、研究上下文 | 从展示文本临时推断身份；用新结论覆盖旧假设 | 独立生命周期、假设组、置信度、推翻条件和有效期已接入 |
+| Turning Point | 用户明确确认的判断转折 | `knowledge/repository.rs` | `createTurningPoint/getTopicDetail` | 知识视图、研究上下文 | 填写变化原因自动制造转折 | 必须显式选择前后判断并确认 |
+| Decision Ledger | 当时决策、依据、风险、行动、结果与复盘 | `knowledge/repository.rs` | `create/updateDecision/getTopicDetail` | 知识视图、研究上下文 | 用普通笔记模拟决策；结果覆盖当时依据 | 可关联命题和判断；结果状态、复核日期与复盘独立保存 |
 
 ### 运行与数据边界
 
-- `database::apply_migrations` 已接入 migration v3：先创建迁移前 SQLite 安全备份，再创建知识表并幂等回填 legacy Record。
+- `database::apply_migrations` 已接入 migration v3 和 v4：每个尚未应用的知识迁移在正式文件库打开前先生成 SQLite online backup；v4 只追加推理字段和索引，不改写来源正文。
 - `src/services/knowledgeRepository.ts` 是 WebView 到 Rust 知识命令的唯一前端适配器；浏览器无 Tauri 桥接时只显示诚实空状态。
 - `legacy_preview.rs`、`audit.rs` 和 `classification_input.rs` 继续承担只读审计与隔离预演，不是第二套生产写入口。
 - `.runtime-qa/knowledge-v3-20260727-qa1/` 已验证 901 条隔离 migration v3；`.runtime-qa/portable-recovery-20260727-qa4/` 已验证完整恢复和失败自动回滚；`.runtime-qa/hidden-tauri-bridge-20260727-qa1/` 已验证隐藏 Tauri/WebView2 正式命令桥和强制进程重启后的持久化。
 - `.runtime-qa/hidden-knowledge-production-20260727-qa4/` 进一步验证 Note、Proposition、Evidence、Judgment 和 Turning Point 经真实隐藏 IPC 写入并在强制重启后按 ID 读回，外键违规为 0。
-- 正式 `D:\南枫知识库` 已执行 v3，并完成升级前完整备份、第二次打开幂等和独立只读复核。后续真实数据写入与发布仍需按任务单独授权，不得由隔离证据替代。
+- 正式 `D:\南枫知识库` 已执行 v3，并完成升级前完整备份、第二次打开幂等和独立只读复核。v4 当前尚未声称正式执行；后续 BAT 用户验收与正式数据复核必须单独记录。
 
 目标数据链路固定为：
 
@@ -34,9 +36,10 @@
 → 内容提取与标准化
 → 来源读取模型
 → 确定性分类建议
-→ 人工确认或高置信接受
+→ 高置信自动接受；冲突和低置信进入例外确认
 → 主题/关系写入
-→ Note、命题、判断、证据、问题和关键转折读模型
+→ 领域/主题/命题成果读模型
+→ 竞争假设、判断、证据有效期、决策账本和关键转折
 → 研究上下文编译
 ```
 
@@ -51,7 +54,7 @@
 | 研究记录 | 判断、事实、证据、问题、行动、标签与来源的聚合根 | `src-tauri/src/database.rs` | `RecordRepository` | 列表、详情、搜索、版本、导入导出 | 页面直接 SQL；各页面复制记录状态 | Rust CRUD 测试 + 仓库契约 + 运行路径 | 已实现 |
 | 当前判断编辑状态 | 阅读、编辑、自动保存和版本中的同一段判断 | `database::update_current_judgment` 与本机草稿键 | `RecordRepository.updateCurrentJudgment` | 判断卡、顶部保存状态、版本快照 | 用完整记录往返保存短字段；失败仍显示已保存 | 自动保存、失败草稿和重启恢复 | 已实现 |
 | 记录列表读取模型 | 搜索、筛选和列表只消费轻量摘要，详情正文按选择加载 | `database::list_record_summaries` | `RecordRepository.listRecordSummaries` | 全部记录、收藏、跟踪、更新、回收站 | 列表加载完整正文；前端二次删除后端搜索命中 | 1000 条性能合同 + 正文命中搜索 + E2E | 已实现 |
-| 页面导航状态 | 全部记录、我的收藏、导入、回收站和设置的当前位置 | `App` 的 `page` | `Sidebar.onNavigate` | 主区域页面选择 | 各页面自行修改侧栏状态 | 导航与可见页面一致 | 已实现 |
+| 页面导航状态 | 来源档案、主题结构、知识视图及兼容记录工具的当前位置 | `App` 的 `page` | `Sidebar.onNavigate` | 主区域页面选择 | 各页面自行修改侧栏状态；恢复重复的收录箱/整理工作台入口 | 导航与可见页面一致 | 已实现 |
 | 文件导入 | 单个或批量文件的原件归档、哈希、限量预览、可编辑映射、去重策略和完整写入 | `src-tauri/src/importer.rs` / `domain/importMapping.ts` / `domain/importQueue.ts` | `RecordRepository.prepareImport/confirmImport/cancelImport` | 批量拖拽队列、文件选择、单文件映射、自动批量确认、导入日志 | 并发解析全部大文件；一个失败中止整批；完整正文跨 IPC；前端样本充当最终数据 | 队列顺序/去重/错误隔离合同 + 32 条有界样本 + 后端重读原件 | 已实现 |
 | ChatGPT 完整导出附件 | ZIP 原件、会话分片、消息附件引用、`.dat` 实体、原文件名、格式和受控落盘路径 | `src-tauri/src/chatgpt_export.rs` | `importer::prepare_import/confirm_import` | ZIP 导入预览、记录来源、角色消息附件、附件卡、完整备份 | 只导入 conversations JSON；按扩展名猜 `.dat`；整包读入内存；页面解析 ZIP；丢弃未关联文件库资产 | 真实 ZIP 只读审计 + 合成 ZIP 端到端 + 路径穿越/大小上限 + 字节哈希 | 已实现 |
 | 导入会话展示 | 从保真的 Claude `chat_messages` 或 ChatGPT `mapping/current_node` 中提取当前分支的用户可见文本，隐藏 thinking、reasoning recap、工具调用与废弃分支 | `src/domain/importedContent.ts` / `src-tauri/src/importer.rs` | `readImportedContent` / 导入标题回退 | 详情预览、完整内容弹窗、完整导出、通用标题回退 | 依赖 Codex 临时改正文；按语言删除正文；改写原始 JSON；页面各自解析会话 | 两类结构契约 + 分支/日期/资源回归 + 真实会话弹窗 | 已实现 |
@@ -73,6 +76,9 @@
 
 | 入口/消费者 | 是否存在 | 当前影响 | 唯一入口 | 最小验证 |
 |---|---|---|---|---|
+| 来源档案（含待确认例外） | 是 | 受影响 | `KnowledgeWorkspace(mode="sources")` → `KnowledgeRepository.listSourceArchive` | 已归类与待确认可筛选；正文按选择加载；只有待确认来源显示分类操作 |
+| 主题结构（含低频维护） | 是 | 受影响 | `KnowledgeWorkspace(mode="topics")` → Domain/Topic/Structural Operation 命令 | 领域主题树可读；编辑和高级维护默认折叠；合并仍可撤销 |
+| 知识视图 | 是 | 受影响 | `KnowledgeWorkspace(mode="knowledge")` → `getTopicDetail` | 领域→主题→命题阅读；竞争假设、有效期、决策账本真实读写 |
 | 新建、复制、永久删除 | 是 | 受影响 | `RecordRepository` | CRUD、回收站与一次明确确认 |
 | 编辑当前判断与完整记录 | 是 | 受影响 | 局部补丁命令 / `DetailPanel` / `EditRecordDialog` | 650/800 ms 自动保存、失败草稿、重启重读 |
 | ChatGPT ZIP/JSON/Markdown/TXT/HTML 文件批量拖拽与选择导入 | 是 | 受影响且原件保真 | `domain/importQueue.ts` → `RecordRepository` → `src-tauri/src/importer.rs`；ZIP 附件由 `chatgpt_export.rs` | 多路径接收、队列去重、顺序归档、ZIP 分片/附件映射、单项错误隔离、单独映射/自动批量确认 |
