@@ -4,7 +4,7 @@
 
 分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
 
-代码 checkpoint：`16c0db6`（`feat: center knowledge view on reasoning model`）
+代码 checkpoint：`b1d030a`（`feat: add five knowledge workspace skins`）
 
 ## 当前结论
 

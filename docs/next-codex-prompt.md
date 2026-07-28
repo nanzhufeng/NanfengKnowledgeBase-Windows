@@ -6,7 +6,7 @@
 
 分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
 
-代码 checkpoint：以 `git log -1 --oneline` 当前结果为准
+代码 checkpoint：`b1d030a`
 
 先完整读取：
 
