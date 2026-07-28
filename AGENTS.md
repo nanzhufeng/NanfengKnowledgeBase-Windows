@@ -5,6 +5,7 @@
 - 核心任务：把零散来源经过可解释、可确认、可撤销的分类，沉淀为有主题层级、关系、证据和判断时间线的长期知识结构。
 - 通用架构遵循 `C:\Users\Administrator\Documents\软件开发\docs\app-development\architecture-baseline.md`，项目只记录自身事实和明确例外。
 - 每轮开始先读 `docs/CURRENT_HANDOFF.md`；最高产品规格读 `docs/南枫知识库_产品定义与自动分类主规格.md`；产品边界读 `docs/product-brief.md`；概念所有权读 `docs/architecture-governance.md`。
+- 涉及三个核心入口、页面布局或皮肤时，必须读取 `docs/core-workspace-design-baseline.md` 与 `docs/core-workspace-acceptance-matrix.md`。四张最终页面图锁定产品组织、功能布局和交互状态，五套皮肤锁定视觉层；两类基准相互独立，除非南烛枫明确提出新方向，不得遗漏、互换或重新设计。
 
 ## 当前阶段边界
 
@@ -29,6 +30,7 @@
 - 中栏选中记录和详情仅用 1 px 细线与小锚点表达关联，不使用抢眼曲线。
 - 高频动效控制在 100–240 ms，并支持 `prefers-reduced-motion`。
 - 布局与组件参考：`docs/screenshots/reference-final-direction.png`；皮肤与磨砂效果以设置页的五套固定皮肤和 `src/theme/knowledgeSkins.ts` 为准。
+- 核心页面最终功能布局以 `docs/screenshots/final-core-workspace/` 四张图和 `docs/core-workspace-design-baseline.md` 为准；旧原型、旧实现截图和皮肤预览不得覆盖该功能布局。
 
 ## 常用验证
 
