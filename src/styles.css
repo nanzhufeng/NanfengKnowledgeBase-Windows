@@ -5654,3 +5654,377 @@ textarea:focus-visible,
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* 五套皮肤：背景只绘制在根层，模糊只发生在真实卡片覆盖区域。 */
+.app-shell:not([data-skin="classic"]) {
+  --glass-panel: rgba(248, 251, 255, 0.88);
+  --glass-card: rgba(250, 252, 255, 0.84);
+  --glass-card-strong: rgba(251, 253, 255, 0.91);
+  --glass-line: rgba(255, 255, 255, 0.9);
+  --glass-shadow:
+    0 22px 54px -30px rgba(13, 29, 52, 0.55),
+    0 8px 24px -18px rgba(13, 29, 52, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+  grid-template-columns: 214px minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+  background-color: #e8edf3;
+  background-image: var(--skin-background-image);
+  background-position: var(--skin-background-position, center);
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.app-shell:not([data-skin="classic"]) .main-region {
+  overflow: hidden;
+  border-radius: 20px;
+  background: transparent;
+}
+
+.app-shell:not([data-skin="classic"]) .sidebar {
+  padding: 20px 12px 18px;
+  color: #173153;
+  border: 1px solid var(--glass-line);
+  border-radius: 18px;
+  background: rgba(248, 251, 255, 0.87);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(32px) saturate(1.08);
+  -webkit-backdrop-filter: blur(32px) saturate(1.08);
+}
+
+.app-shell:not([data-skin="classic"]) .brand {
+  padding: 7px 8px 22px;
+}
+
+.app-shell:not([data-skin="classic"]) .brand strong {
+  color: #102b56;
+  font-size: 20px;
+}
+
+.app-shell:not([data-skin="classic"]) .brand span,
+.app-shell:not([data-skin="classic"]) .storage,
+.app-shell:not([data-skin="classic"]) .storage-copy,
+.app-shell:not([data-skin="classic"]) .storage-meta {
+  color: #627087;
+}
+
+.app-shell:not([data-skin="classic"]) .nav-item {
+  color: #334761;
+}
+
+.app-shell:not([data-skin="classic"]) .nav-item:hover {
+  color: #173153;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.app-shell:not([data-skin="classic"]) .nav-item.active {
+  color: #ef4f28;
+  background: rgba(255, 247, 241, 0.73);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.82),
+    0 8px 18px -14px rgba(160, 66, 20, 0.48);
+}
+
+.app-shell:not([data-skin="classic"]) .nav-item.active::before {
+  left: -7px;
+  background: #ff5f2d;
+  box-shadow: 0 0 12px rgba(255, 95, 45, 0.32);
+}
+
+.app-shell:not([data-skin="classic"]) .nav-count,
+.app-shell:not([data-skin="classic"]) .nav-item.danger .nav-count {
+  color: #5d6b81;
+  border-color: rgba(117, 134, 158, 0.28);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.app-shell:not([data-skin="classic"]) .nav-item.active .nav-count {
+  color: #e14d26;
+  border-color: rgba(244, 111, 69, 0.36);
+  background: rgba(255, 248, 243, 0.66);
+}
+
+.app-shell:not([data-skin="classic"]) .nav-separator {
+  background: rgba(78, 96, 121, 0.15);
+}
+
+.app-shell:not([data-skin="classic"]) .storage {
+  border-color: rgba(78, 96, 121, 0.15);
+}
+
+.app-shell:not([data-skin="classic"]) .sidebar-tag-menu {
+  border-color: var(--glass-line);
+  background: rgba(248, 251, 255, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(215, 224, 236, 0.32);
+  backdrop-filter: blur(20px) saturate(1.18);
+  -webkit-backdrop-filter: blur(20px) saturate(1.18);
+}
+
+.app-shell:not([data-skin="classic"]) .sidebar-tag-menu button {
+  color: #455a75;
+}
+
+.app-shell:not([data-skin="classic"]) .records-workspace {
+  padding: 24px 6px 8px 0;
+  background: transparent;
+}
+
+.app-shell:not([data-skin="classic"]) .knowledge-page {
+  padding: 24px 26px 30px;
+  border: 1px solid var(--glass-line);
+  border-radius: 20px;
+  background: var(--glass-panel);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(30px) saturate(1.08);
+  -webkit-backdrop-filter: blur(30px) saturate(1.08);
+}
+
+.app-shell:not([data-skin="classic"]) .page-shell {
+  background: transparent;
+}
+
+.app-shell:not([data-skin="classic"]) .elevated-card,
+.app-shell:not([data-skin="classic"]) .knowledge-card,
+.app-shell:not([data-skin="classic"]) .detail-panel,
+.app-shell:not([data-skin="classic"]) .search-field,
+.app-shell:not([data-skin="classic"]) .filter-popover,
+.app-shell:not([data-skin="classic"]) .action-menu {
+  border: 1px solid var(--glass-line);
+  background-color: var(--glass-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(28px) saturate(1.08);
+  -webkit-backdrop-filter: blur(28px) saturate(1.08);
+}
+
+.app-shell:not([data-skin="classic"]) .detail-panel {
+  background: var(--glass-panel);
+}
+
+.app-shell:not([data-skin="classic"]) .record-card,
+.app-shell:not([data-skin="classic"]) .trash-card,
+.app-shell:not([data-skin="classic"]) .settings-row {
+  background-color: var(--glass-card-strong);
+}
+
+.app-shell:not([data-skin="classic"]) .record-card.selected,
+.app-shell:not([data-skin="classic"]) .knowledge-inbox-list > button.active {
+  border-color: #ff6a2e;
+  background: rgba(255, 248, 242, 0.78);
+  box-shadow:
+    0 14px 26px -20px rgba(184, 73, 23, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.86);
+}
+
+.app-shell:not([data-skin="classic"]) .record-detail-connector {
+  background: linear-gradient(90deg, #ff672d, rgba(255, 103, 45, 0.72));
+}
+
+.app-shell:not([data-skin="classic"]) .connector-dot {
+  border-color: rgba(255, 255, 255, 0.92);
+  background: #ff672d;
+}
+
+.app-shell:not([data-skin="classic"]) .knowledge-source-filters {
+  background: rgba(249, 252, 255, 0.88);
+  backdrop-filter: blur(24px) saturate(1.18);
+  -webkit-backdrop-filter: blur(24px) saturate(1.18);
+}
+
+.app-shell:not([data-skin="classic"]) .knowledge-detail-columns > div,
+.app-shell:not([data-skin="classic"]) .knowledge-timeline-item,
+.app-shell:not([data-skin="classic"]) .knowledge-evidence-item,
+.app-shell:not([data-skin="classic"]) .knowledge-question-item,
+.app-shell:not([data-skin="classic"]) .knowledge-note-item,
+.app-shell:not([data-skin="classic"]) .knowledge-decision-list > article,
+.app-shell:not([data-skin="classic"]) .knowledge-decision-editor,
+.app-shell:not([data-skin="classic"]) .knowledge-note-editor,
+.app-shell:not([data-skin="classic"]) .knowledge-domain {
+  border-color: rgba(255, 255, 255, 0.78);
+  background-color: rgba(250, 252, 255, 0.63);
+  box-shadow:
+    inset 0 0 0 1px rgba(214, 224, 236, 0.36),
+    0 12px 22px -20px rgba(15, 34, 59, 0.45);
+  backdrop-filter: blur(20px) saturate(1.16);
+  -webkit-backdrop-filter: blur(20px) saturate(1.16);
+}
+
+.app-shell:not([data-skin="classic"]) .knowledge-domain > strong,
+.app-shell:not([data-skin="classic"]) .knowledge-topic-row,
+.app-shell:not([data-skin="classic"]) .knowledge-suggestion-empty {
+  background-color: rgba(249, 252, 255, 0.68);
+}
+
+.app-shell:not([data-skin="classic"]) .prototype-dialog {
+  border: 1px solid var(--glass-line);
+  background: rgba(249, 252, 255, 0.84);
+  box-shadow: 0 32px 72px -28px rgba(8, 23, 45, 0.65);
+  backdrop-filter: blur(30px) saturate(1.2);
+  -webkit-backdrop-filter: blur(30px) saturate(1.2);
+}
+
+/* 单个元素完整绘制闭合边缘，避免搜索框一类组件出现破边。 */
+.app-shell:not([data-skin="classic"]) :is(
+  .sidebar,
+  .knowledge-page,
+  .elevated-card,
+  .knowledge-card,
+  .detail-panel,
+  .search-field,
+  .filter-popover,
+  .action-menu,
+  .prototype-dialog
+) {
+  background-clip: padding-box;
+  outline: 1px solid rgba(255, 255, 255, 0.22);
+  outline-offset: -2px;
+}
+
+.skin-settings-panel {
+  max-width: 900px;
+  margin: 0 auto 18px;
+  padding: 18px;
+  border-radius: 14px;
+}
+
+.skin-settings-heading {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.skin-settings-heading h2,
+.skin-settings-heading p {
+  margin: 0;
+}
+
+.skin-settings-heading h2 {
+  color: #14345f;
+  font-size: 17px;
+}
+
+.skin-settings-heading p {
+  margin-top: 4px;
+  color: #6e7a8d;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.skin-option-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.skin-option {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  padding: 6px;
+  gap: 8px;
+  color: #213a5d;
+  border: 1px solid #d8e0ea;
+  border-radius: 11px;
+  background: rgba(250, 252, 255, 0.76);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 150ms var(--ease-out), border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.skin-option:hover {
+  transform: translateY(-2px);
+  border-color: #ff9a67;
+  box-shadow: 0 12px 22px -18px rgba(117, 59, 28, 0.5);
+}
+
+.skin-option.selected {
+  border-color: #ff6a2e;
+  box-shadow:
+    0 0 0 2px rgba(255, 106, 46, 0.12),
+    0 14px 24px -20px rgba(117, 59, 28, 0.55);
+}
+
+.skin-preview {
+  position: relative;
+  display: block;
+  height: 74px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  border-radius: 8px;
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px rgba(31, 47, 69, 0.08);
+}
+
+.skin-preview::after {
+  content: "";
+  position: absolute;
+  inset: 13px 9px 9px 30%;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 6px;
+  background: rgba(249, 252, 255, 0.72);
+  box-shadow: 0 8px 16px -12px rgba(14, 32, 55, 0.55);
+  backdrop-filter: blur(8px) saturate(1.15);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
+}
+
+.skin-preview.classic {
+  background: #eef1f5;
+}
+
+.skin-preview.classic i {
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto 0 0;
+  width: 28%;
+  background: #062b56;
+}
+
+.skin-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.skin-option-copy strong,
+.skin-option-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skin-option-copy strong {
+  font-size: 12px;
+}
+
+.skin-option-copy small {
+  color: #7a8799;
+  font-size: 9px;
+}
+
+.skin-choice-indicator {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.skin-option.selected .skin-choice-indicator {
+  color: #fff;
+  border-color: #ff6a2e;
+  background: #ff6a2e;
+}
+
+@media (max-width: 1260px) {
+  .skin-option-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

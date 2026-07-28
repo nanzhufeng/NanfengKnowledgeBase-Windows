@@ -51,7 +51,18 @@ import {
 import {
   sampleJson,
 } from "./mockData";
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -101,6 +112,13 @@ import {
   prepareImportQueue,
   type ImportQueueItem,
 } from "./domain/importQueue";
+import {
+  getKnowledgeSkin,
+  KNOWLEDGE_SKINS,
+  persistKnowledgeSkin,
+  readKnowledgeSkin,
+  type KnowledgeSkinId,
+} from "./theme/knowledgeSkins";
 
 const STORAGE_PREFIX = "nanfeng-knowledge-base";
 const LEGACY_STORAGE_PREFIX = "nanfeng-intelligence";
@@ -3247,18 +3265,22 @@ function TagManager({
 function SettingsPage({
   repository,
   tags,
+  skinId,
   onCreateTag,
   onRenameTag,
   onDeleteTag,
+  onSkinChange,
   onDataRestored,
   onNotify,
   onStorageChanged,
 }: {
   repository: RecordRepository;
   tags: TagItem[];
+  skinId: KnowledgeSkinId;
   onCreateTag: (name: string) => Promise<void>;
   onRenameTag: (id: number, name: string) => Promise<void>;
   onDeleteTag: (id: number) => Promise<void>;
+  onSkinChange: (skinId: KnowledgeSkinId) => void;
   onDataRestored: () => Promise<void>;
   onNotify: Notify;
   onStorageChanged: (stats: StorageStats) => void;
@@ -3295,6 +3317,45 @@ function SettingsPage({
   return (
     <main className="page-shell settings-page">
       <PageTitle eyebrow="本地优先" title="设置" description="查看真实数据位置，并执行可恢复的数据库维护操作。" />
+      <section className="skin-settings-panel elevated-card" aria-labelledby="skin-settings-title">
+        <div className="skin-settings-heading">
+          <div className="settings-icon"><Sparkles size={21} /></div>
+          <div>
+            <h2 id="skin-settings-title">外观与皮肤</h2>
+            <p>五套皮肤共用冷白半透明磨砂卡片；背景保持清晰，只在卡片覆盖区域产生模糊折射。</p>
+          </div>
+        </div>
+        <div className="skin-option-grid" role="radiogroup" aria-label="选择界面皮肤">
+          {KNOWLEDGE_SKINS.map((skin) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={skinId === skin.id}
+              className={`skin-option ${skinId === skin.id ? "selected" : ""}`}
+              key={skin.id}
+              onClick={() => {
+                onSkinChange(skin.id);
+                onNotify(`已切换为“${skin.name}”皮肤`);
+              }}
+            >
+              <span
+                className={`skin-preview ${skin.id === "classic" ? "classic" : ""}`}
+                style={skin.backgroundUrl
+                  ? { backgroundImage: `url("${skin.backgroundUrl}")` }
+                  : undefined}
+                aria-hidden="true"
+              >
+                {skin.id === "classic" ? <i /> : null}
+              </span>
+              <span className="skin-option-copy">
+                <strong>{skin.name}</strong>
+                <small>{skin.description}</small>
+              </span>
+              <span className="skin-choice-indicator"><Check size={13} /></span>
+            </button>
+          ))}
+        </div>
+      </section>
       <div className="settings-list">
         {groups.map((group) => {
           const Icon = group.icon;
@@ -3548,6 +3609,7 @@ function SettingsPage({
 
 export function App() {
   const repository = useMemo(() => getRecordRepository(), []);
+  const [skinId, setSkinId] = useState<KnowledgeSkinId>(() => readKnowledgeSkin());
   const [page, setPage] = useState<Page>("sources");
   const [allRecords, setAllRecords] = useState<RecordSummary[]>([]);
   const [visibleRecords, setVisibleRecords] = useState<RecordSummary[]>([]);
@@ -3574,6 +3636,13 @@ export function App() {
   const searchRequestSequence = useRef(0);
   const saveRequestSequence = useRef(0);
   const detailCache = useRef(new Map<number, IntelligenceRecord>());
+  const activeSkin = getKnowledgeSkin(skinId);
+  const skinStyle = activeSkin.backgroundUrl
+    ? {
+        "--skin-background-image": `url("${activeSkin.backgroundUrl}")`,
+        "--skin-background-position": activeSkin.backgroundPosition,
+      } as CSSProperties
+    : undefined;
 
   const notify: Notify = (message, options = {}) =>
     setNotice({ id: Date.now(), message, ...options });
@@ -3912,7 +3981,11 @@ export function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-skin={skinId}
+      style={skinStyle}
+    >
       <Sidebar
         page={page}
         recordCount={allRecords.length}
@@ -4054,6 +4127,7 @@ export function App() {
           <SettingsPage
             repository={repository}
             tags={tags}
+            skinId={skinId}
             onCreateTag={async (name) => {
               await repository.createTag(name);
               setTags(await repository.listTags());
@@ -4068,6 +4142,10 @@ export function App() {
               await repository.deleteTag(id);
               await reloadCollections(selectedId ?? undefined);
               notify("标签已删除，记录内容仍保留");
+            }}
+            onSkinChange={(nextSkinId) => {
+              persistKnowledgeSkin(nextSkinId);
+              setSkinId(nextSkinId);
             }}
             onDataRestored={async () => {
               setRecordSearch("");
