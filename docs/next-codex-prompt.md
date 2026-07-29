@@ -8,6 +8,8 @@
 
 当前交接描述的代码基线：`b6cf5a6`
 
+冷启动交接 checkpoint：`f8ff4ab`
+
 先完整读取：
 
 1. `AGENTS.md`

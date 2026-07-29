@@ -8,6 +8,8 @@
 
 本交接描述的代码基线：`b6cf5a6`
 
+冷启动交接 checkpoint：`f8ff4ab`
+
 设计治理 checkpoint：`c8161e9`
 
 最近功能 checkpoint：`b1d030a`
