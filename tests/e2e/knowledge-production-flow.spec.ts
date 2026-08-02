@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("知识生产界面把 Note、命题、转折和证据锚点交给 Tauri 命令", async ({ page }) => {
+test("知识视图通过 Tauri 读取知识对象且不恢复首屏 CRUD 表单", async ({ page }) => {
   await page.addInitScript(() => {
     const now = "2026-07-27T10:00:00+08:00";
     const topic = {
@@ -38,6 +38,7 @@ test("知识生产界面把 Note、命题、转折和证据锚点交给 Tauri �
         {
           id: 11,
           publicId: "judgment-11",
+          propositionId: null,
           statementMarkdown: "当前采用离线渲染",
           state: "current",
           confidence: 88,
@@ -48,6 +49,7 @@ test("知识生产界面把 Note、命题、转折和证据锚点交给 Tauri �
         {
           id: 10,
           publicId: "judgment-10",
+          propositionId: null,
           statementMarkdown: "此前采用实时渲染",
           state: "tentative",
           confidence: 62,
@@ -61,6 +63,8 @@ test("知识生产界面把 Note、命题、转折和证据锚点交给 Tauri �
       notes: [],
       propositions: [],
       turningPoints: [],
+      decisions: [],
+      relations: [],
     };
     const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
     let nextId = 100;
@@ -191,73 +195,23 @@ test("知识生产界面把 Note、命题、转折和证据锚点交给 Tauri �
   });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "收录箱" })).toBeVisible();
-  await page.getByRole("button", { name: /主题浏览器/ }).click();
+  await page.getByRole("button", { name: /知识视图/ }).click();
   await page.getByRole("button", { name: /VFX 交付/ }).click();
-  await expect(page.getByRole("heading", { name: "VFX 交付" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "VFX 交付", exact: true })).toBeVisible();
+  await expect(page.getByText("当前采用离线渲染", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("维护与录入", { exact: true })).toBeHidden();
+  await page.getByRole("tab", { name: /笔记与来源/ }).click();
+  await expect(page.getByText("交付复盘视频", { exact: true }).first()).toBeVisible();
 
-  await page.getByLabel("标题", { exact: true }).fill("镜头交付复盘");
-  await page.getByRole("textbox", { name: "摘要", exact: true }).fill("离线渲染更稳定");
-  await page.getByLabel("正文（Markdown）", { exact: true }).fill("## 结论\n\n保留独立 Note。");
-  await page.getByLabel("笔记类型").selectOption("review");
-  await page.getByLabel("笔记状态").selectOption("active");
-  await page.getByLabel("笔记相关主题").selectOption(["4"]);
-  await page.getByLabel("交付复盘视频", { exact: true }).check();
-  await page.getByRole("button", { name: "创建笔记" }).click();
-  await expect(page.getByText("镜头交付复盘", { exact: true })).toBeVisible();
-
-  await page.getByPlaceholder("写下一条可验证、可被证据支持或反驳的具体陈述")
-    .fill("离线渲染能降低最终交付波动");
-  await page.getByLabel("命题状态").selectOption("supported");
-  await page.getByRole("button", { name: "创建命题" }).click();
-  await expect(page.getByText("离线渲染能降低最终交付波动", { exact: true })).toBeVisible();
-
-  await page.getByPlaceholder("证据内容或原文摘录").fill("12 分 30 秒展示了失败率对比");
-  await page.getByLabel("证据立场").selectOption("support");
-  await page.getByLabel("证据验证状态").selectOption("verified");
-  await page.getByLabel("证据锚点类型").selectOption("timecode");
-  await page.getByLabel("证据锚点值").fill("00:12:30");
-  await page.getByLabel("证据短引用").fill("失败率明显下降");
-  await page.getByRole("button", { name: "添加证据" }).click();
-  await expect(page.getByText(/时间码：00:12:30/)).toBeVisible();
-
-  await page.getByPlaceholder("转折标题").fill("切换为离线渲染");
-  await page.getByPlaceholder("为什么这次变化足以构成关键转折？")
-    .fill("失败率证据改变了交付策略");
-  await page.getByRole("button", { name: "明确确认为关键转折" }).click();
-  await expect(page.getByText("切换为离线渲染", { exact: true })).toBeVisible();
-
-  const mutationCalls = await page.evaluate(() => {
+  const bridgeCalls = await page.evaluate(() => {
     const calls = (window as any).__knowledgeBridgeCalls as Array<{
       command: string;
       args: Record<string, any>;
     }>;
-    return calls.filter((call) => [
-      "create_knowledge_note",
-      "create_knowledge_proposition",
-      "add_knowledge_topic_evidence",
-      "create_knowledge_turning_point",
-    ].includes(call.command));
+    return calls.map((call) => call.command);
   });
 
-  expect(mutationCalls.map((call) => call.command)).toEqual([
-    "create_knowledge_note",
-    "create_knowledge_proposition",
-    "add_knowledge_topic_evidence",
-    "create_knowledge_turning_point",
-  ]);
-  expect(mutationCalls[0].args.input).toMatchObject({
-    primaryTopicId: 3,
-    relatedTopicIds: [4],
-    sourceItemIds: [12],
-  });
-  expect(JSON.parse(mutationCalls[2].args.input.locatorJson)).toEqual({
-    kind: "timecode",
-    value: "00:12:30",
-    quote: "失败率明显下降",
-  });
-  expect(mutationCalls[3].args.input).toMatchObject({
-    fromJudgmentId: 10,
-    toJudgmentId: 11,
-  });
+  expect(bridgeCalls).toContain("get_knowledge_topic_detail");
+  expect(bridgeCalls).not.toContain("create_knowledge_note");
+  expect(bridgeCalls).not.toContain("create_knowledge_proposition");
 });

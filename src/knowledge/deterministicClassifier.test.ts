@@ -15,10 +15,8 @@ import {
 describe("deterministicClassifier", () => {
   it("uses the product thresholds without gaps", () => {
     expect(decideClassificationAction(100)).toBe("auto_eligible");
-    expect(decideClassificationAction(90)).toBe("auto_eligible");
-    expect(decideClassificationAction(89.99)).toBe("confirm");
-    expect(decideClassificationAction(70)).toBe("confirm");
-    expect(decideClassificationAction(69.99)).toBe("candidates");
+    expect(decideClassificationAction(65.01)).toBe("auto_eligible");
+    expect(decideClassificationAction(65)).toBe("candidates");
     expect(decideClassificationAction(45)).toBe("candidates");
     expect(decideClassificationAction(44.99)).toBe("manual");
     expect(decideClassificationAction(0)).toBe("manual");

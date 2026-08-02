@@ -20,9 +20,19 @@
 ### Source Item
 
 - Source Item 表示不可替代的原始资料。
+- 来源条目的删除状态必须由持久化层保持：移入回收站时通过关联 Record 隐藏并允许恢复；永久删除关联 Record 前必须把 Source Item 归档，禁止因外键清空而重新出现在来源档案。
 - 原始文件、原始文本、原始 JSON、哈希、来源日期和来源平台属于保真字段。
 - 提取、分类、合并、拆分和模型辅助不得覆盖原始资料。
-- 新来源在完成提取和标准化后进入收录箱，再生成分类建议。
+- 新来源在完成提取和标准化后进入来源档案，再生成分类建议；低置信或冲突项保留为待确认例外，不恢复独立收录箱入口。
+- 单篇文件标题的优先级固定为：显式 frontmatter 标题、非日期一级/显著标题、有意义的原文件名、正文首个可读行。日期只能进入`original_at`或在没有其他标题证据时兜底，不能覆盖有效文件标题。
+- 历史 Source Item 若仍是`--- / 未命名`等通用占位标题，统一读取/回填规则必须从保真的原文件名与正文恢复标题；用户明确修改过的非通用标题永不被自动推导覆盖。
+
+### Source Collection
+
+- Source Collection 是四个单篇列表共同读取的来源目录，不等于导入文件名；同一平台的 ZIP/JSON 分片只显示一个目录名称。
+- 默认目录为`ChatGPT 导入 / Claude 导入 / 零散文件导入 / JSON 导入 / 手动记录 / 其他导入`；MD、TXT、HTML 及未来 DOC/DOCX/PDF 等单篇文件统一进入`零散文件导入`。
+- 用户可以重命名目录；重命名只改变统一显示名称，原文件名、路径、文件哈希、导入任务和条目外部 ID 必须继续保真。
+- 来源筛选、来源档案卡片以及收藏/跟踪/判断更新卡片只能消费同一 Source Collection 名称，不得各自从文件名、类型或旧平台字段生成第二套来源。
 
 ### Note
 
@@ -85,9 +95,8 @@ classifySource(context: ClassificationContext): ClassificationResult
 
 | 置信度 | 结果 |
 |---|---|
-| `≥90` | `auto_eligible`：具备自动接受资格，但实际写入必须经统一用例并记录可撤销操作 |
-| `70–89.99` | `confirm`：默认选中推荐主题，等待确认 |
-| `45–69.99` | `candidates`：展示多个候选，不自动选择 |
+| `>65` | `auto_eligible`：默认采用稳定排序后的最高候选；实际写入必须经统一用例并记录可撤销操作 |
+| `45–65` | `candidates`：展示多个候选并突出最高分，不自动归类 |
 | `<45` | `manual`：建议新建主题或人工分类 |
 
 `auto_eligible` 不等于分类器直接写库。分类器始终只返回建议；接受和撤销由 `KnowledgeRepository` 对应的 Rust 持久化用例统一执行并记录操作日志。
@@ -96,16 +105,19 @@ classifySource(context: ClassificationContext): ClassificationResult
 
 ### 导入后的自动整理
 
+- 精确去重优先使用同一提供方的稳定外部条目 ID，其次使用标准化用户可见正文哈希；文件名、标题相似或导入包哈希均不能单独决定两篇笔记相同。
+- 精确重复不得新增第二篇 Source Item；必须复用既有笔记，并把本次文件名、路径、哈希和导入任务追加为另一条来源原件证据。
+- 仅标题相似的候选可以提示用户，但不得自动删除或合并。相同正文来自多个导入包时保留一篇笔记和多条来源原件关系。
 - 导入器返回本次实际新增的 Source Item ID；自动整理只处理这些 ID，并先去重。
 - 当库中已有来源但没有 Topic 时，使用既有个人目录提案增量建立可编辑的 Domain/Topic；不得覆盖原文或已有目录。
 - 个人目录 v5 以 10 个领域、68 个可编辑主题覆盖投资、AI/软件、影视/VFX、设计、海外账号、汽车、医疗与认知、教育、长期事务和社会文化等资料簇；目录规则只使用能独立说明主题的短语。
 - 知识工作区首次加载当前目录版本时，通过同一仓库入口幂等补齐目录；应用 v5 只停用旧版 `catalog-rule-*` 宽泛托管规则，不覆盖用户自建规则、已有确认归类和原始正文。
 - 每条新来源仍统一调用 `classifySource`，并保存候选、分数、理由、信号贡献和算法版本。
-- 只有 `auto_eligible`（`≥90`）可以由自动整理用例确认；确认必须写操作日志，并允许按批次撤销。
-- `confirm`、`candidates` 和 `manual` 只保存为待确认建议，不得为了提高自动归类率降低阈值。
-- 收录箱首次加载当前版本后自动处理全部待升级来源，不限于首屏 120 条；按当前算法版本读取持久化完成标记并断点续算，不得复制分类权重或产生第二套页面规则。
+- 只有 `auto_eligible`（严格 `>65`）可以由自动整理用例确认；确认必须写操作日志，并允许按批次撤销。
+- `candidates` 和 `manual` 只保存为待确认建议；65 分本身不得自动确认。
+- 来源档案首次加载当前版本后自动处理全部待升级来源，不限于首屏 120 条；按当前算法版本读取持久化完成标记并断点续算，不得复制分类权重或产生第二套页面规则。
 - 有候选时保存最多 5 条；无候选时也保存 `topic_id = NULL` 的当前版本完成标记，使“已计算但证据不足”可恢复、可统计且不会无限重试。
-- 全量升级不自动确认候选；只有新导入用例中的 `auto_eligible` 才可按既有可撤销合同确认。
+- 全量升级与新导入使用同一裁决：`auto_eligible` 自动确认，`candidates` 与 `manual` 只保存建议；不得维护两套阈值。
 - Domain/Topic 的名称和描述允许用户编辑；编辑保留 ID、来源归属、判断、证据和关系。
 
 ### 确定性
@@ -127,6 +139,8 @@ classifySource(context: ClassificationContext): ClassificationResult
 
 ## 结构操作
 
+- 主题暂时没有正式来源只是资料覆盖状态，不等于空壳；名称、边界、别名或规则已经明确时，默认保留为空并继续展示，不要求用户逐个复核。
+- 合并或清理必须有独立的重复身份、结构归属和内容关联证据，不能仅凭`sourceCount = 0`推断。
 - Topic 合并必须先生成影响预览。
 - 合并提交前保存参与主题的完整快照。
 - 被合并主题保留为别名并建立旧路径重定向。
@@ -139,9 +153,9 @@ classifySource(context: ClassificationContext): ClassificationResult
 - `src/knowledge/domain.ts`：前端领域数据合同和运行时校验。
 - `src/knowledge/deterministicClassifier.ts`：纯本地、无副作用的分类建议内核。
 - `src/knowledge/classificationFixtures.ts`：固定验收数据，不是生产词典。
-- `src/services/knowledgeAutoOrganizer.ts`：导入后和收录箱批量整理的唯一前端编排；只调用分类器和仓库公开用例。
+- `src/services/knowledgeAutoOrganizer.ts`：导入后和来源档案批量整理的唯一前端编排；只调用分类器和仓库公开用例。
 - `src/services/knowledgeRepository.ts`：正式 WebView 到 Tauri 知识命令的唯一前端适配器。
-- `src/components/KnowledgeWorkspace.tsx`：正式收录箱、主题浏览器和整理工作台入口。
+- `src/components/KnowledgeWorkspace.tsx`：正式`知识视图 / 来源档案 / 主题管理`三入口；旧收录箱、主题浏览器和整理工作台仅保留为历史概念，不再是导航入口。
 - `src-tauri/src/knowledge/schema.rs`：正式知识表、约束和 FTS5 合同，已由 migration v3 接入。
 - `src-tauri/src/knowledge/repository.rs`：正式知识仓库，负责 Source Item 回填、分类确认/撤销、主题详情、判断、证据、问题、上下文、合并和关系。
 - `src-tauri/src/knowledge/legacy_preview.rs`：旧 `Record` 的只读映射预演；标签仅作候选，标题不自动升格为主题。

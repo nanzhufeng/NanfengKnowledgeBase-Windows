@@ -70,6 +70,7 @@ export const recordSummarySchema = z.object({
   status: recordStatusSchema,
   tags: z.array(z.string()),
   sourceTitle: z.string(),
+  primaryTopicName: z.string().nullable().optional(),
   searchSnippet: z.string(),
   isFavorite: z.boolean(),
   isDeleted: z.boolean(),
@@ -132,6 +133,8 @@ export const storageStatsSchema = z.object({
   attachmentsBytes: z.number(),
   backupsBytes: z.number(),
   totalBytes: z.number(),
+  diskAvailableBytes: z.number(),
+  diskTotalBytes: z.number(),
   lastBackupAt: z.string().nullable(),
 });
 export type StorageStats = z.infer<typeof storageStatsSchema>;
@@ -265,10 +268,12 @@ export const importPreviewSchema = z.object({
   })),
   duplicateCandidates: z.array(z.object({
     itemIndex: z.number().int(),
-    recordId: z.number().int(),
+    recordId: z.number().int().nullable(),
+    duplicateOfItemIndex: z.number().int().nullable(),
     title: z.string(),
     reason: z.string(),
     score: z.number(),
+    exact: z.boolean(),
   })),
   warnings: z.array(z.string()),
 });

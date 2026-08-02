@@ -123,6 +123,7 @@ pub struct RecordSummary {
     pub status: RecordStatus,
     pub tags: Vec<String>,
     pub source_title: String,
+    pub primary_topic_name: Option<String>,
     pub search_snippet: String,
     pub is_favorite: bool,
     pub is_deleted: bool,
@@ -338,5 +339,7 @@ pub struct StorageStats {
     pub attachments_bytes: u64,
     pub backups_bytes: u64,
     pub total_bytes: u64,
+    pub disk_available_bytes: u64,
+    pub disk_total_bytes: u64,
     pub last_backup_at: Option<String>,
 }

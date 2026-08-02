@@ -12,7 +12,7 @@ import {
   type KnowledgeTopicCandidate,
 } from "./domain";
 
-export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v6";
+export const CLASSIFIER_ALGORITHM_VERSION = "local-rules-v7";
 
 type SignalEvaluation = {
   normalizedScore: number;

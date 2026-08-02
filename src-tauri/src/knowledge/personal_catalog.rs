@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-pub const PERSONAL_CATALOG_VERSION: &str = "nanzhufeng-personal-catalog-v6";
+pub const PERSONAL_CATALOG_VERSION: &str = "nanzhufeng-personal-catalog-v7";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +22,7 @@ pub struct PersonalCatalogTopic {
     pub aliases: Vec<String>,
     pub entities: Vec<String>,
     pub keywords: Vec<String>,
+    pub exclusions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -39,8 +40,8 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
     PersonalCatalogProposal {
         version: PERSONAL_CATALOG_VERSION.to_string(),
         status: "proposal".to_string(),
-        title: "南烛枫个人主题目录 v6".to_string(),
-        note: "按正式库 901 条来源逐条生成准确性矩阵：分类改为标题主体优先，正文实体只作组合佐证；补齐证券账户、支付通信、模型额度、影视 AI、设备订阅、职业教育等可复用概念边界。升级只补充目录并停用旧版宽泛规则，不覆盖原文、已有归类或用户自建规则。".to_string(),
+        title: "南烛枫个人主题目录 v7".to_string(),
+        note: "沿用正式库 901 条来源的准确性矩阵，并由软件托管保守的岗位广告排除信号：非职业主题遇到招聘启事、岗位职责或简历投递时降低误归类分数。升级只补充目录规则，不删除来源、不覆盖原文、已有归类或用户自建规则。".to_string(),
         domains: vec![
             domain("investment", "投资研究", "公司、行业、资产与投资判断"),
             domain("ai-software", "AI 与软件", "模型、Agent、软件开发与知识工作流"),
@@ -398,7 +399,7 @@ pub fn personal_catalog_proposal() -> PersonalCatalogProposal {
                 &[
                     "软件开发", "代码调试", "自动化测试", "生产构建", "桌面软件",
                     "自动消费记账系统", "系统架构调整", "开发经验总结", "项目审计",
-                    "开发", "代码", "南枫情报台项目规则",
+                    "开发", "代码", "南枫知识库项目规则",
                     "Vibe coding", "自然语言生成代码", "开发流程优先级",
                     "项目反馈", "开发原则", "项目文档", "开发经验整理",
                     "监控漏报", "软件卡顿", "iOS 开发插件",
@@ -1499,5 +1500,40 @@ fn topic(
         aliases: aliases.iter().map(|value| (*value).to_string()).collect(),
         entities: entities.iter().map(|value| (*value).to_string()).collect(),
         keywords: keywords.iter().map(|value| (*value).to_string()).collect(),
+        exclusions: default_exclusions(key),
+    }
+}
+
+fn default_exclusions(topic_key: &str) -> Vec<String> {
+    if topic_key == "education-career" {
+        return Vec::new();
+    }
+    ["招聘启事", "岗位职责", "简历投递"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_v7_owns_conservative_job_ad_exclusions() {
+        let proposal = personal_catalog_proposal();
+        let career = proposal
+            .topics
+            .iter()
+            .find(|topic| topic.key == "education-career")
+            .expect("career topic");
+        assert!(career.exclusions.is_empty());
+
+        for topic in proposal
+            .topics
+            .iter()
+            .filter(|topic| topic.key != "education-career")
+        {
+            assert_eq!(topic.exclusions, ["招聘启事", "岗位职责", "简历投递"]);
+        }
     }
 }

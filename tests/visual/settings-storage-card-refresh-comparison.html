@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>数据与存储卡片收口对比</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; color: #173e6c; background: #edf1f6; font-family: "Microsoft YaHei", sans-serif; }
+    main { display: grid; max-width: 1080px; margin: 0 auto; gap: 18px; }
+    section { padding: 16px; border: 1px solid #d5dde8; border-radius: 14px; background: white; box-shadow: 0 12px 30px -24px #173e6c; }
+    h2 { margin: 0 0 12px; font-size: 15px; }
+    p { margin: -5px 0 12px; color: #708096; font-size: 12px; }
+    .reference { display: block; width: 999px; max-width: 100%; height: auto; border-radius: 10px; }
+    .implementation-crop { position: relative; width: 933px; max-width: 100%; height: 124px; overflow: hidden; border-radius: 10px; }
+    .implementation-crop img { position: absolute; left: 0; top: 0; width: 1702px; max-width: none; transform: translate(-376.5px, -546px); }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h2>修改前：重复信息与不等比例</h2>
+      <p>用户反馈基准：双重标题、额外备份范围说明、两卡尺寸不一致。</p>
+      <img class="reference" src="../../docs/screenshots/final-core-workspace/settings-storage-card-duplication-reference.png" alt="修改前参考图" />
+    </section>
+    <section>
+      <h2>修改后：统一层级、等宽等高、操作贴底</h2>
+      <p>1702×1066、100%、device scale factor 1 的同状态聚焦裁切。</p>
+      <div class="implementation-crop">
+        <img src="../../docs/screenshots/qa/settings-storage-cards-refresh-v39-1702x1066.png" alt="修改后实现图" />
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -128,6 +128,8 @@ impl AppPaths {
             |row| row.get(0),
         )?;
         let last_backup_at = newest_file_modified_at(&self.backups)?;
+        let disk_available_bytes = fs2::available_space(&self.root)?;
+        let disk_total_bytes = fs2::total_space(&self.root)?;
         Ok(StorageStats {
             record_count,
             database_bytes,
@@ -135,6 +137,8 @@ impl AppPaths {
             attachments_bytes,
             backups_bytes,
             total_bytes: database_bytes + imports_bytes + attachments_bytes + backups_bytes,
+            disk_available_bytes,
+            disk_total_bytes,
             last_backup_at,
         })
     }

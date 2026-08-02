@@ -1,4 +1,4 @@
-import { isValidElement, type ReactNode } from "react";
+import { isValidElement, memo, useMemo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -94,14 +94,16 @@ function formatReadableDateTime(value: string): string {
 export function ReadableMessageContent({
   message,
   compact = false,
+  className = "",
   children,
 }: {
   message: ReadableSourceMessage;
   compact?: boolean;
+  className?: string;
   children?: ReactNode;
 }) {
   return (
-    <section className={`source-message ${message.role === "用户" ? "human" : "assistant"} ${compact ? "compact" : ""}`}>
+    <section className={`source-message ${message.role === "用户" ? "human" : "assistant"} ${compact ? "compact" : ""} ${className}`.trim()}>
       <div className="source-message-header">
         <strong>{message.role}</strong>
         {message.createdAt ? <span>{formatReadableDateTime(message.createdAt)}</span> : null}
@@ -124,13 +126,14 @@ export function isSafeEmbeddedImageSource(src: string | undefined): boolean {
   return /^(?:data:image\/|blob:|asset:|https?:\/\/asset\.localhost\/|\/|\.{0,2}\/|[^:]+$)/i.test(normalized);
 }
 
-export default function MarkdownContent({
+function MarkdownContentView({
   value,
   className = "",
 }: {
   value: string;
   className?: string;
 }) {
+  const preparedValue = useMemo(() => prepareObsidianMarkdown(value), [value]);
   return (
     <div className={`markdown-content ${className}`}>
       <ReactMarkdown
@@ -189,11 +192,15 @@ export default function MarkdownContent({
           },
         }}
       >
-        {prepareObsidianMarkdown(value)}
+        {preparedValue}
       </ReactMarkdown>
     </div>
   );
 }
+
+const MarkdownContent = memo(MarkdownContentView);
+MarkdownContent.displayName = "MarkdownContent";
+export default MarkdownContent;
 
 export function AssistantMessageContent({ value }: { value: string }) {
   const paragraphs = value.split(/\n{2,}/);

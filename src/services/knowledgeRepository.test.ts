@@ -36,6 +36,7 @@ describe("KnowledgeRepository inbox performance contract", () => {
           assignedTopicCount: 0,
           primaryTopicId: null,
           primaryTopicName: null,
+          linkedNoteCount: 0,
         }]);
       }
       if (command === "get_knowledge_source_original_text") {
@@ -75,6 +76,7 @@ describe("KnowledgeRepository inbox performance contract", () => {
       assignedTopicCount: 1,
       primaryTopicId: 7,
       primaryTopicName: "知识系统设计",
+      linkedNoteCount: 2,
     }]);
 
     const archive = await new KnowledgeRepository().listSourceArchive();
@@ -82,6 +84,114 @@ describe("KnowledgeRepository inbox performance contract", () => {
     expect(invoke).toHaveBeenCalledWith("list_knowledge_source_archive", { limit: 120 });
     expect(archive[0].primaryTopicName).toBe("知识系统设计");
     expect(archive[0].organizationState).toBe("organized");
+  });
+
+  it("searches the full archive and updates the shared source/record title", async () => {
+    const row = {
+      id: 43,
+      publicId: "source-43",
+      legacyRecordId: 10,
+      sourceCollectionId: null,
+      sourceType: "markdown",
+      title: "数据中心利润分散",
+      platform: "",
+      originalAt: "2026-07-20",
+      importedAt: "2026-07-27T10:00:00+08:00",
+      readState: "read",
+      organizationState: "organized",
+      duplicateState: "unique",
+      freshnessState: "current",
+      pendingSuggestionCount: 0,
+      assignedTopicCount: 1,
+      primaryTopicId: 7,
+      primaryTopicName: "AI 基础设施",
+      linkedNoteCount: 0,
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "count_knowledge_source_archive") return Promise.resolve(892);
+      if (command === "search_knowledge_source_archive") return Promise.resolve([row]);
+      if (command === "update_knowledge_source_title") return Promise.resolve({
+        sourceItemId: 43,
+        legacyRecordId: 10,
+        title: "数据中心产业利润重分配",
+        updatedAt: "2026-07-31T10:00:00+08:00",
+      });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const repository = new KnowledgeRepository();
+
+    await expect(repository.countSourceArchive()).resolves.toBe(892);
+    await expect(repository.searchSourceArchive("利润分散", 892)).resolves.toEqual([row]);
+    await expect(repository.updateSourceTitle(43, "数据中心产业利润重分配"))
+      .resolves.toMatchObject({ legacyRecordId: 10, title: "数据中心产业利润重分配" });
+
+    expect(invoke).toHaveBeenCalledWith("search_knowledge_source_archive", {
+      query: "利润分散",
+      limit: 892,
+    });
+    expect(invoke).toHaveBeenCalledWith("update_knowledge_source_title", {
+      input: { sourceItemId: 43, title: "数据中心产业利润重分配" },
+    });
+  });
+
+  it("lists and renames the shared source catalog", async () => {
+    const original = {
+      id: 5,
+      canonicalKey: "standalone_files",
+      displayName: "零散文件导入",
+      collectionKind: "standalone_files",
+      userRenamed: false,
+      sourceItemCount: 12,
+      originalFileCount: 12,
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_knowledge_source_collections") return Promise.resolve([original]);
+      if (command === "rename_knowledge_source_collection") return Promise.resolve({
+        ...original,
+        displayName: "个人文档导入",
+        userRenamed: true,
+      });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const repository = new KnowledgeRepository();
+
+    await expect(repository.listSourceCollections()).resolves.toEqual([original]);
+    await expect(repository.renameSourceCollection(5, "个人文档导入")).resolves.toMatchObject({
+      id: 5,
+      displayName: "个人文档导入",
+      userRenamed: true,
+    });
+
+    expect(invoke).toHaveBeenCalledWith("list_knowledge_source_collections");
+    expect(invoke).toHaveBeenCalledWith("rename_knowledge_source_collection", {
+      input: { sourceCollectionId: 5, displayName: "个人文档导入" },
+    });
+  });
+
+  it("coalesces duplicate reads and keeps only a small selected-body cache", async () => {
+    let resolveDomains: ((value: unknown[]) => void) | undefined;
+    invoke.mockImplementation((command: string, args?: { sourceItemId?: number }) => {
+      if (command === "list_knowledge_domains") {
+        return new Promise((resolve) => {
+          resolveDomains = resolve;
+        });
+      }
+      if (command === "get_knowledge_source_original_text") {
+        return Promise.resolve(`正文-${args?.sourceItemId}`);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const repository = new KnowledgeRepository();
+
+    const firstDomains = repository.listDomains();
+    const secondDomains = repository.listDomains();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    resolveDomains?.([]);
+    await expect(Promise.all([firstDomains, secondDomains])).resolves.toEqual([[], []]);
+
+    await repository.getSourceOriginalText(42);
+    await repository.getSourceOriginalText(42);
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -30,7 +30,7 @@ if /I "%~1"=="--rebuild" (
   if not errorlevel 1 set "RUNNING_APP=1"
   if defined RUNNING_APP (
     >> "%LAUNCH_LOG%" echo 重新生成前检测到程序已在运行
-    echo [请先关闭] 南枫知识库或旧版南枫情报台仍在运行，无法覆盖测试程序。
+    echo [请先关闭] 南枫知识库或旧版程序仍在运行，无法覆盖测试程序。
     echo 关闭现有窗口后，再运行本文件并带上 --rebuild。
     pause
     popd
@@ -82,7 +82,7 @@ tasklist /FI "IMAGENAME eq nanfeng-intelligence.exe" 2>nul | find /I "nanfeng-in
 if not errorlevel 1 set "RUNNING_APP=1"
 if defined RUNNING_APP (
   >> "%LAUNCH_LOG%" echo 检测到程序已在运行
-  echo [请先关闭] 检测到南枫知识库或旧版南枫情报台仍在运行。
+  echo [请先关闭] 检测到南枫知识库或旧版程序仍在运行。
   echo 为避免旧版和测试版同时读写数据，请关闭现有窗口后再双击本文件。
   pause
   popd

@@ -221,7 +221,7 @@ export const classificationSourceFixtures: Array<{
       },
     ],
     expectedTopicId: "open-file-workflow",
-    expectedAction: "confirm",
+    expectedAction: "auto_eligible",
   },
   {
     source: {
@@ -248,7 +248,7 @@ export const classificationSourceFixtures: Array<{
       },
     ],
     expectedTopicId: "fusion-review",
-    expectedAction: "confirm",
+    expectedAction: "auto_eligible",
   },
   {
     source: {

@@ -47,8 +47,8 @@ export const classificationSignalWeights = {
 } as const satisfies Record<ClassificationSignalKey, number>;
 
 export const classificationThresholds = {
-  autoEligible: 90,
-  confirm: 70,
+  // 南烛枫于 2026-07-29 确认：最高候选严格超过 65 分即可自动归类。
+  autoEligibleExclusive: 65,
   candidates: 45,
 } as const;
 
@@ -369,8 +369,7 @@ export const operationLogSchema = z.object({
 export type OperationLog = z.infer<typeof operationLogSchema>;
 
 export function decideClassificationAction(confidence: number): ClassificationAction {
-  if (confidence >= classificationThresholds.autoEligible) return "auto_eligible";
-  if (confidence >= classificationThresholds.confirm) return "confirm";
+  if (confidence > classificationThresholds.autoEligibleExclusive) return "auto_eligible";
   if (confidence >= classificationThresholds.candidates) return "candidates";
   return "manual";
 }

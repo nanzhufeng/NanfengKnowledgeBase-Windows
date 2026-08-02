@@ -36,6 +36,30 @@ pub fn list_attachments(connection: &Connection, record_id: i64) -> AppResult<Ve
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+pub fn list_source_attachments(
+    connection: &Connection,
+    source_item_id: i64,
+) -> AppResult<Vec<AttachmentItem>> {
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT attachment.id, attachment.record_id, attachment.file_name,
+                attachment.stored_path, attachment.original_path, attachment.mime_type,
+                attachment.size_bytes, attachment.sha256, attachment.created_at
+         FROM source_items source
+         JOIN attachments attachment
+           ON attachment.record_id = source.legacy_record_id
+           OR EXISTS (
+             SELECT 1
+             FROM attachment_links link
+             WHERE link.attachment_id = attachment.id
+               AND link.source_item_id = source.id
+           )
+         WHERE source.id = ?1
+         ORDER BY attachment.created_at DESC, attachment.id DESC",
+    )?;
+    let rows = statement.query_map([source_item_id], row_to_attachment)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub fn prepare_attachment(
     paths: &AppPaths,
     record_id: i64,
@@ -329,6 +353,48 @@ mod tests {
         );
         remove_attachment(&mut connection, &paths, attachment.id).expect("remove attachment");
         assert!(!Path::new(&attachment.stored_path).exists());
+    }
+
+    #[test]
+    fn source_attachments_follow_the_source_item_instead_of_ui_legacy_lookup() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let record = database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "来源附件测试".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: "包含截图".to_string(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("record");
+        let source_item_id = connection
+            .query_row(
+                "SELECT id FROM source_items WHERE legacy_record_id = ?1",
+                [record.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("source item");
+        let image = directory.path().join("截图.jpg");
+        fs::write(&image, b"jpeg bytes").expect("source image");
+        let attachment =
+            add_attachment(&connection, &paths, record.id, &image).expect("attachment");
+
+        let source_attachments =
+            list_source_attachments(&connection, source_item_id).expect("source attachments");
+        assert_eq!(source_attachments, vec![attachment]);
     }
 
     #[test]

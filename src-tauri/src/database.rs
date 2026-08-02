@@ -21,6 +21,7 @@ const ORIGINAL_AT_MIGRATION: &str = include_str!("../migrations/0002_original_at
 const ORIGINAL_AT_MIGRATION_VERSION: i64 = 2;
 const KNOWLEDGE_MIGRATION_VERSION: i64 = 3;
 const KNOWLEDGE_REASONING_MIGRATION_VERSION: i64 = 4;
+const SOURCE_IDENTITY_MIGRATION_VERSION: i64 = 5;
 const BACKUP_PAGES_PER_STEP: i32 = 512;
 const BACKUP_PAUSE: Duration = Duration::from_millis(1);
 
@@ -115,7 +116,13 @@ pub(crate) fn apply_migrations(connection: &mut Connection) -> AppResult<()> {
         KNOWLEDGE_REASONING_MIGRATION_VERSION,
         knowledge::schema::KNOWLEDGE_REASONING_SCHEMA_SQL,
     )?;
+    apply_migration(
+        connection,
+        SOURCE_IDENTITY_MIGRATION_VERSION,
+        knowledge::schema::SOURCE_IDENTITY_SCHEMA_SQL,
+    )?;
     knowledge::repository::backfill_legacy_records(connection)?;
+    knowledge::repository::backfill_source_identity_and_collections(connection)?;
     Ok(())
 }
 
@@ -134,7 +141,7 @@ fn create_pre_knowledge_migration_backup(connection: &Connection, path: &Path) -
     let already_applied = connection
         .query_row(
             "SELECT 1 FROM schema_migrations WHERE version = ?1",
-            [KNOWLEDGE_REASONING_MIGRATION_VERSION],
+            [SOURCE_IDENTITY_MIGRATION_VERSION],
             |_| Ok(()),
         )
         .optional()?
@@ -339,6 +346,16 @@ pub fn list_record_summaries(
             ORDER BY s.id
             LIMIT 1
           ), '') AS source_title,
+          (
+            SELECT topic.name
+            FROM source_items source_item
+            JOIN source_topics source_topic ON source_topic.source_item_id = source_item.id
+            JOIN topics topic ON topic.id = source_topic.topic_id
+            WHERE source_item.legacy_record_id = r.id
+              AND source_topic.role = 'primary'
+            ORDER BY source_topic.confidence DESC, source_topic.topic_id
+            LIMIT 1
+          ) AS primary_topic_name,
           (SELECT COUNT(*) FROM record_versions rv WHERE rv.record_id = r.id) AS version_count,
           CASE
             WHEN lower(trim(r.title)) IN (
@@ -387,8 +404,9 @@ pub fn list_record_summaries(
             row.get::<_, Option<String>>(9)?,
             row.get::<_, String>(10)?,
             row.get::<_, String>(11)?,
-            row.get::<_, i64>(12)?,
-            row.get::<_, String>(13)?,
+            row.get::<_, Option<String>>(12)?,
+            row.get::<_, i64>(13)?,
+            row.get::<_, String>(14)?,
         ))
     })?;
 
@@ -406,6 +424,7 @@ pub fn list_record_summaries(
             deleted_at,
             tags_json,
             source_title,
+            primary_topic_name,
             version_count,
             title_source_text,
         ) = row?;
@@ -424,6 +443,7 @@ pub fn list_record_summaries(
             status,
             tags: serde_json::from_str(&tags_json)?,
             source_title,
+            primary_topic_name,
             search_snippet,
             is_favorite,
             is_deleted,
@@ -484,6 +504,125 @@ pub fn create_record(
     insert_version(&transaction, &record, "初始版本", "创建记录", Some(1))?;
     transaction.commit()?;
     knowledge::repository::sync_legacy_record(connection, record_id)?;
+    load_record(connection, record_id)
+}
+
+/// 为没有旧 Record 投影的正式来源按需建立操作侧车。
+///
+/// 收藏、导出、持续跟踪和回收站仍复用成熟的 Record 能力；知识对象和来源正文
+/// 继续以 migration v4 的 source_items / topics 等表为准，不在读取列表时批量造记录。
+pub fn ensure_source_action_record(
+    connection: &mut Connection,
+    source_item_id: i64,
+) -> AppResult<IntelligenceRecord> {
+    if let Some(record_id) = connection
+        .query_row(
+            "SELECT legacy_record_id
+             FROM source_items
+             WHERE id = ?1 AND status = 'active'",
+            [source_item_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten()
+    {
+        return load_record(connection, record_id);
+    }
+
+    let (
+        stored_title,
+        original_text,
+        source_type,
+        platform,
+        source_uri,
+        local_path,
+        public_id,
+        original_at,
+    ) = connection
+        .query_row(
+            "SELECT title, original_text, source_type, platform, source_uri,
+                    local_path, public_id, original_at
+             FROM source_items
+             WHERE id = ?1 AND status = 'active'",
+            [source_item_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("来源不存在或已停用".to_string()))?;
+
+    let title_source_name = local_path.as_deref().unwrap_or(platform.as_str());
+    let derived_title = knowledge::readable_text::display_title(
+        &stored_title,
+        &original_text,
+        Some(title_source_name),
+    );
+    let title = if derived_title.trim().is_empty() {
+        "未命名来源".to_string()
+    } else {
+        derived_title.chars().take(200).collect::<String>()
+    };
+    validate_title(&title)?;
+    let summary = original_text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(160)
+        .collect::<String>();
+    let timestamp = now();
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "INSERT INTO records(
+           title, summary, status, current_judgment, confirmed_facts_json,
+           key_evidence_json, open_questions_json, next_actions_json, notes,
+           source_text, is_favorite, is_deleted, original_at, created_at, updated_at
+         ) VALUES (?1, ?2, 'normal', '', '[]', '[]', '[]', '[]', '', ?3, 0, 0, ?4, ?5, ?5)",
+        params![title, summary, original_text, original_at, timestamp],
+    )?;
+    let record_id = transaction.last_insert_rowid();
+    let source_label = if platform.trim().is_empty() {
+        title.clone()
+    } else {
+        platform
+    };
+    replace_sources(
+        &transaction,
+        record_id,
+        &[RecordSourceInput {
+            source_type,
+            title: source_label,
+            url: source_uri,
+            local_path,
+            external_id: Some(public_id),
+        }],
+        &timestamp,
+    )?;
+    transaction.execute(
+        "UPDATE source_items
+         SET legacy_record_id = ?1
+         WHERE id = ?2 AND legacy_record_id IS NULL",
+        params![record_id, source_item_id],
+    )?;
+    let record = load_record(&transaction, record_id)?;
+    insert_version(
+        &transaction,
+        &record,
+        "初始版本",
+        "建立来源操作侧车",
+        Some(1),
+    )?;
+    transaction.commit()?;
     load_record(connection, record_id)
 }
 
@@ -725,6 +864,13 @@ pub fn permanently_delete_record(
         ));
     }
     let transaction = connection.transaction()?;
+    // Source Item 是来源档案的持久化真值。若只删除兼容 Record，外键会把
+    // legacy_record_id 置空，读取层随后会把同一来源误判成“从未删除”并再次展示。
+    // 永久删除前先归档关联来源，既保留审计原件，也保证用户的删除决定不会反弹。
+    transaction.execute(
+        "UPDATE source_items SET status = 'archived' WHERE legacy_record_id = ?1",
+        [input.record_id],
+    )?;
     transaction.execute("DELETE FROM records WHERE id = ?1", [input.record_id])?;
     transaction.commit()?;
     Ok(())
@@ -1659,6 +1805,135 @@ mod tests {
             )
             .expect("read fts table");
         assert_eq!(table_count, 1);
+    }
+
+    #[test]
+    fn source_only_items_get_one_action_record_and_real_primary_topic_metadata() {
+        let mut connection = open_memory_database().expect("open database");
+        connection
+            .execute(
+                "INSERT INTO source_items(
+               public_id, source_type, title, platform, original_text, imported_at
+             ) VALUES ('source-only-1', 'file', '影视AI工具开发建议', '本地文件',
+                       '把影视 VFX 经验与 AI 工具开发整合起来。', '2026-08-01T10:00:00Z')",
+                [],
+            )
+            .expect("insert source-only item");
+        let source_item_id = connection.last_insert_rowid();
+
+        let first = ensure_source_action_record(&mut connection, source_item_id)
+            .expect("create source action record");
+        let second = ensure_source_action_record(&mut connection, source_item_id)
+            .expect("reuse source action record");
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.title, "影视AI工具开发建议");
+        let linked_record_id: Option<i64> = connection
+            .query_row(
+                "SELECT legacy_record_id FROM source_items WHERE id = ?1",
+                [source_item_id],
+                |row| row.get(0),
+            )
+            .expect("read action record link");
+        assert_eq!(linked_record_id, Some(first.id));
+
+        connection
+            .execute(
+                "INSERT INTO domains(public_id, name, normalized_name, created_at, updated_at)
+             VALUES ('domain-media', '影视与动画', '影视与动画', '2026-08-01', '2026-08-01')",
+                [],
+            )
+            .expect("insert domain");
+        let domain_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO topics(
+               public_id, domain_id, name, normalized_name, created_at, updated_at
+             ) VALUES ('topic-vfx-ai', ?1, '影视 AI 工具生产', '影视 AI 工具生产',
+                       '2026-08-01', '2026-08-01')",
+                [domain_id],
+            )
+            .expect("insert topic");
+        let topic_id = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO source_topics(source_item_id, topic_id, role, confidence, created_at)
+             VALUES (?1, ?2, 'primary', 91, '2026-08-01')",
+                params![source_item_id, topic_id],
+            )
+            .expect("link primary topic");
+
+        let summaries =
+            list_record_summaries(&connection, &RecordQuery::default()).expect("list summaries");
+        let summary = summaries
+            .iter()
+            .find(|item| item.id == first.id)
+            .expect("summary");
+        assert_eq!(
+            summary.primary_topic_name.as_deref(),
+            Some("影视 AI 工具生产")
+        );
+    }
+
+    #[test]
+    fn permanently_deleting_a_source_action_record_does_not_resurface_the_source() {
+        let mut connection = open_memory_database().expect("open database");
+        connection
+            .execute(
+                "INSERT INTO source_items(
+                   public_id, source_type, title, platform, original_text, imported_at
+                 ) VALUES ('source-delete-1', 'image', '无效图片解析', 'ChatGPT 导入',
+                           '图片只有 3x5 像素，无法识别内容。', '2026-08-02T10:00:00Z')",
+                [],
+            )
+            .expect("insert source-only item");
+        let source_item_id = connection.last_insert_rowid();
+        let record = ensure_source_action_record(&mut connection, source_item_id)
+            .expect("create source action record");
+
+        assert_eq!(
+            knowledge::repository::list_source_archive(&connection, 20)
+                .expect("source before delete")
+                .len(),
+            1
+        );
+
+        move_to_trash(&connection, record.id).expect("move source action record to trash");
+        assert!(knowledge::repository::list_source_archive(&connection, 20)
+            .expect("source hidden in trash")
+            .is_empty());
+
+        restore_record(&connection, record.id).expect("restore source action record");
+        assert_eq!(
+            knowledge::repository::list_source_archive(&connection, 20)
+                .expect("source restored")
+                .len(),
+            1
+        );
+
+        move_to_trash(&connection, record.id).expect("move source action record to trash again");
+        permanently_delete_record(
+            &mut connection,
+            &PermanentDeleteInput {
+                record_id: record.id,
+            },
+        )
+        .expect("permanently delete source action record");
+
+        let (status, legacy_record_id): (String, Option<i64>) = connection
+            .query_row(
+                "SELECT status, legacy_record_id FROM source_items WHERE id = ?1",
+                [source_item_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read archived source");
+        assert_eq!(status, "archived");
+        assert_eq!(legacy_record_id, None);
+        assert!(
+            knowledge::repository::list_source_archive(&connection, 20)
+                .expect("source after permanent delete")
+                .is_empty(),
+            "permanently deleted source must not reappear as an unlinked source item"
+        );
     }
 
     #[test]

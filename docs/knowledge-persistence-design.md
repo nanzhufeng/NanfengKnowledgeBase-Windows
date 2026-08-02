@@ -1,8 +1,10 @@
 # 知识持久化与 legacy Record 迁移设计
 
+> 历史设计说明：本文主体记录 migration v3 的建模和迁移依据，不作为 2026-07-30 当前 UI、BAT 或正式库状态入口。当前事实以`CURRENT_HANDOFF.md`、`core-workspace-acceptance-matrix.md`和 migration v4 代码为准。
+
 ## 结论
 
-知识结构已经接入应用 migration v3、正式 Rust 仓库和正式 UI。901 条活动记录的真实数据库副本已在隔离目录完成迁移与幂等复跑；`D:\南枫知识库` 正式库尚未执行 v3，真实桌面链路与完整恢复演练仍需单独验收。
+本文确认 migration v3 当时已经接入正式 Rust 仓库和 UI，901 条活动记录的真实数据库副本完成隔离迁移与幂等复跑。该段不能推断当前正式库状态；当前 migration v4 仍按最新交接的正式数据边界单独验收。
 
 ## 代码所有权
 
@@ -124,9 +126,18 @@ FTS5 使用与现有记录检索一致的本地 `trigram` 分词。触发器验�
 - ZIP 解析必须流式执行，拒绝危险路径、加密条目、重复条目名和超限解压体积；不得把完整 ZIP、全部会话或附件字节跨 IPC 发送到 WebView。
 - 2026-07-27 的完整集合预演为 901 条：旧库 384 条加补充 ChatGPT 会话 517 条。只有 10 条达到临时候选阈值，891 条仍需人工处理；新增数据没有改变“先确认正式 Topic 目录”的迁移门槛。
 
+## migration v5：来源身份与统一目录
+
+- `source_collections`持有四个单篇列表共同显示的来源名称；页面不得再直接把导入文件名或`source_type`当作来源目录。
+- `source_items.source_collection_id`连接统一目录，`identity_sha256`保存标准化用户可见正文身份；保真的`original_text/content_sha256`不改写。
+- `source_import_origins`允许一篇笔记关联多个导入包或零散文件，保存导入任务、原文件名、原路径、文件哈希和条目外部 ID。
+- 导入精确重复时复用既有 Source Item 并追加 origin；相似标题只作为人工候选，不参与自动删除。
+- 目录重命名事务同步 Source Item 与兼容 Record 的来源显示，但不得改写 origin。独立 MD/TXT/HTML 与未来 DOC/DOCX/PDF 等单篇文件统一归入`零散文件导入`。
+- 正式库只读核对表明`ChatGPT_20260726.zip`的517个 ChatGPT conversation ID与`conversations-004.json`的100个 ID交集为0；`conversations.json`为 Claude `chat_messages`结构。不能因文件名相似删除这些真实记录。
+
 ## 正式数据升级门槛
 
-migration v3 已挂入 `database::apply_migrations`，但以下条件全部满足前，不运行最新版桌面程序指向 `D:\南枫知识库`：
+migration v3/v4/v5 已挂入 `database::apply_migrations`，但以下条件全部满足前，不运行最新版桌面程序指向 `D:\南枫知识库`：
 
 1. 已完成：正式库三件套只读复制后，在隔离副本执行 v3；活动记录 901、Source Item 901、附件 446、外键违规 0、`integrity_check=ok`。
 2. 已完成：隔离副本第二次执行保持 migration 1/2/3、901 个 Source Item 和单一迁移前备份，证明迁移幂等。
@@ -134,5 +145,7 @@ migration v3 已挂入 `database::apply_migrations`，但以下条件全部满�
 4. 待完成：对完整迁移备份执行恢复演练，验证数据库、附件、导入原件和设置清单。
 5. 待完成：在隔离数据根启动 Tauri 桌面程序，验证 CSP、命令桥、重启持久化及关键 UI 操作；不得占用用户当前屏幕时后台强行执行。
 6. 待完成：单独报告风险和回滚路径并获得确认后，才允许正式数据升级。
+
+7. 待完成：在正式库副本验证 migration v5 的来源目录回填、身份哈希、重命名往返和重复 origin 关系；正式库升级仍需南烛枫明确授权。
 
 本轮没有创建或修改 `D:\南枫知识库` 的知识表，也没有写回 `D:\南枫情报台`。

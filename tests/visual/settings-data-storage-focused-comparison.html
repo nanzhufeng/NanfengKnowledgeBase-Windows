@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>数据与存储窗口局部对比</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 20px; color: #173d6b; background: #edf1f6; font-family: "Microsoft YaHei UI", sans-serif; }
+      h1 { margin: 0 0 14px; font-size: 19px; }
+      main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+      figure { min-width: 0; margin: 0; padding: 10px; border: 1px solid #d4dce7; border-radius: 13px; background: #fff; }
+      figcaption { margin: 0 2px 9px; font-size: 12px; font-weight: 700; }
+      .crop { position: relative; height: 800px; overflow: hidden; border: 1px solid #e1e6ed; border-radius: 8px; background: #f7f9fc; }
+      img { position: absolute; top: 50%; left: 50%; width: 1276px; height: auto; transform: translate(-50%, -50%); }
+    </style>
+  </head>
+  <body>
+    <h1>弹窗主体局部：同视口、同缩放中心裁切</h1>
+    <main>
+      <figure>
+        <figcaption>问题参考：操作拥挤，备份信息难分层</figcaption>
+        <div class="crop"><img src="/docs/screenshots/final-core-workspace/settings-data-storage-small-crowded-reference.png" alt="调整前弹窗局部" /></div>
+      </figure>
+      <figure>
+        <figcaption>当前实现：操作分区，按钮层级明确</figcaption>
+        <div class="crop"><img src="/docs/screenshots/qa/settings-data-storage-resizable-1702x1066.png" alt="调整后弹窗局部" /></div>
+      </figure>
+    </main>
+  </body>
+</html>

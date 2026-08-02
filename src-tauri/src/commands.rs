@@ -1,4 +1,6 @@
 use std::net::TcpListener;
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::{Connection, OptionalExtension};
@@ -49,18 +51,18 @@ fn background_task_error(error: impl std::fmt::Display) -> CommandError {
     CommandError::from(AppError::Conflict(format!("后台文件任务异常结束：{error}")))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_data_location(state: State<'_, AppState>) -> DataLocation {
     state.paths.location()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, CommandError> {
     let connection = command(state.connection())?;
     command(state.paths.storage_stats(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_data_directory(state: State<'_, AppState>) -> Result<(), CommandError> {
     command(
         open::that(&state.paths.root)
@@ -68,7 +70,54 @@ pub fn open_data_directory(state: State<'_, AppState>) -> Result<(), CommandErro
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+pub fn copy_exported_file(
+    state: State<'_, AppState>,
+    file_path: String,
+) -> Result<(), CommandError> {
+    let requested = PathBuf::from(file_path);
+    let canonical = command(requested.canonicalize().map_err(AppError::Io))?;
+    let export_root = command(state.paths.exports.canonicalize().map_err(AppError::Io))?;
+    if !canonical.is_file() || !canonical.starts_with(&export_root) {
+        return Err(CommandError::from(AppError::Validation(
+            "只能复制由南枫知识库导出目录生成的文件".to_string(),
+        )));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let status = command(
+            Command::new("powershell.exe")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-STA",
+                    "-Command",
+                    "Add-Type -AssemblyName System.Windows.Forms; \
+                     $files = New-Object System.Collections.Specialized.StringCollection; \
+                     [void]$files.Add((Resolve-Path -LiteralPath $args[0]).Path); \
+                     [System.Windows.Forms.Clipboard]::SetFileDropList($files)",
+                ])
+                .arg(canonical.as_os_str())
+                .status()
+                .map_err(AppError::Io),
+        )?;
+        if !status.success() {
+            return Err(CommandError::from(AppError::Conflict(
+                "文件已导出，但复制到 Windows 剪贴板失败".to_string(),
+            )));
+        }
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err(CommandError::from(AppError::Validation(
+        "当前系统暂不支持复制文件对象".to_string(),
+    )))
+}
+
+#[tauri::command(async)]
 pub fn list_knowledge_inbox(
     state: State<'_, AppState>,
     limit: Option<usize>,
@@ -80,7 +129,7 @@ pub fn list_knowledge_inbox(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_source_archive(
     state: State<'_, AppState>,
     limit: Option<usize>,
@@ -92,7 +141,75 @@ pub fn list_knowledge_source_archive(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+pub fn count_knowledge_source_archive(state: State<'_, AppState>) -> Result<i64, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::count_source_archive(
+        &connection,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn search_knowledge_source_archive(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<crate::knowledge::repository::KnowledgeInboxItem>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::search_source_archive(
+        &connection,
+        &query,
+        limit.unwrap_or(2_000),
+    ))
+}
+
+#[tauri::command(async)]
+pub fn update_knowledge_source_title(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::UpdateKnowledgeSourceTitleInput,
+) -> Result<crate::knowledge::repository::KnowledgeSourceTitleUpdate, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::update_source_title(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn list_knowledge_source_collections(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::knowledge::repository::SourceCollectionRow>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::knowledge::repository::list_source_collections(
+        &connection,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn rename_knowledge_source_collection(
+    state: State<'_, AppState>,
+    input: crate::knowledge::repository::RenameSourceCollectionInput,
+) -> Result<crate::knowledge::repository::SourceCollectionRow, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::knowledge::repository::rename_source_collection(
+        &mut connection,
+        &input,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn ensure_knowledge_source_action_record(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+) -> Result<crate::models::IntelligenceRecord, CommandError> {
+    let mut connection = command(state.connection())?;
+    command(crate::database::ensure_source_action_record(
+        &mut connection,
+        source_item_id,
+    ))
+}
+
+#[tauri::command(async)]
 pub fn get_knowledge_source_original_text(
     state: State<'_, AppState>,
     source_item_id: i64,
@@ -104,7 +221,19 @@ pub fn get_knowledge_source_original_text(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+pub fn list_knowledge_source_attachments(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+) -> Result<Vec<AttachmentItem>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::list_source_attachments(
+        &connection,
+        source_item_id,
+    ))
+}
+
+#[tauri::command(async)]
 pub fn list_knowledge_domains(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::knowledge::repository::KnowledgeDomainRow>, CommandError> {
@@ -112,7 +241,7 @@ pub fn list_knowledge_domains(
     command(crate::knowledge::repository::list_domains(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_topics(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::knowledge::repository::KnowledgeTopicRow>, CommandError> {
@@ -120,13 +249,13 @@ pub fn list_knowledge_topics(
     command(crate::knowledge::repository::list_topics(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_personal_topic_catalog_proposal(
 ) -> crate::knowledge::personal_catalog::PersonalCatalogProposal {
     crate::knowledge::repository::get_personal_catalog_proposal()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn apply_personal_topic_catalog(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::ApplyPersonalCatalogInput,
@@ -138,7 +267,7 @@ pub fn apply_personal_topic_catalog(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_topic_aliases(
     state: State<'_, AppState>,
     topic_id: Option<i64>,
@@ -150,7 +279,7 @@ pub fn list_knowledge_topic_aliases(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_topic_alias(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateTopicAliasInput,
@@ -162,7 +291,7 @@ pub fn create_knowledge_topic_alias(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_topic_alias(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateTopicAliasInput,
@@ -174,7 +303,7 @@ pub fn update_knowledge_topic_alias(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_knowledge_topic_alias(
     state: State<'_, AppState>,
     id: i64,
@@ -186,7 +315,7 @@ pub fn delete_knowledge_topic_alias(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_entities(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::knowledge::repository::EntityDictionaryRow>, CommandError> {
@@ -196,7 +325,7 @@ pub fn list_knowledge_entities(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_entity(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateEntityDictionaryInput,
@@ -205,7 +334,7 @@ pub fn create_knowledge_entity(
     command(crate::knowledge::repository::create_entity_dictionary_entry(&connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_entity(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateEntityDictionaryInput,
@@ -214,7 +343,7 @@ pub fn update_knowledge_entity(
     command(crate::knowledge::repository::update_entity_dictionary_entry(&connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_knowledge_entity(
     state: State<'_, AppState>,
     id: i64,
@@ -223,7 +352,7 @@ pub fn delete_knowledge_entity(
     command(crate::knowledge::repository::delete_entity_dictionary_entry(&connection, id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_classification_rules(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::knowledge::repository::ClassificationRuleRow>, CommandError> {
@@ -233,7 +362,7 @@ pub fn list_knowledge_classification_rules(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_classification_rule(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateClassificationRuleInput,
@@ -245,7 +374,7 @@ pub fn create_knowledge_classification_rule(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_classification_rule(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateClassificationRuleInput,
@@ -257,7 +386,7 @@ pub fn update_knowledge_classification_rule(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_knowledge_classification_rule(
     state: State<'_, AppState>,
     id: i64,
@@ -269,7 +398,7 @@ pub fn delete_knowledge_classification_rule(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn prepare_knowledge_classification_context(
     state: State<'_, AppState>,
     source_item_id: i64,
@@ -280,7 +409,7 @@ pub fn prepare_knowledge_classification_context(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_domain(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateKnowledgeDomainInput,
@@ -292,7 +421,7 @@ pub fn create_knowledge_domain(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_domain(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateKnowledgeDomainInput,
@@ -304,7 +433,7 @@ pub fn update_knowledge_domain(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_topic(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateKnowledgeTopicInput,
@@ -316,7 +445,7 @@ pub fn create_knowledge_topic(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_topic(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateKnowledgeTopicInput,
@@ -328,7 +457,7 @@ pub fn update_knowledge_topic(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_knowledge_classification_suggestions(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::SaveKnowledgeSuggestionsInput,
@@ -337,7 +466,7 @@ pub fn save_knowledge_classification_suggestions(
     command(crate::knowledge::repository::save_classification_suggestions(&mut connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_classification_suggestions(
     state: State<'_, AppState>,
     source_item_id: i64,
@@ -348,7 +477,7 @@ pub fn list_knowledge_classification_suggestions(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_classification_run_source_ids(
     state: State<'_, AppState>,
     classifier_version: String,
@@ -362,7 +491,7 @@ pub fn list_knowledge_classification_run_source_ids(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn confirm_knowledge_classification(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::ConfirmKnowledgeClassificationInput,
@@ -374,7 +503,7 @@ pub fn confirm_knowledge_classification(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undo_knowledge_classification(
     state: State<'_, AppState>,
     operation_id: i64,
@@ -386,7 +515,7 @@ pub fn undo_knowledge_classification(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_knowledge_topic_detail(
     state: State<'_, AppState>,
     topic_id: i64,
@@ -398,7 +527,7 @@ pub fn get_knowledge_topic_detail(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_knowledge_notes(
     state: State<'_, AppState>,
     topic_id: Option<i64>,
@@ -412,7 +541,7 @@ pub fn list_knowledge_notes(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_knowledge_note(
     state: State<'_, AppState>,
     note_id: i64,
@@ -421,7 +550,7 @@ pub fn get_knowledge_note(
     command(crate::knowledge::repository::get_note(&connection, note_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_note(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateKnowledgeNoteInput,
@@ -433,7 +562,7 @@ pub fn create_knowledge_note(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_note(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateKnowledgeNoteInput,
@@ -445,7 +574,7 @@ pub fn update_knowledge_note(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn archive_knowledge_note(
     state: State<'_, AppState>,
     note_id: i64,
@@ -457,7 +586,7 @@ pub fn archive_knowledge_note(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_proposition(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateTopicPropositionInput,
@@ -469,7 +598,7 @@ pub fn create_knowledge_proposition(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_proposition(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateTopicPropositionInput,
@@ -481,7 +610,7 @@ pub fn update_knowledge_proposition(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn supersede_knowledge_proposition(
     state: State<'_, AppState>,
     proposition_id: i64,
@@ -493,7 +622,7 @@ pub fn supersede_knowledge_proposition(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_decision(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateTopicDecisionInput,
@@ -505,7 +634,7 @@ pub fn create_knowledge_decision(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_knowledge_decision(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::UpdateTopicDecisionInput,
@@ -517,7 +646,7 @@ pub fn update_knowledge_decision(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_turning_point(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateTopicTurningPointInput,
@@ -529,7 +658,7 @@ pub fn create_knowledge_turning_point(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_knowledge_topic_judgment(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::AddTopicJudgmentInput,
@@ -541,7 +670,7 @@ pub fn add_knowledge_topic_judgment(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_knowledge_topic_evidence(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::AddTopicEvidenceInput,
@@ -553,7 +682,7 @@ pub fn add_knowledge_topic_evidence(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_knowledge_topic_question(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::AddTopicQuestionInput,
@@ -565,7 +694,7 @@ pub fn add_knowledge_topic_question(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn compile_knowledge_topic_context(
     state: State<'_, AppState>,
     topic_id: i64,
@@ -577,7 +706,7 @@ pub fn compile_knowledge_topic_context(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_knowledge_topic_merge(
     state: State<'_, AppState>,
     source_topic_id: i64,
@@ -591,7 +720,7 @@ pub fn preview_knowledge_topic_merge(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn merge_knowledge_topics(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::MergeTopicsInput,
@@ -603,7 +732,7 @@ pub fn merge_knowledge_topics(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undo_knowledge_topic_merge(
     state: State<'_, AppState>,
     operation_id: i64,
@@ -615,7 +744,7 @@ pub fn undo_knowledge_topic_merge(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_knowledge_topic_split(
     state: State<'_, AppState>,
     topic_id: i64,
@@ -627,7 +756,7 @@ pub fn preview_knowledge_topic_split(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn suggest_knowledge_topic_relations(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::knowledge::repository::TopicRelationSuggestion>, CommandError> {
@@ -637,7 +766,7 @@ pub fn suggest_knowledge_topic_relations(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_knowledge_topic_relation(
     state: State<'_, AppState>,
     input: crate::knowledge::repository::CreateTopicRelationInput,
@@ -649,7 +778,7 @@ pub fn create_knowledge_topic_relation(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_records(
     state: State<'_, AppState>,
     query: RecordQuery,
@@ -658,7 +787,7 @@ pub fn list_records(
     command(database::list_records(&connection, &query))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_record_summaries(
     state: State<'_, AppState>,
     query: RecordQuery,
@@ -667,7 +796,7 @@ pub fn list_record_summaries(
     command(database::list_record_summaries(&connection, &query))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_record(
     state: State<'_, AppState>,
     record_id: i64,
@@ -676,7 +805,7 @@ pub fn get_record(
     command(database::get_record(&connection, record_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_record(
     state: State<'_, AppState>,
     input: CreateRecordInput,
@@ -685,7 +814,7 @@ pub fn create_record(
     command(database::create_record(&mut connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_record(
     state: State<'_, AppState>,
     record_id: i64,
@@ -695,7 +824,7 @@ pub fn update_record(
     command(database::update_record(&mut connection, record_id, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn patch_record(
     state: State<'_, AppState>,
     record_id: i64,
@@ -705,7 +834,7 @@ pub fn patch_record(
     command(database::patch_record(&mut connection, record_id, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_favorite(
     state: State<'_, AppState>,
     record_id: i64,
@@ -721,7 +850,7 @@ pub fn set_favorite(
     Ok(update)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_current_judgment(
     state: State<'_, AppState>,
     input: UpdateJudgmentInput,
@@ -734,7 +863,7 @@ pub fn update_current_judgment(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_status(
     state: State<'_, AppState>,
     input: UpdateStatusInput,
@@ -747,7 +876,7 @@ pub fn update_status(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn move_to_trash(
     state: State<'_, AppState>,
     record_id: i64,
@@ -756,7 +885,7 @@ pub fn move_to_trash(
     command(database::move_to_trash(&connection, record_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_record(
     state: State<'_, AppState>,
     record_id: i64,
@@ -765,7 +894,7 @@ pub fn restore_record(
     command(database::restore_record(&connection, record_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn permanently_delete_record(
     state: State<'_, AppState>,
     input: PermanentDeleteInput,
@@ -774,7 +903,7 @@ pub fn permanently_delete_record(
     command(database::permanently_delete_record(&mut connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn append_version(
     state: State<'_, AppState>,
     input: AppendVersionInput,
@@ -783,7 +912,7 @@ pub fn append_version(
     command(database::append_version(&mut connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_versions(
     state: State<'_, AppState>,
     record_id: i64,
@@ -792,7 +921,7 @@ pub fn list_versions(
     command(database::list_versions(&connection, record_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_version(
     state: State<'_, AppState>,
     input: DeleteVersionInput,
@@ -801,7 +930,7 @@ pub fn delete_version(
     command(database::delete_version(&connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_version(
     state: State<'_, AppState>,
     input: RestoreVersionInput,
@@ -810,13 +939,13 @@ pub fn restore_version(
     command(database::restore_version(&mut connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_tags(state: State<'_, AppState>) -> Result<Vec<TagItem>, CommandError> {
     let connection = command(state.connection())?;
     command(database::list_tags(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_tag(
     state: State<'_, AppState>,
     input: CreateTagInput,
@@ -825,7 +954,7 @@ pub fn create_tag(
     command(database::create_tag(&connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_tag(
     state: State<'_, AppState>,
     input: RenameTagInput,
@@ -834,25 +963,25 @@ pub fn rename_tag(
     command(database::rename_tag(&connection, &input))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_tag(state: State<'_, AppState>, tag_id: i64) -> Result<(), CommandError> {
     let connection = command(state.connection())?;
     command(database::delete_tag(&connection, tag_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rebuild_search_index(state: State<'_, AppState>) -> Result<(), CommandError> {
     let connection = command(state.connection())?;
     command(database::rebuild_search_index(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn run_integrity_check(state: State<'_, AppState>) -> Result<String, CommandError> {
     let connection = command(state.connection())?;
     command(database::integrity_check(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn prepare_import(
     state: State<'_, AppState>,
     source_path: String,
@@ -865,7 +994,7 @@ pub fn prepare_import(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn confirm_import(
     state: State<'_, AppState>,
     input: ConfirmImportInput,
@@ -878,19 +1007,19 @@ pub fn confirm_import(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_import(state: State<'_, AppState>, job_id: String) -> Result<(), CommandError> {
     let connection = command(state.connection())?;
     command(crate::importer::cancel_import(&connection, &job_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_import_jobs(state: State<'_, AppState>) -> Result<Vec<ImportJobSummary>, CommandError> {
     let connection = command(state.connection())?;
     command(crate::importer::list_import_jobs(&connection))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_record(
     state: State<'_, AppState>,
     record_id: i64,
@@ -905,7 +1034,7 @@ pub fn export_record(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_docx_export(
     state: State<'_, AppState>,
     file_name: String,
@@ -918,7 +1047,7 @@ pub fn write_docx_export(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_markdown_export(
     state: State<'_, AppState>,
     file_name: String,
@@ -931,13 +1060,13 @@ pub fn write_markdown_export(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_all_json(state: State<'_, AppState>) -> Result<ExportResult, CommandError> {
     let connection = command(state.connection())?;
     command(crate::transfer::export_all_json(&connection, &state.paths))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_records(
     state: State<'_, AppState>,
     input: ExportRecordsInput,
@@ -950,7 +1079,7 @@ pub fn export_records(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn create_backup(state: State<'_, AppState>) -> Result<String, CommandError> {
     let connection = Arc::clone(&state.connection);
     let paths = state.paths.clone();
@@ -966,7 +1095,7 @@ pub async fn create_backup(state: State<'_, AppState>) -> Result<String, Command
     .map_err(CommandError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn restore_backup(
     state: State<'_, AppState>,
     source_path: String,
@@ -984,7 +1113,7 @@ pub async fn restore_backup(
     .map_err(CommandError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn inspect_backup(source_path: String) -> Result<BackupPreview, CommandError> {
     tauri::async_runtime::spawn_blocking(move || crate::transfer::inspect_backup(source_path))
         .await
@@ -992,7 +1121,7 @@ pub async fn inspect_backup(source_path: String) -> Result<BackupPreview, Comman
         .map_err(CommandError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn create_portable_backup(
     state: State<'_, AppState>,
     preferences_json: String,
@@ -1015,7 +1144,7 @@ pub async fn create_portable_backup(
     .map_err(CommandError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn inspect_portable_backup(
     source_path: String,
 ) -> Result<PortableBackupPreview, CommandError> {
@@ -1027,7 +1156,7 @@ pub async fn inspect_portable_backup(
     .map_err(CommandError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn restore_portable_backup(
     state: State<'_, AppState>,
     source_path: String,
@@ -1051,12 +1180,12 @@ pub async fn restore_portable_backup(
     .map_err(CommandError::from)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_export_directory(state: State<'_, AppState>) -> Result<(), CommandError> {
     command(crate::transfer::open_export_directory(&state.paths))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_attachments(
     state: State<'_, AppState>,
     record_id: i64,
@@ -1065,7 +1194,7 @@ pub fn list_attachments(
     command(crate::attachments::list_attachments(&connection, record_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub async fn add_attachment(
     state: State<'_, AppState>,
     record_id: i64,
@@ -1109,7 +1238,7 @@ pub async fn add_attachment(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_attachment(state: State<'_, AppState>, attachment_id: i64) -> Result<(), CommandError> {
     let connection = command(state.connection())?;
     command(crate::attachments::open_attachment(
@@ -1119,12 +1248,12 @@ pub fn open_attachment(state: State<'_, AppState>, attachment_id: i64) -> Result
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_external_url(url: String) -> Result<(), CommandError> {
     command(crate::external_open::open_url(&url))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_attachment(
     state: State<'_, AppState>,
     attachment_id: i64,

@@ -7,6 +7,9 @@ pub(crate) const KNOWLEDGE_SCHEMA_VERSION: i64 = 3;
 pub(crate) const KNOWLEDGE_REASONING_SCHEMA_SQL: &str =
     include_str!("../../migrations/0004_knowledge_reasoning.sql");
 
+pub(crate) const SOURCE_IDENTITY_SCHEMA_SQL: &str =
+    include_str!("../../migrations/0005_source_identity.sql");
+
 pub(crate) const KNOWLEDGE_SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS knowledge_schema_contract (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

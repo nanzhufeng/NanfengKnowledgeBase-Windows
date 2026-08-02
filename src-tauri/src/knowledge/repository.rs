@@ -2,13 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::knowledge::{personal_catalog, readable_text};
+use crate::knowledge::{personal_catalog, readable_text, source_identity};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +29,51 @@ pub struct KnowledgeInboxItem {
     pub assigned_topic_count: i64,
     pub primary_topic_id: Option<i64>,
     pub primary_topic_name: Option<String>,
+    pub linked_note_count: i64,
+    pub source_collection_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCollectionRow {
+    pub id: i64,
+    pub canonical_key: String,
+    pub display_name: String,
+    pub collection_kind: String,
+    pub user_renamed: bool,
+    pub source_item_count: i64,
+    pub original_file_count: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameSourceCollectionInput {
+    pub source_collection_id: i64,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExactSourceMatch {
+    pub source_item_id: i64,
+    pub legacy_record_id: Option<i64>,
+    pub title: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateKnowledgeSourceTitleInput {
+    pub source_item_id: i64,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KnowledgeSourceTitleUpdate {
+    pub source_item_id: i64,
+    pub legacy_record_id: Option<i64>,
+    pub title: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -463,10 +508,13 @@ struct MergeInverse {
 pub struct TopicSourceRow {
     pub id: i64,
     pub public_id: String,
+    pub legacy_record_id: Option<i64>,
     pub title: String,
     pub source_type: String,
     pub original_at: Option<String>,
+    pub imported_at: String,
     pub confidence: Option<f64>,
+    pub content_text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -638,6 +686,7 @@ pub struct UpdateKnowledgeNoteInput {
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeTopicDetail {
     pub topic: KnowledgeTopicRow,
+    pub relations: Vec<TopicRelationRow>,
     pub sources: Vec<TopicSourceRow>,
     pub judgments: Vec<TopicJudgmentRow>,
     pub evidence: Vec<TopicEvidenceRow>,
@@ -981,6 +1030,465 @@ pub fn backfill_legacy_records(connection: &mut Connection) -> AppResult<usize> 
     Ok(inserted)
 }
 
+#[derive(Debug)]
+struct SourceIdentityBackfillRow {
+    id: i64,
+    legacy_record_id: Option<i64>,
+    title: String,
+    source_type: String,
+    platform: String,
+    original_text: String,
+    local_path: Option<String>,
+    metadata_json: String,
+    source_file_name: String,
+}
+
+pub(crate) fn backfill_source_identity_and_collections(
+    connection: &mut Connection,
+) -> AppResult<usize> {
+    let rows = {
+        let mut statement = connection.prepare(
+            "SELECT source.id, source.legacy_record_id, source.title, source.source_type,
+                    source.platform, source.original_text, source.local_path, source.metadata_json,
+                    COALESCE(
+                      (SELECT origin.source_file_name
+                       FROM source_import_origins origin
+                       WHERE origin.source_item_id = source.id
+                       ORDER BY origin.id LIMIT 1),
+                      source.platform
+                    )
+             FROM source_items source
+             WHERE source.source_collection_id IS NULL OR source.identity_sha256 IS NULL
+                OR length(trim(source.title)) = 0
+                OR trim(source.title) = '---'
+                OR lower(trim(source.title)) IN (
+                  'conversation overview', 'conversation summary', 'untitled',
+                  'new chat', 'new conversation', '无标题', '未命名',
+                  'conversation', 'conversations'
+                )
+                OR lower(trim(source.title)) LIKE '未命名导入记录%'
+                OR lower(trim(source.title)) GLOB 'conversation-[0-9]*'
+                OR lower(trim(source.title)) GLOB 'conversation_[0-9]*'
+                OR lower(trim(source.title)) GLOB 'conversations-[0-9]*'
+                OR lower(trim(source.title)) GLOB 'conversations_[0-9]*'
+                OR trim(source.title) GLOB '[1-2][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+                OR trim(source.title) GLOB '[1-2][0-9][0-9][0-9]/[0-1][0-9]/[0-3][0-9]'
+                OR trim(source.title) GLOB '[1-2][0-9][0-9][0-9]年*月*日'
+             ORDER BY source.id",
+        )?;
+        let collected = statement
+            .query_map([], |row| {
+                Ok(SourceIdentityBackfillRow {
+                    id: row.get(0)?,
+                    legacy_record_id: row.get(1)?,
+                    title: row.get(2)?,
+                    source_type: row.get(3)?,
+                    platform: row.get(4)?,
+                    original_text: row.get(5)?,
+                    local_path: row.get(6)?,
+                    metadata_json: row.get(7)?,
+                    source_file_name: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        collected
+    };
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let transaction = connection.transaction()?;
+    for row in &rows {
+        assign_source_identity(&transaction, row)?;
+    }
+    transaction.commit()?;
+    Ok(rows.len())
+}
+
+pub(crate) fn refresh_source_identity(
+    connection: &mut Connection,
+    source_item_id: i64,
+) -> AppResult<()> {
+    let row = connection
+        .query_row(
+            "SELECT source.id, source.legacy_record_id, source.title, source.source_type,
+                    source.platform, source.original_text, source.local_path, source.metadata_json,
+                    COALESCE(
+                      (SELECT origin.source_file_name
+                       FROM source_import_origins origin
+                       WHERE origin.source_item_id = source.id
+                       ORDER BY origin.id LIMIT 1),
+                      source.platform
+                    )
+             FROM source_items source WHERE source.id = ?1",
+            [source_item_id],
+            |row| {
+                Ok(SourceIdentityBackfillRow {
+                    id: row.get(0)?,
+                    legacy_record_id: row.get(1)?,
+                    title: row.get(2)?,
+                    source_type: row.get(3)?,
+                    platform: row.get(4)?,
+                    original_text: row.get(5)?,
+                    local_path: row.get(6)?,
+                    metadata_json: row.get(7)?,
+                    source_file_name: row.get(8)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("来源不存在".to_string()))?;
+    let transaction = connection.transaction()?;
+    assign_source_identity(&transaction, &row)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn assign_source_identity(
+    connection: &Connection,
+    row: &SourceIdentityBackfillRow,
+) -> AppResult<()> {
+    let collection = source_identity::infer_source_collection(
+        &row.source_type,
+        &row.platform,
+        row.local_path.as_deref(),
+        &row.original_text,
+    );
+    let timestamp = Utc::now().to_rfc3339();
+    connection.execute(
+        "INSERT INTO source_collections(
+           canonical_key, display_name, collection_kind, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(canonical_key) DO NOTHING",
+        params![
+            collection.canonical_key,
+            collection.default_name,
+            collection.collection_kind,
+            timestamp
+        ],
+    )?;
+    let (collection_id, display_name) = connection.query_row(
+        "SELECT id, display_name FROM source_collections WHERE canonical_key = ?1",
+        [&collection.canonical_key],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    let identity_sha256 = source_identity::content_identity_sha256(&row.original_text);
+    let resolved_title =
+        readable_text::display_title(&row.title, &row.original_text, Some(&row.source_file_name));
+    connection.execute(
+        "UPDATE source_items
+         SET source_collection_id = ?1, identity_sha256 = ?2, platform = ?3, title = ?4
+         WHERE id = ?5",
+        params![
+            collection_id,
+            identity_sha256,
+            display_name,
+            resolved_title,
+            row.id
+        ],
+    )?;
+
+    if resolved_title != row.title
+        && (crate::database::is_generic_record_title(&row.title)
+            || crate::importer::date_only_title(&row.title))
+    {
+        if let Some(record_id) = row.legacy_record_id {
+            connection.execute(
+                "UPDATE records SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                params![resolved_title, timestamp, record_id],
+            )?;
+        }
+    }
+
+    let metadata_external_id = serde_json::from_str::<serde_json::Value>(&row.metadata_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("legacyExternalId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+    let external_id =
+        metadata_external_id.or_else(|| source_identity::external_item_id(&row.original_text));
+    if let Some(record_id) = row.legacy_record_id {
+        connection.execute(
+            "UPDATE sources
+             SET title = ?1,
+                 external_id = COALESCE(NULLIF(external_id, ''), ?2)
+             WHERE id = (
+               SELECT id FROM sources WHERE record_id = ?3 ORDER BY id LIMIT 1
+             )",
+            params![display_name, external_id, record_id],
+        )?;
+    }
+
+    if let Some(stored_file_path) = row.local_path.as_deref() {
+        if let Some((job_id, source_file_name, file_sha256)) = connection
+            .query_row(
+                "SELECT id, source_file_name, sha256
+                 FROM import_jobs
+                 WHERE stored_file_path = ?1
+                 ORDER BY created_at LIMIT 1",
+                [stored_file_path],
+                |job| {
+                    Ok((
+                        job.get::<_, String>(0)?,
+                        job.get::<_, String>(1)?,
+                        job.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+        {
+            connection.execute(
+                "INSERT OR IGNORE INTO source_import_origins(
+                   source_item_id, import_job_id, source_file_name, stored_file_path,
+                   file_sha256, item_external_id, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    row.id,
+                    job_id,
+                    source_file_name,
+                    stored_file_path,
+                    file_sha256,
+                    external_id,
+                    timestamp
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn find_exact_source_match(
+    connection: &Connection,
+    source_type: &str,
+    current_name: &str,
+    local_path: Option<&str>,
+    original_text: &str,
+    external_id: Option<&str>,
+) -> AppResult<Option<ExactSourceMatch>> {
+    let collection = source_identity::infer_source_collection(
+        source_type,
+        current_name,
+        local_path,
+        original_text,
+    );
+    let identity_sha256 = source_identity::content_identity_sha256(original_text);
+    let normalized_external_id = external_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| source_identity::external_item_id(original_text));
+
+    if normalized_external_id.is_none() && identity_sha256.is_none() {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT source.id, source.legacy_record_id, source.title,
+                    CASE
+                      WHEN ?1 IS NOT NULL AND collection.canonical_key = ?2 AND (
+                        EXISTS(
+                          SELECT 1 FROM source_import_origins origin
+                          WHERE origin.source_item_id = source.id
+                            AND origin.item_external_id = ?1
+                        ) OR EXISTS(
+                          SELECT 1 FROM sources legacy_source
+                          WHERE legacy_source.record_id = source.legacy_record_id
+                            AND legacy_source.external_id = ?1
+                        )
+                      ) THEN '来源身份相同'
+                      ELSE '可见正文相同'
+                    END
+             FROM source_items source
+             LEFT JOIN source_collections collection ON collection.id = source.source_collection_id
+             LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
+             WHERE source.status = 'active'
+               AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+               AND (
+                 (?1 IS NOT NULL AND collection.canonical_key = ?2 AND (
+                   EXISTS(
+                     SELECT 1 FROM source_import_origins origin
+                     WHERE origin.source_item_id = source.id
+                       AND origin.item_external_id = ?1
+                   ) OR EXISTS(
+                     SELECT 1 FROM sources legacy_source
+                     WHERE legacy_source.record_id = source.legacy_record_id
+                       AND legacy_source.external_id = ?1
+                   )
+                 ))
+                 OR (?3 IS NOT NULL AND source.identity_sha256 = ?3)
+               )
+             ORDER BY CASE WHEN ?1 IS NOT NULL AND collection.canonical_key = ?2 THEN 0 ELSE 1 END,
+                      source.id
+             LIMIT 1",
+            params![
+                normalized_external_id,
+                collection.canonical_key,
+                identity_sha256
+            ],
+            |row| {
+                Ok(ExactSourceMatch {
+                    source_item_id: row.get(0)?,
+                    legacy_record_id: row.get(1)?,
+                    title: row.get(2)?,
+                    reason: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+pub(crate) fn register_import_origin(
+    connection: &Connection,
+    source_item_id: i64,
+    import_job_id: &str,
+    source_file_name: &str,
+    stored_file_path: &str,
+    file_sha256: &str,
+    item_external_id: Option<&str>,
+) -> AppResult<()> {
+    connection.execute(
+        "INSERT OR IGNORE INTO source_import_origins(
+           source_item_id, import_job_id, source_file_name, stored_file_path,
+           file_sha256, item_external_id, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            source_item_id,
+            import_job_id,
+            source_file_name,
+            stored_file_path,
+            file_sha256,
+            item_external_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            Utc::now().to_rfc3339()
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn list_source_collections(connection: &Connection) -> AppResult<Vec<SourceCollectionRow>> {
+    let mut statement = connection.prepare(
+        "SELECT collection.id, collection.canonical_key, collection.display_name,
+                collection.collection_kind, collection.user_renamed,
+                COUNT(DISTINCT CASE WHEN source.status = 'active' THEN source.id END),
+                COUNT(DISTINCT origin.id)
+         FROM source_collections collection
+         LEFT JOIN source_items source ON source.source_collection_id = collection.id
+         LEFT JOIN source_import_origins origin ON origin.source_item_id = source.id
+         GROUP BY collection.id
+         HAVING COUNT(DISTINCT CASE WHEN source.status = 'active' THEN source.id END) > 0
+         ORDER BY collection.display_name COLLATE NOCASE, collection.id",
+    )?;
+    let rows = statement.query_map([], map_source_collection_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn rename_source_collection(
+    connection: &mut Connection,
+    input: &RenameSourceCollectionInput,
+) -> AppResult<SourceCollectionRow> {
+    let display_name = input.display_name.trim();
+    if display_name.is_empty() {
+        return Err(AppError::Validation("来源名称不能为空".to_string()));
+    }
+    if display_name.chars().count() > 80 {
+        return Err(AppError::Validation(
+            "来源名称不能超过 80 个字符".to_string(),
+        ));
+    }
+    let transaction = connection.transaction()?;
+    let exists = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM source_collections WHERE id = ?1)",
+        [input.source_collection_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    if !exists {
+        return Err(AppError::NotFound("来源目录不存在".to_string()));
+    }
+    let conflict = transaction.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM source_collections
+           WHERE display_name = ?1 COLLATE NOCASE AND id <> ?2
+         )",
+        params![display_name, input.source_collection_id],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    if conflict {
+        return Err(AppError::Conflict("已经存在同名来源".to_string()));
+    }
+    transaction.execute(
+        "UPDATE source_collections
+         SET display_name = ?1, user_renamed = 1, updated_at = ?2
+         WHERE id = ?3",
+        params![
+            display_name,
+            Utc::now().to_rfc3339(),
+            input.source_collection_id
+        ],
+    )?;
+    transaction.execute(
+        "UPDATE source_items SET platform = ?1 WHERE source_collection_id = ?2",
+        params![display_name, input.source_collection_id],
+    )?;
+    transaction.execute(
+        "UPDATE sources
+         SET title = ?1
+         WHERE id IN (
+           SELECT (
+             SELECT first_source.id FROM sources first_source
+             WHERE first_source.record_id = source.legacy_record_id
+             ORDER BY first_source.id LIMIT 1
+           )
+           FROM source_items source
+           WHERE source.source_collection_id = ?2
+             AND source.legacy_record_id IS NOT NULL
+         )",
+        params![display_name, input.source_collection_id],
+    )?;
+    transaction.commit()?;
+    get_source_collection(connection, input.source_collection_id)
+}
+
+fn get_source_collection(
+    connection: &Connection,
+    source_collection_id: i64,
+) -> AppResult<SourceCollectionRow> {
+    connection
+        .query_row(
+            "SELECT collection.id, collection.canonical_key, collection.display_name,
+                    collection.collection_kind, collection.user_renamed,
+                    COUNT(DISTINCT CASE WHEN source.status = 'active' THEN source.id END),
+                    COUNT(DISTINCT origin.id)
+             FROM source_collections collection
+             LEFT JOIN source_items source ON source.source_collection_id = collection.id
+             LEFT JOIN source_import_origins origin ON origin.source_item_id = source.id
+             WHERE collection.id = ?1
+             GROUP BY collection.id",
+            [source_collection_id],
+            map_source_collection_row,
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("来源目录不存在".to_string()))
+}
+
+fn map_source_collection_row(row: &Row<'_>) -> rusqlite::Result<SourceCollectionRow> {
+    Ok(SourceCollectionRow {
+        id: row.get(0)?,
+        canonical_key: row.get(1)?,
+        display_name: row.get(2)?,
+        collection_kind: row.get(3)?,
+        user_renamed: row.get::<_, i64>(4)? != 0,
+        source_item_count: row.get(5)?,
+        original_file_count: row.get(6)?,
+    })
+}
+
 pub fn sync_legacy_record(connection: &mut Connection, record_id: i64) -> AppResult<()> {
     let already_exists = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM source_items WHERE legacy_record_id = ?1)",
@@ -991,6 +1499,12 @@ pub fn sync_legacy_record(connection: &mut Connection, record_id: i64) -> AppRes
         return Ok(());
     }
     backfill_legacy_records(connection)?;
+    let source_item_id = connection.query_row(
+        "SELECT id FROM source_items WHERE legacy_record_id = ?1",
+        [record_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    refresh_source_identity(connection, source_item_id)?;
     Ok(())
 }
 
@@ -1004,17 +1518,39 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
                 COUNT(DISTINCT suggestion.id),
                 COUNT(DISTINCT source_topic.topic_id),
                 MAX(CASE WHEN source_topic.role = 'primary' THEN topic.id END),
-                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END)
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END),
+                COUNT(DISTINCT note_source.note_id),
+                CASE
+                  WHEN length(trim(source.title)) = 0
+                    OR trim(source.title) = '---'
+                    OR lower(trim(source.title)) IN (
+                      'conversation overview', 'conversation summary', 'untitled',
+                      'new chat', 'new conversation', '无标题', '未命名',
+                      'conversation', 'conversations'
+                    )
+                    OR lower(trim(source.title)) LIKE '未命名导入记录%'
+                    OR lower(trim(source.title)) GLOB 'conversation-[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversation_[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversations-[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversations_[0-9]*'
+                  THEN source.original_text
+                  ELSE ''
+                END,
+                source.source_collection_id
          FROM source_items source
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
          LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
          LEFT JOIN topics topic ON topic.id = source_topic.topic_id
+         LEFT JOIN note_sources note_source ON note_source.source_item_id = source.id
+         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
          WHERE source.organization_state = 'inbox' AND source.status = 'active'
+           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
            AND length(trim(source.original_text)) > 0
            AND (
              CASE
-               WHEN json_valid(source.original_text) THEN
+                WHEN substr(ltrim(source.original_text), 1, 1) IN ('{', '[')
+                  AND json_valid(source.original_text) THEN
                  CASE
                    WHEN json_type(source.original_text, '$.chat_messages') = 'array'
                      AND json_array_length(source.original_text, '$.chat_messages') = 0
@@ -1036,7 +1572,11 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
             public_id: row.get(1)?,
             legacy_record_id: row.get(2)?,
             source_type: row.get(3)?,
-            title: row.get(4)?,
+            title: readable_text::display_title(
+                &row.get::<_, String>(4)?,
+                &row.get::<_, String>(17)?,
+                None,
+            ),
             platform: row.get(5)?,
             original_at: row.get(6)?,
             imported_at: row.get(7)?,
@@ -1048,6 +1588,8 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
             assigned_topic_count: row.get(13)?,
             primary_topic_id: row.get(14)?,
             primary_topic_name: row.get(15)?,
+            linked_note_count: row.get(16)?,
+            source_collection_id: row.get(18)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1057,7 +1599,7 @@ pub fn list_source_archive(
     connection: &Connection,
     limit: usize,
 ) -> AppResult<Vec<KnowledgeInboxItem>> {
-    let limit = limit.clamp(1, 2_000) as i64;
+    let limit = limit.clamp(1, 100_000) as i64;
     let mut statement = connection.prepare(
         "SELECT source.id, source.public_id, source.legacy_record_id, source.source_type,
                 source.title, source.platform, source.original_at,
@@ -1066,17 +1608,39 @@ pub fn list_source_archive(
                 COUNT(DISTINCT suggestion.id),
                 COUNT(DISTINCT source_topic.topic_id),
                 MAX(CASE WHEN source_topic.role = 'primary' THEN topic.id END),
-                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END)
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END),
+                COUNT(DISTINCT note_source.note_id),
+                CASE
+                  WHEN length(trim(source.title)) = 0
+                    OR trim(source.title) = '---'
+                    OR lower(trim(source.title)) IN (
+                      'conversation overview', 'conversation summary', 'untitled',
+                      'new chat', 'new conversation', '无标题', '未命名',
+                      'conversation', 'conversations'
+                    )
+                    OR lower(trim(source.title)) LIKE '未命名导入记录%'
+                    OR lower(trim(source.title)) GLOB 'conversation-[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversation_[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversations-[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversations_[0-9]*'
+                  THEN source.original_text
+                  ELSE ''
+                END,
+                source.source_collection_id
          FROM source_items source
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
          LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
          LEFT JOIN topics topic ON topic.id = source_topic.topic_id
+         LEFT JOIN note_sources note_source ON note_source.source_item_id = source.id
+         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
          WHERE source.status = 'active'
+           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
            AND length(trim(source.original_text)) > 0
            AND (
              CASE
-               WHEN json_valid(source.original_text) THEN
+                WHEN substr(ltrim(source.original_text), 1, 1) IN ('{', '[')
+                  AND json_valid(source.original_text) THEN
                  CASE
                    WHEN json_type(source.original_text, '$.chat_messages') = 'array'
                      AND json_array_length(source.original_text, '$.chat_messages') = 0
@@ -1092,27 +1656,201 @@ pub fn list_source_archive(
          ORDER BY COALESCE(source.original_at, source.imported_at) DESC, source.id DESC
          LIMIT ?1",
     )?;
-    let rows = statement.query_map([limit], |row| {
-        Ok(KnowledgeInboxItem {
-            id: row.get(0)?,
-            public_id: row.get(1)?,
-            legacy_record_id: row.get(2)?,
-            source_type: row.get(3)?,
-            title: row.get(4)?,
-            platform: row.get(5)?,
-            original_at: row.get(6)?,
-            imported_at: row.get(7)?,
-            read_state: row.get(8)?,
-            organization_state: row.get(9)?,
-            duplicate_state: row.get(10)?,
-            freshness_state: row.get(11)?,
-            pending_suggestion_count: row.get(12)?,
-            assigned_topic_count: row.get(13)?,
-            primary_topic_id: row.get(14)?,
-            primary_topic_name: row.get(15)?,
-        })
-    })?;
+    let rows = statement.query_map([limit], map_source_archive_row)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn map_source_archive_row(row: &Row<'_>) -> rusqlite::Result<KnowledgeInboxItem> {
+    Ok(KnowledgeInboxItem {
+        id: row.get(0)?,
+        public_id: row.get(1)?,
+        legacy_record_id: row.get(2)?,
+        source_type: row.get(3)?,
+        title: readable_text::display_title(
+            &row.get::<_, String>(4)?,
+            &row.get::<_, String>(17)?,
+            None,
+        ),
+        platform: row.get(5)?,
+        original_at: row.get(6)?,
+        imported_at: row.get(7)?,
+        read_state: row.get(8)?,
+        organization_state: row.get(9)?,
+        duplicate_state: row.get(10)?,
+        freshness_state: row.get(11)?,
+        pending_suggestion_count: row.get(12)?,
+        assigned_topic_count: row.get(13)?,
+        primary_topic_id: row.get(14)?,
+        primary_topic_name: row.get(15)?,
+        linked_note_count: row.get(16)?,
+        source_collection_id: row.get(18)?,
+    })
+}
+
+pub fn count_source_archive(connection: &Connection) -> AppResult<i64> {
+    Ok(connection.query_row(
+        "SELECT COUNT(*)
+         FROM source_items source
+         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
+         WHERE source.status = 'active'
+           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+           AND length(trim(source.original_text)) > 0
+           AND (
+             CASE
+               WHEN substr(ltrim(source.original_text), 1, 1) IN ('{', '[')
+                 AND json_valid(source.original_text) THEN
+                CASE
+                  WHEN json_type(source.original_text, '$.chat_messages') = 'array'
+                    AND json_array_length(source.original_text, '$.chat_messages') = 0
+                    AND length(trim(COALESCE(json_extract(source.original_text, '$.name'), ''))) = 0
+                    AND length(trim(COALESCE(json_extract(source.original_text, '$.summary'), ''))) = 0
+                  THEN 0
+                  ELSE 1
+                END
+              ELSE 1
+            END
+          ) = 1",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+pub fn search_source_archive(
+    connection: &Connection,
+    raw_query: &str,
+    limit: usize,
+) -> AppResult<Vec<KnowledgeInboxItem>> {
+    let query = raw_query.trim();
+    if query.is_empty() {
+        return list_source_archive(connection, limit);
+    }
+    let limit = limit.clamp(1, 100_000) as i64;
+    let use_fts = query.chars().count() >= 3;
+    let fts_expression = format!("\"{}\"", query.replace('"', "\"\""));
+    let content_condition = if use_fts {
+        "source.id IN (
+           SELECT rowid FROM source_items_fts WHERE source_items_fts MATCH ?1
+         )"
+    } else {
+        "instr(lower(source.original_text), lower(?2)) > 0"
+    };
+    let sql = format!(
+        "SELECT source.id, source.public_id, source.legacy_record_id, source.source_type,
+                source.title, source.platform, source.original_at,
+                source.imported_at, source.read_state, source.organization_state,
+                source.duplicate_state, source.freshness_state,
+                COUNT(DISTINCT suggestion.id),
+                COUNT(DISTINCT source_topic.topic_id),
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.id END),
+                MAX(CASE WHEN source_topic.role = 'primary' THEN topic.name END),
+                COUNT(DISTINCT note_source.note_id),
+                CASE
+                  WHEN length(trim(source.title)) = 0
+                    OR trim(source.title) = '---'
+                    OR lower(trim(source.title)) IN (
+                      'conversation overview', 'conversation summary', 'untitled',
+                      'new chat', 'new conversation', '无标题', '未命名',
+                      'conversation', 'conversations'
+                    )
+                    OR lower(trim(source.title)) LIKE '未命名导入记录%'
+                    OR lower(trim(source.title)) GLOB 'conversation-[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversation_[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversations-[0-9]*'
+                    OR lower(trim(source.title)) GLOB 'conversations_[0-9]*'
+                  THEN source.original_text
+                  ELSE ''
+                END,
+                source.source_collection_id
+         FROM source_items source
+         LEFT JOIN classification_suggestions suggestion
+           ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
+         LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
+         LEFT JOIN topics topic ON topic.id = source_topic.topic_id
+         LEFT JOIN note_sources note_source ON note_source.source_item_id = source.id
+         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
+         WHERE source.status = 'active'
+           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+           AND length(trim(source.original_text)) > 0
+           AND (
+             CASE
+               WHEN substr(ltrim(source.original_text), 1, 1) IN ('{{', '[')
+                 AND json_valid(source.original_text) THEN
+                CASE
+                  WHEN json_type(source.original_text, '$.chat_messages') = 'array'
+                    AND json_array_length(source.original_text, '$.chat_messages') = 0
+                    AND length(trim(COALESCE(json_extract(source.original_text, '$.name'), ''))) = 0
+                    AND length(trim(COALESCE(json_extract(source.original_text, '$.summary'), ''))) = 0
+                  THEN 0
+                  ELSE 1
+                END
+              ELSE 1
+            END
+          ) = 1
+           AND (
+             {content_condition}
+             OR instr(lower(source.title), lower(?2)) > 0
+             OR instr(lower(source.platform), lower(?2)) > 0
+             OR instr(lower(source.source_type), lower(?2)) > 0
+             OR EXISTS (
+               SELECT 1
+               FROM source_topics search_source_topic
+               JOIN topics search_topic ON search_topic.id = search_source_topic.topic_id
+               WHERE search_source_topic.source_item_id = source.id
+                 AND instr(lower(search_topic.name), lower(?2)) > 0
+             )
+           )
+         GROUP BY source.id
+         ORDER BY COALESCE(source.original_at, source.imported_at) DESC, source.id DESC
+         LIMIT ?3"
+    );
+    let mut statement = connection.prepare(&sql)?;
+    let rows = statement.query_map(
+        params![fts_expression, query, limit],
+        map_source_archive_row,
+    )?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn update_source_title(
+    connection: &mut Connection,
+    input: &UpdateKnowledgeSourceTitleInput,
+) -> AppResult<KnowledgeSourceTitleUpdate> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err(AppError::Validation("笔记标题不能为空".to_string()));
+    }
+    if title.chars().count() > 200 {
+        return Err(AppError::Validation(
+            "笔记标题不能超过 200 个字符".to_string(),
+        ));
+    }
+    let legacy_record_id = connection
+        .query_row(
+            "SELECT legacy_record_id FROM source_items WHERE id = ?1 AND status = 'active'",
+            [input.source_item_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound("来源不存在或已停用".to_string()))?;
+    let updated_at = Utc::now().to_rfc3339();
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "UPDATE source_items SET title = ?1 WHERE id = ?2",
+        params![title, input.source_item_id],
+    )?;
+    if let Some(record_id) = legacy_record_id {
+        transaction.execute(
+            "UPDATE records SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            params![title, updated_at, record_id],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(KnowledgeSourceTitleUpdate {
+        source_item_id: input.source_item_id,
+        legacy_record_id,
+        title: title.to_string(),
+        updated_at,
+    })
 }
 
 pub fn get_source_original_text(connection: &Connection, source_item_id: i64) -> AppResult<String> {
@@ -1359,6 +2097,7 @@ pub fn apply_personal_catalog(
             ("exact_alias", topic.aliases.len()),
             ("entity", topic.entities.len()),
             ("keyword", topic.keywords.len()),
+            ("negative_keyword", topic.exclusions.len()),
         ] {
             for index in 0..count {
                 managed_rule_ids.insert(format!("catalog-rule-{}-{rule_type}-{index}", topic.key));
@@ -1519,6 +2258,9 @@ pub fn apply_personal_catalog(
             // 目录关键词均为能独立说明主题的短语；一次明确命中需要在
             // 可见正文搜索信号佐证后越过 45 分候选线，但仍不会自动确认。
             ("keyword", &topic.keywords, 0.9_f64),
+            // 排除信号只降低错误主题候选，不删除来源；保守强度允许
+            // 仍有充分直接证据的内容保留候选资格。
+            ("negative_keyword", &topic.exclusions, 0.55_f64),
         ] {
             for (index, pattern) in patterns.iter().enumerate() {
                 let public_id = format!("catalog-rule-{}-{rule_type}-{index}", topic.key);
@@ -2407,8 +3149,9 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
         .ok_or_else(|| AppError::NotFound("主题不存在".to_string()))?;
     let sources = {
         let mut statement = connection.prepare(
-            "SELECT source.id, source.public_id, source.title, source.source_type,
-                    source.original_at, source_topic.confidence
+            "SELECT source.id, source.public_id, source.legacy_record_id,
+                    source.title, source.source_type, source.original_at,
+                    source.imported_at, source_topic.confidence, source.original_text
              FROM source_topics source_topic
              JOIN source_items source ON source.id = source_topic.source_item_id
              WHERE source_topic.topic_id = ?1
@@ -2418,10 +3161,17 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
             Ok(TopicSourceRow {
                 id: row.get(0)?,
                 public_id: row.get(1)?,
-                title: row.get(2)?,
-                source_type: row.get(3)?,
-                original_at: row.get(4)?,
-                confidence: row.get(5)?,
+                legacy_record_id: row.get(2)?,
+                title: readable_text::display_title(
+                    &row.get::<_, String>(3)?,
+                    &row.get::<_, String>(8)?,
+                    None,
+                ),
+                source_type: row.get(4)?,
+                original_at: row.get(5)?,
+                imported_at: row.get(6)?,
+                confidence: row.get(7)?,
+                content_text: readable_text::synthesis_text(&row.get::<_, String>(8)?),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -2512,6 +3262,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
     Ok(KnowledgeTopicDetail {
         notes: list_notes(connection, Some(topic_id), true)?,
         topic,
+        relations: list_topic_relations(connection, topic_id)?,
         sources,
         judgments,
         evidence,
@@ -2520,6 +3271,34 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
         decisions: list_decisions(connection, topic_id)?,
         turning_points: list_turning_points(connection, topic_id)?,
     })
+}
+
+fn list_topic_relations(
+    connection: &Connection,
+    topic_id: i64,
+) -> AppResult<Vec<TopicRelationRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, from_topic_id, to_topic_id, relation_type, confidence,
+                created_by, note, created_at
+         FROM topic_relations
+         WHERE from_topic_id = ?1 OR to_topic_id = ?1
+         ORDER BY confidence DESC, created_at DESC, id DESC",
+    )?;
+    let relations = statement
+        .query_map([topic_id], |row| {
+            Ok(TopicRelationRow {
+                id: row.get(0)?,
+                from_topic_id: row.get(1)?,
+                to_topic_id: row.get(2)?,
+                relation_type: row.get(3)?,
+                confidence: row.get(4)?,
+                created_by: row.get(5)?,
+                note: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(relations)
 }
 
 pub fn preview_topic_merge(
@@ -4104,7 +4883,11 @@ fn read_persisted_classification_rules(
         };
         let value = row.get::<_, String>(2)?;
         let reason = if public_id.starts_with("catalog-rule-") {
-            format!("目录主题短语命中「{value}」")
+            if matches!(rule_type.as_str(), "negative_keyword" | "stopword") {
+                format!("系统排除信号命中「{value}」")
+            } else {
+                format!("目录主题短语命中「{value}」")
+            }
         } else {
             format!("用户规则命中「{value}」")
         };
@@ -4994,7 +5777,222 @@ fn normalize_name(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::database;
-    use crate::models::CreateRecordInput;
+    use crate::models::{CreateRecordInput, RecordSourceInput};
+
+    fn imported_record(
+        title: &str,
+        source_text: &str,
+        source_name: &str,
+        local_path: &str,
+        external_id: Option<&str>,
+    ) -> CreateRecordInput {
+        CreateRecordInput {
+            title: title.to_string(),
+            original_at: None,
+            summary: String::new(),
+            status: Default::default(),
+            tags: Vec::new(),
+            current_judgment: String::new(),
+            confirmed_facts: Vec::new(),
+            key_evidence: Vec::new(),
+            open_questions: Vec::new(),
+            next_actions: Vec::new(),
+            notes: String::new(),
+            source_text: source_text.to_string(),
+            sources: vec![RecordSourceInput {
+                source_type: "import".to_string(),
+                title: source_name.to_string(),
+                url: None,
+                local_path: Some(local_path.to_string()),
+                external_id: external_id.map(str::to_string),
+            }],
+            is_favorite: false,
+        }
+    }
+
+    #[test]
+    fn source_collections_unify_provider_files_and_rename_every_read_model() {
+        let mut connection = database::open_memory_database().expect("database");
+        let chatgpt_text = serde_json::json!({
+            "conversation_id": "chatgpt-one",
+            "mapping": {
+                "1": {"parent": null, "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["同一批 ChatGPT 正文"]}}}
+            },
+            "current_node": "1"
+        })
+        .to_string();
+        let second_chatgpt_text = serde_json::json!({
+            "conversation_id": "chatgpt-two",
+            "mapping": {
+                "1": {"parent": null, "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["另一条 ChatGPT 正文"]}}}
+            },
+            "current_node": "1"
+        })
+        .to_string();
+        let first = database::create_record(
+            &mut connection,
+            &imported_record(
+                "第一条",
+                &chatgpt_text,
+                "ChatGPT_20260726.zip",
+                "C:/archive/ChatGPT_20260726.zip",
+                Some("chatgpt-one"),
+            ),
+        )
+        .expect("first record");
+        database::create_record(
+            &mut connection,
+            &imported_record(
+                "第二条",
+                &second_chatgpt_text,
+                "conversations-004.json",
+                "C:/archive/conversations-004.json",
+                Some("chatgpt-two"),
+            ),
+        )
+        .expect("second record");
+        database::create_record(
+            &mut connection,
+            &imported_record(
+                "零散笔记",
+                "Markdown 正文",
+                "note.md",
+                "C:/archive/note.md",
+                None,
+            ),
+        )
+        .expect("loose file");
+
+        let collections = list_source_collections(&connection).expect("collections");
+        let chatgpt = collections
+            .iter()
+            .find(|item| item.canonical_key == source_identity::CHATGPT_COLLECTION_KEY)
+            .expect("chatgpt collection");
+        assert_eq!(chatgpt.display_name, "ChatGPT 导入");
+        assert_eq!(chatgpt.source_item_count, 2);
+        assert!(collections.iter().any(|item| {
+            item.canonical_key == source_identity::LOOSE_FILES_COLLECTION_KEY
+                && item.display_name == "零散文件导入"
+                && item.source_item_count == 1
+        }));
+
+        let renamed = rename_source_collection(
+            &mut connection,
+            &RenameSourceCollectionInput {
+                source_collection_id: chatgpt.id,
+                display_name: "我的 ChatGPT 资料".to_string(),
+            },
+        )
+        .expect("rename collection");
+        assert!(renamed.user_renamed);
+        let archive = list_source_archive(&connection, 20).expect("archive");
+        assert_eq!(
+            archive
+                .iter()
+                .filter(|item| item.platform == "我的 ChatGPT 资料")
+                .count(),
+            2
+        );
+        let summary =
+            database::list_record_summaries(&connection, &crate::models::RecordQuery::default())
+                .expect("record summaries")
+                .into_iter()
+                .find(|item| item.id == first.id)
+                .expect("first summary");
+        assert_eq!(summary.source_title, "我的 ChatGPT 资料");
+    }
+
+    #[test]
+    fn generic_standalone_title_uses_file_title_instead_of_first_date() {
+        let mut connection = database::open_memory_database().expect("database");
+        let source_text = "---\ntags: [领域, 个人, 八字]\n---\n\
+            <div style=\"font-size:13px\">Bazi Monthly Journal · Restored Visual Edition</div>\n\
+            <div style=\"font-size:30px\">052 个人八字丙午年壬辰月</div>\n\
+            ## 2026年4月5日\n正文";
+        let record = database::create_record(
+            &mut connection,
+            &imported_record(
+                "---",
+                source_text,
+                "052 个人八字丙午年壬辰月.md",
+                "C:/archive/052 个人八字丙午年壬辰月.md",
+                None,
+            ),
+        )
+        .expect("record");
+
+        assert_eq!(record.title, "052 个人八字丙午年壬辰月");
+        connection
+            .execute(
+                "UPDATE source_items
+                 SET title = '2026年4月5日', platform = '052 个人八字丙午年壬辰月.md',
+                     source_collection_id = NULL, identity_sha256 = NULL
+                 WHERE legacy_record_id = ?1",
+                [record.id],
+            )
+            .expect("restore historical source shape");
+        connection
+            .execute(
+                "UPDATE records SET title = '2026年4月5日' WHERE id = ?1",
+                [record.id],
+            )
+            .expect("restore historical record shape");
+        backfill_source_identity_and_collections(&mut connection).expect("historical backfill");
+
+        let restored_record =
+            database::get_record(&connection, record.id).expect("restored record");
+        assert_eq!(restored_record.title, "052 个人八字丙午年壬辰月");
+        let archive = list_source_archive(&connection, 10).expect("archive");
+        assert_eq!(archive[0].title, "052 个人八字丙午年壬辰月");
+        assert_ne!(archive[0].title, "2026年4月5日");
+    }
+
+    #[test]
+    fn exact_visible_content_reuses_existing_source_across_metadata_changes() {
+        let mut connection = database::open_memory_database().expect("database");
+        let first_text = serde_json::json!({
+            "conversation_id": "stable-id",
+            "mapping": {
+                "1": {"parent": null, "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["需要唯一保留的正文"]}}}
+            },
+            "current_node": "1",
+            "update_time": 1
+        })
+        .to_string();
+        let record = database::create_record(
+            &mut connection,
+            &imported_record(
+                "唯一笔记",
+                &first_text,
+                "conversations-001.json",
+                "C:/archive/conversations-001.json",
+                Some("stable-id"),
+            ),
+        )
+        .expect("record");
+        let same_visible_text = serde_json::json!({
+            "conversation_id": "another-container-id",
+            "mapping": {
+                "1": {"parent": null, "message": {"author": {"role": "user"}, "content": {"content_type": "text", "parts": ["需要唯一保留的正文"]}}}
+            },
+            "current_node": "1",
+            "update_time": 999,
+            "default_model_slug": "changed"
+        })
+        .to_string();
+        let exact = find_exact_source_match(
+            &connection,
+            "chatgpt_export",
+            "ChatGPT_new.zip",
+            Some("C:/archive/ChatGPT_new.zip"),
+            &same_visible_text,
+            Some("another-container-id"),
+        )
+        .expect("exact lookup")
+        .expect("exact match");
+        assert_eq!(exact.legacy_record_id, Some(record.id));
+        assert_eq!(exact.reason, "可见正文相同");
+    }
 
     #[test]
     fn legacy_records_enter_real_inbox_and_topics_support_unlimited_depth() {
@@ -5138,6 +6136,102 @@ mod tests {
     }
 
     #[test]
+    fn source_archive_summary_read_does_not_scale_with_full_body_payload() {
+        let mut connection = database::open_memory_database().expect("database");
+        let source_body = "用于验证列表不搬运整篇正文。".repeat(2_000);
+        for index in 0..200 {
+            let record = database::create_record(
+                &mut connection,
+                &CreateRecordInput {
+                    title: format!("性能边界来源 {index}"),
+                    original_at: None,
+                    summary: String::new(),
+                    status: Default::default(),
+                    tags: Vec::new(),
+                    current_judgment: String::new(),
+                    confirmed_facts: Vec::new(),
+                    key_evidence: Vec::new(),
+                    open_questions: Vec::new(),
+                    next_actions: Vec::new(),
+                    notes: String::new(),
+                    source_text: source_body.clone(),
+                    sources: Vec::new(),
+                    is_favorite: false,
+                },
+            )
+            .expect("record");
+            sync_legacy_record(&mut connection, record.id).expect("sync");
+        }
+
+        let started = std::time::Instant::now();
+        let archive = list_source_archive(&connection, 200).expect("source archive");
+        let elapsed = started.elapsed();
+
+        assert_eq!(archive.len(), 200);
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "source archive summary read took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn source_archive_search_covers_full_body_and_title_updates_stay_in_sync() {
+        let mut connection = database::open_memory_database().expect("database");
+        let record = database::create_record(
+            &mut connection,
+            &CreateRecordInput {
+                title: "旧标题".to_string(),
+                original_at: None,
+                summary: String::new(),
+                status: Default::default(),
+                tags: Vec::new(),
+                current_judgment: String::new(),
+                confirmed_facts: Vec::new(),
+                key_evidence: Vec::new(),
+                open_questions: Vec::new(),
+                next_actions: Vec::new(),
+                notes: String::new(),
+                source_text: "只有正文包含：以前数据中心利润分散在多个产业环节。".to_string(),
+                sources: Vec::new(),
+                is_favorite: false,
+            },
+        )
+        .expect("record");
+        sync_legacy_record(&mut connection, record.id).expect("sync");
+        let source = list_source_archive(&connection, 20).expect("archive")[0].clone();
+
+        assert_eq!(count_source_archive(&connection).expect("count"), 1);
+        let matches =
+            search_source_archive(&connection, "数据中心利润分散", 20).expect("full body search");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, source.id);
+
+        let update = update_source_title(
+            &mut connection,
+            &UpdateKnowledgeSourceTitleInput {
+                source_item_id: source.id,
+                title: "数据中心产业利润重分配".to_string(),
+            },
+        )
+        .expect("update title");
+        assert_eq!(update.legacy_record_id, Some(record.id));
+        assert_eq!(
+            list_source_archive(&connection, 20).expect("archive after update")[0].title,
+            "数据中心产业利润重分配"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT title FROM records WHERE id = ?1",
+                    [record.id],
+                    |row| { row.get::<_, String>(0) }
+                )
+                .expect("record title"),
+            "数据中心产业利润重分配"
+        );
+    }
+
+    #[test]
     fn inbox_hides_structurally_empty_conversations_without_deleting_them() {
         let mut connection = database::open_memory_database().expect("database");
         let empty_json = serde_json::json!({
@@ -5256,6 +6350,21 @@ mod tests {
         assert_eq!(archive[0].assigned_topic_count, 1);
         assert_eq!(archive[0].primary_topic_id, Some(topic.id));
         assert_eq!(archive[0].primary_topic_name.as_deref(), Some("本地知识库"));
+        database::move_to_trash(&connection, record.id).expect("move record to trash");
+        assert!(
+            list_source_archive(&connection, 20)
+                .expect("source archive after trash")
+                .is_empty(),
+            "legacy record moved to trash must disappear from source archive"
+        );
+        database::restore_record(&connection, record.id).expect("restore record");
+        assert_eq!(
+            list_source_archive(&connection, 20)
+                .expect("source archive after restore")
+                .len(),
+            1,
+            "restoring the legacy record must restore its source archive entry"
+        );
         add_topic_judgment(
             &mut connection,
             &AddTopicJudgmentInput {
@@ -5635,10 +6744,40 @@ mod tests {
                 .expect("managed keyword weight"),
             0
         );
+        let expected_exclusion_count = proposal
+            .topics
+            .iter()
+            .map(|topic| topic.exclusions.len() as i64)
+            .sum::<i64>();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM classification_rules
+                     WHERE enabled <> 0 AND rule_type = 'negative_keyword'
+                       AND public_id LIKE 'catalog-rule-%' AND weight = 0.55",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("managed exclusion count"),
+            expected_exclusion_count
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM classification_rules rules
+                     JOIN topics ON topics.id = rules.target_topic_id
+                     WHERE rules.enabled <> 0 AND rules.rule_type = 'negative_keyword'
+                       AND topics.public_id = 'catalog-topic-education-career'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("career exclusion count"),
+            0
+        );
     }
 
     #[test]
-    fn catalog_v6_exposes_direct_evidence_for_reported_unmatched_subjects() {
+    fn catalog_v7_exposes_direct_evidence_for_reported_unmatched_subjects() {
         let mut connection = database::open_memory_database().expect("database");
         let proposal = get_personal_catalog_proposal();
         apply_personal_catalog(
@@ -6473,6 +7612,14 @@ mod tests {
             },
         )
         .expect("relation");
+        let related_detail =
+            get_topic_detail(&connection, source_topic.id).expect("detail with relations");
+        assert_eq!(related_detail.relations.len(), 1);
+        assert_eq!(related_detail.relations[0].note, "合并前关系");
+        assert!(related_detail
+            .sources
+            .iter()
+            .all(|source| !source.imported_at.is_empty()));
 
         let split = preview_topic_split(&connection, source_topic.id).expect("split");
         assert_eq!(split.groups.len(), 2);

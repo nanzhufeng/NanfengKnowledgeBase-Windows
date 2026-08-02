@@ -1,11 +1,13 @@
 import {
   CLASSIFIER_ALGORITHM_VERSION,
-  classifySource,
 } from "../knowledge/deterministicClassifier";
+import type { ClassificationResult } from "../knowledge/domain";
 import {
   KnowledgeRepository,
   type KnowledgeClassificationSuggestionRow,
 } from "./knowledgeRepository";
+import { yieldToInteraction } from "../performance/interactionScheduler";
+import { classifySourceAsync } from "./classificationWorker";
 
 type AutoOrganizationRepository = Pick<
   KnowledgeRepository,
@@ -50,7 +52,7 @@ function persistedTopSuggestion(
 }
 
 export function suggestionsForPersistence(
-  classification: ReturnType<typeof classifySource>,
+  classification: ClassificationResult,
 ) {
   if (!classification.suggestions.length) {
     // 空结果也持久化为“本版本已完成”的哨兵行，避免每次打开同一来源都重复计算。
@@ -90,14 +92,14 @@ export async function autoOrganizeImportedSources(
   const catalog = await ensureEditableTopicCatalog(repository);
   result.catalogBootstrapped = catalog.catalogBootstrapped;
   if (!catalog.hasTopics) {
-    result.failures.push("尚无可用主题，来源已保留在收录箱");
+    result.failures.push("尚无可用主题，来源已保留在来源档案待确认");
     return result;
   }
 
   for (const sourceItemId of uniqueSourceIds) {
     try {
       const context = await repository.prepareClassificationContext(sourceItemId);
-      const classification = classifySource(context);
+      const classification = await classifySourceAsync(context);
       const top = classification.suggestions[0];
       const persisted = await repository.saveSuggestions({
         sourceItemId,
@@ -109,9 +111,12 @@ export async function autoOrganizeImportedSources(
         result.unmatchedCount += 1;
         continue;
       }
-      // 分类器只会返回达到直接证据门槛的候选。自动整理把最高候选写成
-      // 可撤销的主主题关联；低分与低边际结果仍在来源档案中保留核对入口，
-      // 但不再要求用户逐条确认后才能看到知识成果。
+      // 分类器只会返回达到直接证据门槛的候选。严格超过 65 分的最高候选
+      // 才自动写入可撤销的主主题关联；其余候选只保存解释和核对入口。
+      if (top.action !== "auto_eligible") {
+        result.awaitingConfirmationCount += 1;
+        continue;
+      }
       const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
       const operation = await repository.confirmClassification({
         sourceItemId,
@@ -121,7 +126,6 @@ export async function autoOrganizeImportedSources(
       });
       result.operationIds.push(operation.operationId);
       result.autoClassifiedCount += 1;
-      if (top.action !== "auto_eligible") result.awaitingConfirmationCount += 1;
     } catch (error) {
       result.failures.push(
         error instanceof Error ? error.message : `来源 ${sourceItemId} 自动分类失败`,
@@ -139,10 +143,24 @@ export type ClassificationUpgradeProgress = {
   failures: number;
 };
 
+export type ClassificationUpgradeOptions = {
+  signal?: AbortSignal;
+  onProgress?: (progress: ClassificationUpgradeProgress) => void;
+  yieldControl?: (signal?: AbortSignal) => Promise<boolean>;
+};
+
 export async function upgradeOutdatedInboxSuggestions(
   repository: AutoOrganizationRepository = new KnowledgeRepository(),
-  onProgress?: (progress: ClassificationUpgradeProgress) => void,
+  options: ClassificationUpgradeOptions = {},
 ): Promise<ClassificationUpgradeProgress> {
+  const {
+    signal,
+    onProgress,
+    yieldControl = yieldToInteraction,
+  } = options;
+  if (signal?.aborted) {
+    return { completed: 0, total: 0, matched: 0, unmatched: 0, failures: 0 };
+  }
   const catalog = await ensureEditableTopicCatalog(repository);
   if (!catalog.hasTopics) {
     return { completed: 0, total: 0, matched: 0, unmatched: 0, failures: 1 };
@@ -165,9 +183,12 @@ export async function upgradeOutdatedInboxSuggestions(
   onProgress?.({ ...progress });
 
   for (const sourceItemId of pendingIds) {
+    // 每条历史来源都是独立工作单元。先让出主线程，再开始下一条，避免批量分类
+    // 在 WebView 上形成连续长任务并抢占点击、滚动和选择反馈。
+    if (!await yieldControl(signal)) break;
     try {
       const context = await repository.prepareClassificationContext(sourceItemId);
-      const classification = classifySource(context);
+      const classification = await classifySourceAsync(context);
       const persisted = await repository.saveSuggestions({
         sourceItemId,
         classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
@@ -175,14 +196,16 @@ export async function upgradeOutdatedInboxSuggestions(
       });
       const top = classification.suggestions[0];
       if (top) {
-        const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
-        await repository.confirmClassification({
-          sourceItemId,
-          topicId: Number(top.topicId),
-          suggestionId: savedTop?.id ?? null,
-          confidence: top.confidence,
-        });
         progress.matched += 1;
+        if (top.action === "auto_eligible") {
+          const savedTop = persistedTopSuggestion(persisted, Number(top.topicId));
+          await repository.confirmClassification({
+            sourceItemId,
+            topicId: Number(top.topicId),
+            suggestionId: savedTop?.id ?? null,
+            confidence: top.confidence,
+          });
+        }
       } else {
         progress.unmatched += 1;
       }
@@ -190,10 +213,8 @@ export async function upgradeOutdatedInboxSuggestions(
       progress.failures += 1;
     }
     progress.completed += 1;
-    if (progress.completed % 10 === 0 || progress.completed === progress.total) {
+    if (progress.completed % 25 === 0 || progress.completed === progress.total) {
       onProgress?.({ ...progress });
-      // 让出渲染帧，避免全量升级期间界面再次出现“卡死”感。
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
   return progress;

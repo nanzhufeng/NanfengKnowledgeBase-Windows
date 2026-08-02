@@ -2,7 +2,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use encoding_rs::GBK;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -46,10 +46,12 @@ pub struct ImportPreview {
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateCandidate {
     pub item_index: usize,
-    pub record_id: i64,
+    pub record_id: Option<i64>,
+    pub duplicate_of_item_index: Option<usize>,
     pub title: String,
     pub reason: String,
     pub score: f64,
+    pub exact: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -251,10 +253,19 @@ pub fn prepare_import(
         )
     };
     let mut duplicate_candidates = detect_duplicate_candidates(connection, &full_records)?;
-    if !duplicate_candidates.is_empty() {
+    let exact_duplicate_count = duplicate_candidates
+        .iter()
+        .filter(|item| item.exact)
+        .count();
+    let similar_candidate_count = duplicate_candidates.len() - exact_duplicate_count;
+    if exact_duplicate_count > 0 {
         warnings.push(format!(
-            "发现 {} 个记录级重复候选；请在写入前选择跳过、副本、追加版本或逐条处理",
-            duplicate_candidates.len()
+            "发现 {exact_duplicate_count} 条来源身份或可见正文完全相同的笔记；确认后只复用已有笔记并追加来源证据，不创建副本"
+        ));
+    }
+    if similar_candidate_count > 0 {
+        warnings.push(format!(
+            "另有 {similar_candidate_count} 条标题相似候选；相似标题不会被自动当作重复"
         ));
     }
     if duplicate_candidates.len() > MAX_DUPLICATE_CANDIDATES {
@@ -263,7 +274,7 @@ pub fn prepare_import(
         ));
         duplicate_candidates.truncate(MAX_DUPLICATE_CANDIDATES);
     }
-    let duplicate = hash_duplicate || !duplicate_candidates.is_empty();
+    let duplicate = hash_duplicate || duplicate_candidates.iter().any(|candidate| candidate.exact);
     let record_count = full_records.len();
     let records = full_records
         .iter()
@@ -357,12 +368,71 @@ fn detect_duplicate_candidates(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut candidates = Vec::new();
+    let mut seen_import_identities = std::collections::HashMap::<String, (usize, String)>::new();
     for (item_index, record) in records.iter().enumerate() {
-        let external_id = record
-            .sources
-            .iter()
-            .find_map(|source| source.external_id.as_deref())
-            .filter(|value| !value.trim().is_empty());
+        let primary_source = record.sources.first();
+        let external_id = primary_source
+            .and_then(|source| source.external_id.as_deref())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| crate::knowledge::source_identity::external_item_id(&record.source_text));
+        let source_type = primary_source
+            .map(|source| source.source_type.as_str())
+            .unwrap_or("import");
+        let source_name = primary_source
+            .map(|source| source.title.as_str())
+            .unwrap_or("导入文件");
+        let local_path = primary_source.and_then(|source| source.local_path.as_deref());
+        let collection = crate::knowledge::source_identity::infer_source_collection(
+            source_type,
+            source_name,
+            local_path,
+            &record.source_text,
+        );
+        let content_identity =
+            crate::knowledge::source_identity::content_identity_sha256(&record.source_text);
+        let import_identity = external_id
+            .as_deref()
+            .map(|value| format!("external:{}:{}", collection.canonical_key, value.trim()))
+            .or_else(|| {
+                content_identity
+                    .as_ref()
+                    .map(|value| format!("content:{value}"))
+            });
+        if let Some(identity) = import_identity.as_ref() {
+            if let Some((previous_index, previous_title)) = seen_import_identities.get(identity) {
+                candidates.push(DuplicateCandidate {
+                    item_index,
+                    record_id: None,
+                    duplicate_of_item_index: Some(*previous_index),
+                    title: previous_title.clone(),
+                    reason: "本次导入中来源身份或可见正文相同".to_string(),
+                    score: 1.0,
+                    exact: true,
+                });
+                continue;
+            }
+            seen_import_identities.insert(identity.clone(), (item_index, record.title.clone()));
+        }
+        if let Some(exact) = crate::knowledge::repository::find_exact_source_match(
+            connection,
+            source_type,
+            source_name,
+            local_path,
+            &record.source_text,
+            external_id.as_deref(),
+        )? {
+            candidates.push(DuplicateCandidate {
+                item_index,
+                record_id: exact.legacy_record_id,
+                duplicate_of_item_index: None,
+                title: exact.title,
+                reason: exact.reason,
+                score: 1.0,
+                exact: true,
+            });
+            continue;
+        }
         let source_date = record
             .original_at
             .as_deref()
@@ -373,7 +443,9 @@ fn detect_duplicate_candidates(
         for (record_id, title, created_at, updated_at, existing_external_id) in &existing {
             let existing_title = normalize_title(title);
             let similarity = title_similarity(&normalized_title, &existing_title);
-            let (reason, score) = if external_id.is_some_and(|value| value == existing_external_id)
+            let (reason, score) = if external_id
+                .as_deref()
+                .is_some_and(|value| value == existing_external_id)
             {
                 ("来源 ID 相同", 1.0)
             } else if normalized_title == existing_title
@@ -392,10 +464,12 @@ fn detect_duplicate_candidates(
             if seen.insert(*record_id) {
                 candidates.push(DuplicateCandidate {
                     item_index,
-                    record_id: *record_id,
+                    record_id: Some(*record_id),
+                    duplicate_of_item_index: None,
                     title: title.clone(),
                     reason: reason.to_string(),
                     score,
+                    exact: false,
                 });
             }
         }
@@ -567,6 +641,7 @@ pub fn confirm_import(
     let duplicate_item_indices = if default_strategy == "skip" {
         detect_duplicate_candidates(connection, &records)?
             .into_iter()
+            .filter(|candidate| candidate.exact)
             .map(|candidate| candidate.item_index)
             .collect::<std::collections::HashSet<_>>()
     } else {
@@ -594,6 +669,58 @@ pub fn confirm_import(
                 local_path: Some(job.1.clone()),
                 external_id: Some(job.0.clone()),
             });
+        }
+        let primary_source = record_input.sources.first();
+        let external_id = primary_source
+            .and_then(|source| source.external_id.as_deref())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                crate::knowledge::source_identity::external_item_id(&record_input.source_text)
+            });
+        let source_type = primary_source
+            .map(|source| source.source_type.as_str())
+            .unwrap_or("import");
+        let source_name = primary_source
+            .map(|source| source.title.as_str())
+            .unwrap_or("导入文件");
+        let local_path = primary_source.and_then(|source| source.local_path.as_deref());
+        if let Some(existing) = crate::knowledge::repository::find_exact_source_match(
+            connection,
+            source_type,
+            source_name,
+            local_path,
+            &record_input.source_text,
+            external_id.as_deref(),
+        )? {
+            crate::knowledge::repository::register_import_origin(
+                connection,
+                existing.source_item_id,
+                &input.job_id,
+                &job.3,
+                &job.1,
+                &job.0,
+                external_id.as_deref(),
+            )?;
+            connection.execute(
+                "INSERT INTO import_job_items(
+                   import_job_id, item_index, status, record_id, reason_code, message, raw_json
+                 ) VALUES (?1, ?2, 'skipped', ?3, 'exact_duplicate_reused', ?4, ?5)",
+                params![
+                    input.job_id,
+                    index as i64,
+                    existing.legacy_record_id,
+                    format!("{}，已复用已有笔记并追加导入来源证据", existing.reason),
+                    import_item_audit_json(&record_input)?
+                ],
+            )?;
+            if let (Some(item_external_id), Some(record_id)) =
+                (external_id.as_deref(), existing.legacy_record_id)
+            {
+                imported_conversation_ids.insert(item_external_id.to_string(), record_id);
+            }
+            skipped_count += 1;
+            continue;
         }
         let strategy = if default_strategy == "manual" {
             input
@@ -657,6 +784,15 @@ pub fn confirm_import(
                     "SELECT id FROM source_items WHERE legacy_record_id = ?1",
                     [record.id],
                     |row| row.get::<_, i64>(0),
+                )?;
+                crate::knowledge::repository::register_import_origin(
+                    connection,
+                    source_item_id,
+                    &input.job_id,
+                    &job.3,
+                    &job.1,
+                    &job.0,
+                    external_id.as_deref(),
                 )?;
                 imported_source_item_ids.push(source_item_id);
                 if let Some(external_id) = record_input
@@ -1298,6 +1434,7 @@ fn parse_json_records(
                 "external_id",
                 "sourceId",
                 "source_id",
+                "uuid",
             ],
         );
         if sources[0].external_id.is_none() && object.get("mapping").is_some() {
@@ -1365,17 +1502,13 @@ fn parse_text_record(text: &str, source: RecordSourceInput, markdown: bool) -> C
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     let body_title = non_empty.first().copied().unwrap_or("未命名导入记录");
-    let title = if markdown {
-        readable_markdown_title(text, Some(&source.title)).unwrap_or_else(|| {
-            frontmatter_title
-                .unwrap_or(body_title)
-                .trim_start_matches('#')
-                .trim()
-                .to_string()
-        })
-    } else {
-        body_title.to_string()
-    };
+    let title = readable_markdown_title(text, Some(&source.title)).unwrap_or_else(|| {
+        frontmatter_title
+            .unwrap_or(body_title)
+            .trim_start_matches('#')
+            .trim()
+            .to_string()
+    });
     let summary_index = usize::from(frontmatter_title.is_none());
     let summary = non_empty
         .get(summary_index)
@@ -1471,6 +1604,13 @@ fn compact_markdown_title(value: &str) -> Option<String> {
     })
 }
 
+pub(crate) fn date_only_title(value: &str) -> bool {
+    let trimmed = value.trim();
+    ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y年%m月%d日"]
+        .iter()
+        .any(|format| NaiveDate::parse_from_str(trimmed, format).is_ok())
+}
+
 pub(crate) fn readable_markdown_title(
     text: &str,
     source_file_name: Option<&str>,
@@ -1501,7 +1641,10 @@ pub(crate) fn readable_markdown_title(
     let body = &lines[body_start..];
     if let Some(title) = body.iter().find_map(|line| {
         let trimmed = line.trim();
-        trimmed.strip_prefix("# ").and_then(compact_markdown_title)
+        trimmed
+            .strip_prefix("# ")
+            .and_then(compact_markdown_title)
+            .filter(|title| !date_only_title(title))
     }) {
         return Some(title);
     }
@@ -1509,6 +1652,7 @@ pub(crate) fn readable_markdown_title(
         .iter()
         .filter(|line| line.contains('<') && line.contains('>'))
         .filter_map(|line| compact_markdown_title(line))
+        .filter(|title| !date_only_title(title))
         .collect::<Vec<_>>();
     if let Some(title) = html_titles.iter().find(|title| {
         title
@@ -2012,6 +2156,32 @@ mod tests {
             true,
         );
         assert_eq!(styled_html.title, "052 个人八字丙午年壬辰月");
+
+        let date_heading = parse_text_record(
+            "# 2026年4月5日\n正文",
+            RecordSourceInput {
+                source_type: "import".to_string(),
+                title: "个人阶段记录.md".to_string(),
+                url: None,
+                local_path: Some("imports/raw/个人阶段记录.md".to_string()),
+                external_id: None,
+            },
+            true,
+        );
+        assert_eq!(date_heading.title, "个人阶段记录");
+
+        let plain_text = parse_text_record(
+            "2026年4月5日\n正文",
+            RecordSourceInput {
+                source_type: "import".to_string(),
+                title: "项目复盘.txt".to_string(),
+                url: None,
+                local_path: Some("imports/raw/项目复盘.txt".to_string()),
+                external_id: None,
+            },
+            false,
+        );
+        assert_eq!(plain_text.title, "项目复盘");
     }
 
     #[test]
@@ -2255,7 +2425,7 @@ mod tests {
         assert!(second
             .duplicate_candidates
             .iter()
-            .any(|candidate| candidate.reason == "标题相同"));
+            .any(|candidate| candidate.exact));
         let error = confirm_import(
             &mut connection,
             &paths,
@@ -2465,5 +2635,111 @@ mod tests {
         assert!(jobs
             .iter()
             .any(|job| job.id == cancelled.job_id && job.status == "cancelled"));
+    }
+
+    #[test]
+    fn exact_note_from_another_container_reuses_record_and_keeps_both_origins() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let mut connection = database::open_database(&paths.database).expect("database");
+        let first_file = directory.path().join("conversations-004.json");
+        let second_file = directory.path().join("ChatGPT_new.json");
+        let mapping = serde_json::json!({
+            "1": {
+                "parent": null,
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"content_type": "text", "parts": ["不能重复保留的同一篇笔记"]}
+                }
+            }
+        });
+        fs::write(
+            &first_file,
+            serde_json::to_vec(&serde_json::json!({
+                "title": "同一笔记",
+                "conversation_id": "container-a",
+                "mapping": mapping.clone(),
+                "current_node": "1",
+                "update_time": 1
+            }))
+            .expect("first json"),
+        )
+        .expect("first file");
+        fs::write(
+            &second_file,
+            serde_json::to_vec(&serde_json::json!({
+                "title": "改过标题但正文相同",
+                "conversation_id": "container-b",
+                "mapping": mapping,
+                "current_node": "1",
+                "update_time": 2,
+                "default_model_slug": "changed"
+            }))
+            .expect("second json"),
+        )
+        .expect("second file");
+
+        let first = prepare_import(&connection, &paths, &first_file).expect("first preview");
+        let first_result = confirm_import(
+            &mut connection,
+            &paths,
+            &ConfirmImportInput {
+                job_id: first.job_id,
+                records: first.records,
+                allow_duplicate: false,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({}),
+            },
+        )
+        .expect("first import");
+        assert_eq!(first_result.imported_count, 1);
+
+        let second = prepare_import(&connection, &paths, &second_file).expect("second preview");
+        assert!(second.duplicate);
+        assert!(second
+            .duplicate_candidates
+            .iter()
+            .any(|candidate| { candidate.exact && candidate.reason == "可见正文相同" }));
+        let second_result = confirm_import(
+            &mut connection,
+            &paths,
+            &ConfirmImportInput {
+                job_id: second.job_id,
+                records: second.records,
+                allow_duplicate: true,
+                duplicate_strategy: "copy".to_string(),
+                item_strategies: Vec::new(),
+                mapping: serde_json::json!({}),
+            },
+        )
+        .expect("reuse exact note");
+        assert_eq!(second_result.imported_count, 0);
+        assert_eq!(second_result.skipped_count, 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM records", [], |row| row
+                    .get::<_, i64>(0))
+                .expect("record count"),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM source_import_origins", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("origin count"),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT display_name FROM source_collections WHERE canonical_key = 'chatgpt-import'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .expect("collection name"),
+            "ChatGPT 导入"
+        );
     }
 }

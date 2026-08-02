@@ -1,6 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import {
+  attachmentItemSchema,
+  intelligenceRecordSchema,
+  type AttachmentItem,
+  type IntelligenceRecord,
+} from "../domain/models";
+import {
   sourceKindSchema,
   topicStatusSchema,
   type ClassificationContext,
@@ -23,6 +29,25 @@ const inboxItemSchema = z.object({
   assignedTopicCount: z.number().int(),
   primaryTopicId: z.number().int().nullable(),
   primaryTopicName: z.string().nullable(),
+  linkedNoteCount: z.number().int(),
+  sourceCollectionId: z.number().int().nullable().default(null),
+});
+
+const sourceTitleUpdateSchema = z.object({
+  sourceItemId: z.number().int(),
+  legacyRecordId: z.number().int().nullable(),
+  title: z.string(),
+  updatedAt: z.string(),
+});
+
+const sourceCollectionSchema = z.object({
+  id: z.number().int(),
+  canonicalKey: z.string(),
+  displayName: z.string(),
+  collectionKind: z.string(),
+  userRenamed: z.boolean(),
+  sourceItemCount: z.number().int().nonnegative(),
+  originalFileCount: z.number().int().nonnegative(),
 });
 
 const domainRowSchema = z.object({
@@ -281,10 +306,13 @@ const topicRelationRowSchema = z.object({
 const topicSourceRowSchema = z.object({
   id: z.number().int(),
   publicId: z.string(),
+  legacyRecordId: z.number().int().nullable().optional(),
   title: z.string(),
   sourceType: z.string(),
   originalAt: z.string().nullable(),
+  importedAt: z.string().nullable().default(null),
   confidence: z.number().nullable(),
+  contentText: z.string().optional(),
 });
 
 const topicJudgmentRowSchema = z.object({
@@ -411,6 +439,7 @@ const topicTurningPointRowSchema = z.object({
 
 const topicDetailSchema = z.object({
   topic: topicRowSchema,
+  relations: z.array(topicRelationRowSchema).default([]),
   sources: z.array(topicSourceRowSchema),
   judgments: z.array(topicJudgmentRowSchema),
   evidence: z.array(topicEvidenceRowSchema),
@@ -422,6 +451,8 @@ const topicDetailSchema = z.object({
 });
 
 export type KnowledgeInboxItem = z.infer<typeof inboxItemSchema>;
+export type KnowledgeSourceTitleUpdate = z.infer<typeof sourceTitleUpdateSchema>;
+export type SourceCollection = z.infer<typeof sourceCollectionSchema>;
 export type KnowledgeDomainRow = z.infer<typeof domainRowSchema>;
 export type KnowledgeTopicRow = z.infer<typeof topicRowSchema>;
 export type KnowledgeClassificationSuggestionRow = z.infer<typeof suggestionRowSchema>;
@@ -435,6 +466,7 @@ export type TopicMergePreview = z.infer<typeof topicMergePreviewSchema>;
 export type TopicMergeResult = z.infer<typeof topicMergeResultSchema>;
 export type TopicSplitPreview = z.infer<typeof topicSplitPreviewSchema>;
 export type TopicRelationSuggestion = z.infer<typeof topicRelationSuggestionSchema>;
+export type TopicRelationRow = z.infer<typeof topicRelationRowSchema>;
 export type PersonalCatalogProposal = z.infer<typeof personalCatalogProposalSchema>;
 export type PersonalCatalogApplyResult = z.infer<typeof personalCatalogApplyResultSchema>;
 export type KnowledgeTopicAliasRow = z.infer<typeof topicAliasRowSchema>;
@@ -481,37 +513,135 @@ export type SaveKnowledgeSuggestionsInput = {
 };
 
 export class KnowledgeRepository {
+  private readonly inFlightReads = new Map<string, Promise<unknown>>();
+  private readonly sourceTextCache = new Map<number, string>();
+
   private get desktopAvailable() {
     return "__TAURI_INTERNALS__" in window;
   }
 
+  private coalesceRead<T>(key: string, loader: () => Promise<T>): Promise<T> {
+    const current = this.inFlightReads.get(key) as Promise<T> | undefined;
+    if (current) return current;
+    const pending = loader().finally(() => {
+      if (this.inFlightReads.get(key) === pending) this.inFlightReads.delete(key);
+    });
+    this.inFlightReads.set(key, pending);
+    return pending;
+  }
+
   async listInbox(limit = 120): Promise<KnowledgeInboxItem[]> {
     if (!this.desktopAvailable) return [];
-    return z.array(inboxItemSchema).parse(await invoke("list_knowledge_inbox", { limit }));
+    return this.coalesceRead(`inbox:${limit}`, async () => (
+      z.array(inboxItemSchema).parse(await invoke("list_knowledge_inbox", { limit }))
+    ));
   }
 
   async listSourceArchive(limit = 120): Promise<KnowledgeInboxItem[]> {
     if (!this.desktopAvailable) return [];
-    return z.array(inboxItemSchema).parse(
-      await invoke("list_knowledge_source_archive", { limit }),
+    return this.coalesceRead(`source-archive:${limit}`, async () => (
+      z.array(inboxItemSchema).parse(
+        await invoke("list_knowledge_source_archive", { limit }),
+      )
+    ));
+  }
+
+  async countSourceArchive(): Promise<number> {
+    if (!this.desktopAvailable) return 0;
+    return this.coalesceRead("source-archive-count", async () => (
+      z.number().int().nonnegative().parse(
+        await invoke("count_knowledge_source_archive"),
+      )
+    ));
+  }
+
+  async searchSourceArchive(query: string, limit = 2_000): Promise<KnowledgeInboxItem[]> {
+    if (!this.desktopAvailable) return [];
+    const normalized = query.trim();
+    if (!normalized) return this.listSourceArchive(limit);
+    return this.coalesceRead(`source-archive-search:${normalized}:${limit}`, async () => (
+      z.array(inboxItemSchema).parse(
+        await invoke("search_knowledge_source_archive", { query: normalized, limit }),
+      )
+    ));
+  }
+
+  async updateSourceTitle(
+    sourceItemId: number,
+    title: string,
+  ): Promise<KnowledgeSourceTitleUpdate> {
+    const result = sourceTitleUpdateSchema.parse(
+      await invoke("update_knowledge_source_title", {
+        input: { sourceItemId, title },
+      }),
+    );
+    this.sourceTextCache.delete(sourceItemId);
+    return result;
+  }
+
+  async listSourceCollections(): Promise<SourceCollection[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(sourceCollectionSchema).parse(
+      await invoke("list_knowledge_source_collections"),
+    );
+  }
+
+  async renameSourceCollection(
+    sourceCollectionId: number,
+    displayName: string,
+  ): Promise<SourceCollection> {
+    return sourceCollectionSchema.parse(
+      await invoke("rename_knowledge_source_collection", {
+        input: { sourceCollectionId, displayName },
+      }),
+    );
+  }
+
+  async ensureSourceActionRecord(sourceItemId: number): Promise<IntelligenceRecord> {
+    return intelligenceRecordSchema.parse(
+      await invoke("ensure_knowledge_source_action_record", { sourceItemId }),
     );
   }
 
   async getSourceOriginalText(sourceItemId: number): Promise<string> {
     if (!this.desktopAvailable) return "";
-    return z.string().parse(
-      await invoke("get_knowledge_source_original_text", { sourceItemId }),
-    );
+    const cached = this.sourceTextCache.get(sourceItemId);
+    if (cached !== undefined) return cached;
+    return this.coalesceRead(`source-text:${sourceItemId}`, async () => {
+      const text = z.string().parse(
+        await invoke("get_knowledge_source_original_text", { sourceItemId }),
+      );
+      this.sourceTextCache.set(sourceItemId, text);
+      while (this.sourceTextCache.size > 8) {
+        const oldest = this.sourceTextCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.sourceTextCache.delete(oldest);
+      }
+      return text;
+    });
+  }
+
+  async listSourceAttachments(sourceItemId: number): Promise<AttachmentItem[]> {
+    if (!this.desktopAvailable) return [];
+    return this.coalesceRead(`source-attachments:${sourceItemId}`, async () => (
+      z.array(attachmentItemSchema).parse(
+        await invoke("list_knowledge_source_attachments", { sourceItemId }),
+      )
+    ));
   }
 
   async listDomains(): Promise<KnowledgeDomainRow[]> {
     if (!this.desktopAvailable) return [];
-    return z.array(domainRowSchema).parse(await invoke("list_knowledge_domains"));
+    return this.coalesceRead("domains", async () => (
+      z.array(domainRowSchema).parse(await invoke("list_knowledge_domains"))
+    ));
   }
 
   async listTopics(): Promise<KnowledgeTopicRow[]> {
     if (!this.desktopAvailable) return [];
-    return z.array(topicRowSchema).parse(await invoke("list_knowledge_topics"));
+    return this.coalesceRead("topics", async () => (
+      z.array(topicRowSchema).parse(await invoke("list_knowledge_topics"))
+    ));
   }
 
   async createDomain(name: string, description = ""): Promise<KnowledgeDomainRow> {
@@ -715,7 +845,9 @@ export class KnowledgeRepository {
   }
 
   async getTopicDetail(topicId: number): Promise<KnowledgeTopicDetail> {
-    return topicDetailSchema.parse(await invoke("get_knowledge_topic_detail", { topicId }));
+    return this.coalesceRead(`topic-detail:${topicId}`, async () => (
+      topicDetailSchema.parse(await invoke("get_knowledge_topic_detail", { topicId }))
+    ));
   }
 
   async listNotes(

@@ -69,16 +69,11 @@ describe("autoOrganizeImportedSources", () => {
 
     expect(result.catalogBootstrapped).toBe(true);
     expect(result.analyzedCount).toBe(1);
-    expect(result.autoClassifiedCount).toBe(1);
+    expect(result.autoClassifiedCount).toBe(0);
     expect(result.awaitingConfirmationCount).toBe(1);
     expect(repository.applyPersonalCatalog).toHaveBeenCalledWith("catalog-v1");
     expect(repository.saveSuggestions).toHaveBeenCalledTimes(1);
-    expect(repository.confirmClassification).toHaveBeenCalledWith({
-      sourceItemId: 31,
-      topicId: 7,
-      suggestionId: 91,
-      confidence: expect.any(Number),
-    });
+    expect(repository.confirmClassification).not.toHaveBeenCalled();
   });
 
   it("automatically accepts only a high-confidence eligible suggestion", async () => {
@@ -106,7 +101,7 @@ describe("autoOrganizeImportedSources", () => {
       suggestionId: 92,
       confidence: expect.any(Number),
     });
-    expect(repository.confirmClassification.mock.calls[0][0].confidence).toBeGreaterThanOrEqual(90);
+    expect(repository.confirmClassification.mock.calls[0][0].confidence).toBeGreaterThan(65);
   });
 
   it("refreshes the managed catalog and clears unsupported old suggestions", async () => {
@@ -157,7 +152,8 @@ describe("autoOrganizeImportedSources", () => {
       confirmClassification: vi.fn(),
     };
 
-    const result = await upgradeOutdatedInboxSuggestions(repository as never);
+    const yieldControl = vi.fn().mockResolvedValue(true);
+    const result = await upgradeOutdatedInboxSuggestions(repository as never, { yieldControl });
 
     expect(result).toEqual({
       completed: 2,
@@ -168,6 +164,7 @@ describe("autoOrganizeImportedSources", () => {
     });
     expect(repository.prepareClassificationContext).toHaveBeenCalledTimes(2);
     expect(repository.prepareClassificationContext).not.toHaveBeenCalledWith(41);
+    expect(yieldControl).toHaveBeenCalledTimes(2);
     expect(repository.saveSuggestions).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -180,5 +177,32 @@ describe("autoOrganizeImportedSources", () => {
       sourceItemId: 43,
       topicId: 7,
     }));
+  });
+
+  it("stops historical upgrading as soon as the route is cancelled", async () => {
+    const repository = {
+      listTopics: vi.fn().mockResolvedValue([{ id: 7 }]),
+      getPersonalCatalogProposal: vi.fn().mockResolvedValue(null),
+      applyPersonalCatalog: vi.fn(),
+      listInbox: vi.fn().mockResolvedValue([{ id: 51 }, { id: 52 }]),
+      listClassificationRunSourceIds: vi.fn().mockResolvedValue([]),
+      prepareClassificationContext: vi.fn().mockResolvedValue(context(51, 0.9)),
+      saveSuggestions: vi.fn().mockResolvedValue([]),
+      confirmClassification: vi.fn(),
+    };
+    const controller = new AbortController();
+    const yieldControl = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return false;
+    });
+
+    const result = await upgradeOutdatedInboxSuggestions(repository as never, {
+      signal: controller.signal,
+      yieldControl,
+    });
+
+    expect(result.completed).toBe(0);
+    expect(repository.prepareClassificationContext).not.toHaveBeenCalled();
+    expect(repository.saveSuggestions).not.toHaveBeenCalled();
   });
 });

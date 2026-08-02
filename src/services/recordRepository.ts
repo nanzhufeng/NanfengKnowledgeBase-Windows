@@ -95,6 +95,7 @@ export interface RecordRepository {
   exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult>;
   writeDocxExport(fileName: string, bytes: number[]): Promise<ExportResult>;
   writeMarkdownExport(fileName: string, content: string): Promise<ExportResult>;
+  copyExportedFile(filePath: string): Promise<void>;
   exportAllJson(): Promise<ExportResult>;
   exportRecords(input: ExportRecordsInput): Promise<ExportResult>;
   createBackup(): Promise<string>;
@@ -303,6 +304,10 @@ class TauriRecordRepository implements RecordRepository {
 
   async writeMarkdownExport(fileName: string, content: string): Promise<ExportResult> {
     return exportResultSchema.parse(await invoke("write_markdown_export", { fileName, content }));
+  }
+
+  async copyExportedFile(filePath: string): Promise<void> {
+    await invoke("copy_exported_file", { filePath });
   }
 
   async exportAllJson(): Promise<ExportResult> {
@@ -686,6 +691,8 @@ export class BrowserRecordRepository implements RecordRepository {
       attachmentsBytes: 0,
       backupsBytes: 0,
       totalBytes,
+      diskAvailableBytes: 0,
+      diskTotalBytes: 0,
       lastBackupAt: null,
     };
   }
@@ -803,6 +810,10 @@ export class BrowserRecordRepository implements RecordRepository {
 
   async openExportDirectory(): Promise<void> {
     throw new RepositoryError("unsupported", "浏览器演示模式没有导出目录");
+  }
+
+  async copyExportedFile(): Promise<void> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能复制本机文件");
   }
 
   private createVersion(
@@ -926,6 +937,8 @@ class SafeTauriRepository implements RecordRepository {
     this.run(() => this.inner.writeDocxExport(fileName, bytes));
   writeMarkdownExport = (fileName: string, content: string) =>
     this.run(() => this.inner.writeMarkdownExport(fileName, content));
+  copyExportedFile = (filePath: string) =>
+    this.run(() => this.inner.copyExportedFile(filePath));
   exportAllJson = () => this.run(() => this.inner.exportAllJson());
   exportRecords = (input: ExportRecordsInput) => this.run(() => this.inner.exportRecords(input));
   createBackup = () => this.run(() => this.inner.createBackup());
