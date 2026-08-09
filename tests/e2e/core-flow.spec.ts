@@ -81,6 +81,31 @@ test("快捷键设置使用独立的紧凑比例和两列信息布局", async ({
   });
 });
 
+test("设置页所有主卡片共用同一内容列宽和左右起点", async ({ page }) => {
+  await page.getByRole("button", { name: /设置/ }).click();
+  const cards = [
+    page.locator(".skin-settings-panel"),
+    page.locator(".runtime-build-card"),
+    page.locator(".ai-settings-panel"),
+    page.locator(".settings-row").first(),
+  ];
+  const boxes = await Promise.all(cards.map(async (card) => {
+    await expect(card).toBeVisible();
+    return card.boundingBox();
+  }));
+  for (const box of boxes) expect(box).not.toBeNull();
+  const reference = boxes[0]!;
+  expect(reference.width).toBe(900);
+  for (const box of boxes.slice(1)) {
+    expect(Math.abs(box!.x - reference.x)).toBeLessThan(1);
+    expect(Math.abs(box!.width - reference.width)).toBeLessThan(1);
+  }
+  await page.screenshot({
+    path: resolve(".runtime-qa", "settings-unified-card-width-1702x1066.png"),
+    fullPage: false,
+  });
+});
+
 test("来源记录编辑自动保存并在刷新后恢复", async ({ page }) => {
   await page.locator(".record-card").first().click();
   await expect(page.locator(".detail-panel h1")).toBeVisible();

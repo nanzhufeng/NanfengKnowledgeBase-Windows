@@ -23,7 +23,7 @@ AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`
 
 ## 当前合同
 
-- AI 自动整理是当前最高优先级。接入只保留`OpenRouter / DeepSeek 直连`；OpenAI 与 Claude 统一通过 OpenRouter。API Key 只进 Windows 凭据库，模型目录动态更新，逐任务记录 Token 和费用。
+- AI 自动整理是当前最高优先级。接入只保留`OpenRouter / DeepSeek 直连`；OpenAI 与 Claude 统一通过 OpenRouter。API Key 只进 Windows 凭据库，日常设置读取不返回明文；只有用户点击眼睛按钮时才按通道读取显示。模型目录动态更新，逐任务记录 Token 和费用。
 - AI 洞察是独立派生结果，不覆盖人工判断、证据或主题身份；合并、删除、改名和覆盖人工确认内容必须保留一次确认。
 
 - 用户可见核心入口只使用`主题洞察 / 全部笔记 / 主题管理`；`knowledge / sources / Record / 来源档案 / 知识视图`只作内部兼容标识或历史证据。
@@ -45,7 +45,7 @@ AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`
 
 ## 当前唯一任务
 
-先完成 v94 AI 自动整理的真实 OpenRouter 最小链路：由南烛枫在设置页输入 OpenRouter Key、刷新模型目录并选择一个模型，再选择一个有真实来源的主题执行`用 AI 整理`。核对结构化总结、主题管理建议、Token与美元费用是否返回，并确认人工判断、证据和主题名称没有变化。不要先扩展批量任务、RAG、AI聊天或新的顶层页面。
+先用 v95 重试 AI 自动整理的真实 OpenRouter 最小链路：Windows凭据条目已确认存在，无需重复粘贴Key；先确认输入框持续显示掩码、切换通道后不消失、眼睛按钮可显示/隐藏，再点击`保存并更新模型`。若失败，记录v95显示的完整真实错误；若成功，选择一个模型和有真实来源的主题执行`用 AI 整理`，核对结构化总结、主题管理建议、Token与美元费用，并确认人工判断、证据和主题名称没有变化。不要先扩展批量任务、RAG、AI聊天或新的顶层页面。
 
 重点确认：
 
@@ -56,9 +56,9 @@ AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`
 
 ## 当前验证层级
 
-- 代码与合同：前端224/224、Rust100/100、TypeScript、Vite生产构建通过。
-- Windows构建：v94隔离应用`--prepare / --verify`通过；`.runtime-qa/current-acceptance-v94-app/release/nanfeng-knowledge-base.exe`，38,344,192 bytes，SHA-256=`BA9559AF61589021F2E6A9C6F4124CEA67282D2410BFE1CC725CD9D700761B1E`。
-- 真实 API / 桌面：未执行；必须由南烛枫提供 Key 并在真实 WebView2 中确认。
+- 代码与合同：前端226/226、Rust100/100、TypeScript、Vite生产构建及1702×1066卡片列宽定向E2E通过。
+- Windows构建：v95隔离应用`--prepare / --verify`通过；`.runtime-qa/current-acceptance-v95-app/release/nanfeng-knowledge-base.exe`，38,409,216 bytes，SHA-256=`F5109D98CA6A2281390D8444991789532F0D68647A97496C9ABCFFD2F58D4033`。
+- 真实 API / 桌面：南烛枫已在v94确认保存并发起模型更新；Key凭据存在，模型更新失败原因被v94吞掉。v95真实重试、眼睛显示/隐藏和后续AI洞察仍待确认。
 - 正式数据：本轮未打开、未写入；migration v4/v5/v6均不得声称正式通过。
 
 ## 禁止项

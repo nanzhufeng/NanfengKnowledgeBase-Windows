@@ -1,4 +1,4 @@
-import { BrainCircuit, RefreshCw, Save } from "lucide-react";
+import { BrainCircuit, Eye, EyeOff, RefreshCw, Save } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -11,6 +11,8 @@ const CHANNEL_LABELS: Record<AiProviderChannel, string> = {
   openrouter: "OpenRouter",
   deepseek_direct: "DeepSeek 直连",
 };
+
+const SAVED_API_KEY_MASK = "••••••••••••••••••••••••";
 
 function catalogIsStale(value: string | null): boolean {
   if (!value) return true;
@@ -28,6 +30,8 @@ export function AiAutomationSettings({
   const [channel, setChannel] = useState<AiProviderChannel>("openrouter");
   const [modelId, setModelId] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [revealingApiKey, setRevealingApiKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const autoRefreshAttempted = useRef(false);
@@ -39,6 +43,8 @@ export function AiAutomationSettings({
     setChannel(next.activeChannel);
     const provider = next.providers.find((item) => item.channel === next.activeChannel);
     setModelId(provider?.selectedModelId ?? provider?.models[0]?.id ?? "");
+    setApiKey(provider?.configured ? SAVED_API_KEY_MASK : "");
+    setShowApiKey(false);
   };
 
   useEffect(() => {
@@ -72,25 +78,58 @@ export function AiAutomationSettings({
     setChannel(next);
     const provider = settings?.providers.find((item) => item.channel === next);
     setModelId(provider?.selectedModelId ?? provider?.models[0]?.id ?? "");
-    setApiKey("");
+    setApiKey(provider?.configured ? SAVED_API_KEY_MASK : "");
+    setShowApiKey(false);
     setError("");
+  };
+
+  const toggleApiKeyVisibility = async () => {
+    if (showApiKey) {
+      setShowApiKey(false);
+      return;
+    }
+    if (apiKey !== SAVED_API_KEY_MASK) {
+      setShowApiKey(true);
+      return;
+    }
+    setRevealingApiKey(true);
+    setError("");
+    try {
+      setApiKey(await repository.revealApiKey(channel));
+      setShowApiKey(true);
+    } catch (revealError) {
+      const message = revealError instanceof Error ? revealError.message : String(revealError);
+      setError(`API Key 读取失败：${message}`);
+    } finally {
+      setRevealingApiKey(false);
+    }
   };
 
   const save = async (refreshCatalog: boolean) => {
     setBusy(true);
     setError("");
     try {
-      let next = await repository.saveSettings({
+      const saved = await repository.saveSettings({
         activeChannel: channel,
         selectedModelId: modelId || null,
-        apiKey: apiKey.trim() || undefined,
+        apiKey: apiKey === SAVED_API_KEY_MASK ? undefined : apiKey.trim() || undefined,
       });
-      if (refreshCatalog) next = await repository.refreshModels(channel);
-      applySettings(next);
-      setApiKey("");
-      onNotify(refreshCatalog ? "AI 通道已连接，模型目录已更新" : "AI 模型选择已保存");
+      applySettings(saved);
+      if (!refreshCatalog) {
+        onNotify("AI 模型选择已保存");
+        return;
+      }
+      try {
+        const refreshed = await repository.refreshModels(channel);
+        applySettings(refreshed);
+        onNotify("AI 通道已连接，模型目录已更新");
+      } catch (refreshError) {
+        const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
+        setError(`设置已保存，但模型目录更新失败：${message}`);
+      }
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "AI 设置保存失败");
+      const message = saveError instanceof Error ? saveError.message : String(saveError);
+      setError(`AI 设置保存失败：${message}`);
     } finally {
       setBusy(false);
     }
@@ -118,7 +157,7 @@ export function AiAutomationSettings({
           >
             {CHANNEL_LABELS[item]}
             {settings?.providers.find((provider) => provider.channel === item)?.configured
-              ? <small>已连接</small>
+              ? <small>已配置</small>
               : null}
           </button>
         ))}
@@ -127,13 +166,30 @@ export function AiAutomationSettings({
       <div className="ai-settings-fields">
         <label>
           <span>API Key</span>
-          <input
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={activeProvider?.configured ? "已保存在 Windows 凭据库；留空不修改" : "粘贴 API Key"}
-          />
+          <div className="ai-api-key-control">
+            <input
+              type={showApiKey ? "text" : "password"}
+              autoComplete="off"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              onFocus={(event) => {
+                if (apiKey === SAVED_API_KEY_MASK) event.currentTarget.select();
+              }}
+              onBlur={() => {
+                if (!apiKey && activeProvider?.configured) setApiKey(SAVED_API_KEY_MASK);
+              }}
+              placeholder="粘贴 API Key"
+            />
+            <button
+              type="button"
+              aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+              title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+              disabled={revealingApiKey || (!apiKey && !activeProvider?.configured)}
+              onClick={() => void toggleApiKeyVisibility()}
+            >
+              {showApiKey ? <EyeOff size={17} /> : <Eye size={17} />}
+            </button>
+          </div>
         </label>
         <label>
           <span>模型</span>

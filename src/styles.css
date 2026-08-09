@@ -3185,8 +3185,17 @@ textarea:focus-visible,
   max-width: 900px;
 }
 
-.settings-list {
+.settings-page > :is(
+  .page-title,
+  .skin-settings-panel,
+  .runtime-build-card,
+  .ai-settings-panel,
+  .settings-list
+) {
+  width: 100%;
   max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .settings-row {
@@ -4972,6 +4981,7 @@ textarea:focus-visible,
 
 .ai-settings-panel {
   display: grid;
+  margin-bottom: 14px;
   padding: 22px;
   gap: 16px;
 }
@@ -5039,6 +5049,7 @@ textarea:focus-visible,
 
 .ai-settings-fields input,
 .ai-settings-fields select {
+  width: 100%;
   min-width: 0;
   min-height: 40px;
   padding: 0 11px;
@@ -5047,6 +5058,46 @@ textarea:focus-visible,
   outline: 0;
   color: #243f5f;
   background: rgba(255, 255, 255, .9);
+}
+
+.ai-api-key-control {
+  position: relative;
+}
+
+.ai-api-key-control input {
+  padding-right: 43px;
+}
+
+.ai-api-key-control button {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  place-items: center;
+  transform: translateY(-50%);
+  color: #657891;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ai-api-key-control button:hover:not(:disabled) {
+  color: #d35b24;
+  background: rgba(255, 123, 51, .1);
+}
+
+.ai-api-key-control button:focus-visible {
+  outline: 2px solid rgba(255, 123, 51, .52);
+  outline-offset: 1px;
+}
+
+.ai-api-key-control button:disabled {
+  opacity: .45;
+  cursor: default;
 }
 
 .ai-settings-fields input:focus,
@@ -9470,7 +9521,6 @@ span.source-image-placeholder {
 }
 
 .skin-settings-panel {
-  max-width: 900px;
   margin: 0 auto 18px;
   padding: 18px;
   border-radius: 14px;
@@ -9480,7 +9530,6 @@ span.source-image-placeholder {
   display: flex;
   align-items: flex-start;
   gap: 13px;
-  max-width: 900px;
   margin: 0 auto 12px;
   padding: 14px 18px;
   border-radius: 14px;

@@ -59,6 +59,7 @@ pub fn run() {
             commands::get_runtime_build_info,
             commands::get_ai_settings,
             commands::save_ai_settings,
+            commands::reveal_ai_api_key,
             commands::refresh_ai_models,
             commands::get_ai_topic_insight,
             commands::run_ai_topic_insight,

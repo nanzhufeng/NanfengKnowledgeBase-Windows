@@ -4,8 +4,8 @@ param([switch]$Verify, [switch]$Prepare)
 $ErrorActionPreference = "Stop"
 $projectDirectory = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $runtimeDirectory = [System.IO.Path]::GetFullPath((Join-Path $projectDirectory ".runtime-qa"))
-$buildDirectory = Join-Path $runtimeDirectory "current-acceptance-v94-build"
-$targetDirectory = Join-Path $runtimeDirectory "current-acceptance-v94-app"
+$buildDirectory = Join-Path $runtimeDirectory "current-acceptance-v95-build"
+$targetDirectory = Join-Path $runtimeDirectory "current-acceptance-v95-app"
 $compiledApplicationPath = Join-Path $buildDirectory "release\nanfeng-knowledge-base.exe"
 $applicationPath = Join-Path $targetDirectory "release\nanfeng-knowledge-base.exe"
 $buildLockPath = Join-Path $runtimeDirectory "current-acceptance-build.lock"
@@ -33,12 +33,12 @@ if ($Prepare) {
   try {
     $env:CARGO_TARGET_DIR = $buildDirectory
     $env:CARGO_BUILD_JOBS = "2"
-    $env:NF_BUILD_LABEL = "v94-ai-automation"
+    $env:NF_BUILD_LABEL = "v95-ai-settings-usability"
     & npm.cmd run tauri -- build --no-bundle
     if ($LASTEXITCODE -ne 0) { throw "The isolated current acceptance build failed: $LASTEXITCODE" }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $applicationPath) | Out-Null
     Copy-Item -LiteralPath $compiledApplicationPath -Destination $applicationPath -Force
-    Write-Host "[PASS] v94 AI automation acceptance app generated. App and formal data were not opened." -ForegroundColor Green
+    Write-Host "[PASS] v95 AI settings usability acceptance app generated. App and formal data were not opened." -ForegroundColor Green
   } finally {
     $buildLock.Dispose()
   }
@@ -49,9 +49,9 @@ if ($Verify) {
   if (-not (Test-Path -LiteralPath $applicationPath -PathType Leaf)) { throw "Current acceptance app not found: $applicationPath" }
   $size = (Get-Item -LiteralPath $applicationPath).Length
   $sha256 = Get-Sha256 $applicationPath
-  Write-Host "[PASS] v94 AI automation acceptance app is available." -ForegroundColor Green
+  Write-Host "[PASS] v95 AI settings usability acceptance app is available." -ForegroundColor Green
   Write-Host "Application: $applicationPath"
-  Write-Host "Build label: v94-ai-automation"
+  Write-Host "Build label: v95-ai-settings-usability"
   Write-Host "Size: $size"
   Write-Host "SHA256: $sha256"
   Write-Host "App and formal data were not opened."

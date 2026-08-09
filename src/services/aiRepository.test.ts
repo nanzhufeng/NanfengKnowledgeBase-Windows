@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
-import { AiRepository } from "./aiRepository";
+import { AiRepository, normalizeAiCommandError } from "./aiRepository";
 
 describe("AiRepository", () => {
   beforeEach(() => invoke.mockReset());
@@ -59,5 +59,20 @@ describe("AiRepository", () => {
     });
     await expect(new AiRepository().runTopicInsight(9)).resolves.toMatchObject({ topicId: 9 });
     expect(invoke).toHaveBeenCalledWith("run_ai_topic_insight", { topicId: 9 });
+  });
+
+  it("reads a saved API key only through an explicit reveal command", async () => {
+    invoke.mockResolvedValue("saved-secret");
+    await expect(new AiRepository().revealApiKey("openrouter")).resolves.toBe("saved-secret");
+    expect(invoke).toHaveBeenCalledWith("reveal_ai_api_key", { channel: "openrouter" });
+  });
+
+  it("turns structured Tauri command errors into readable errors", () => {
+    const normalized = normalizeAiCommandError({
+      code: "conflict",
+      message: "OpenRouter 模型目录刷新失败：连接超时",
+    });
+    expect(normalized).toBeInstanceOf(Error);
+    expect(normalized.message).toBe("OpenRouter 模型目录刷新失败：连接超时");
   });
 });

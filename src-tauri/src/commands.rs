@@ -118,6 +118,14 @@ pub fn save_ai_settings(
 }
 
 #[tauri::command(async)]
+pub fn reveal_ai_api_key(
+    channel: crate::ai::models::AiProviderChannel,
+) -> Result<String, CommandError> {
+    command(crate::ai::credentials::get_api_key(channel))?
+        .ok_or_else(|| CommandError::from(AppError::NotFound("该通道尚未保存 API Key".to_string())))
+}
+
+#[tauri::command(async)]
 pub async fn refresh_ai_models(
     state: State<'_, AppState>,
     input: crate::ai::models::RefreshAiModelsInput,

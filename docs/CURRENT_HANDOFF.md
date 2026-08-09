@@ -16,16 +16,16 @@
 >
 > 其他项目需要“参考南枫知识库的开发文档”时，统一从`docs/design-system.md`进入；本交接只提供当前实现与验证状态，不是跨项目规则正文。
 
-> v94 当前覆盖说明：南烛枫已把 AI 智能自动化整理设为最高优先级，并明确只保留`OpenRouter / DeepSeek 直连`；OpenAI 与 Claude 统一通过 OpenRouter。当前代码已完成设置、Windows 凭据库、动态最新模型目录、单主题结构化洞察、主题管理建议和逐任务 Token/美元费用记录。AI 洞察是独立派生层，不覆盖人工判断、证据或主题身份。前端224/224、Rust100/100、TypeScript、Vite生产构建和 v94 Windows 隔离`--prepare / --verify`通过；EXE 38,344,192 bytes，SHA-256=`BA9559AF61589021F2E6A9C6F4124CEA67282D2410BFE1CC725CD9D700761B1E`。真实 API、正式 SQLite和真实 WebView2尚未执行或确认。
+> v95 当前覆盖说明：设置页五类主卡片统一为同一900px内容列；API Key 保存后持续显示掩码，切换通道不再表现为丢失，右侧眼睛按钮可在用户明确点击时从 Windows 凭据库读取并显示/隐藏。保存与模型目录更新已拆分：保存成功立即保留，更新失败显示供应商真实错误，不再误报为“AI 设置保存失败”；OpenRouter 非2xx响应也优先透传官方错误。南烛枫已在真实v94 WebView2执行保存与更新，Windows凭据条目只读确认存在，证明Key保存成功；模型目录更新失败的具体原因因v94吞错尚未确认，需用v95重试。前端226/226、Rust100/100、TypeScript、Vite生产构建、1702×1066定向页面验收和v95 Windows隔离`--prepare / --verify`通过；EXE 38,409,216 bytes，SHA-256=`F5109D98CA6A2281390D8444991789532F0D68647A97496C9ABCFFD2F58D4033`。v95真实API重试、正式SQLite和v95真实WebView2尚未执行或确认。
 
-### v94 AI 自动整理最小闭环
+### v95 AI 设置可用性与最小闭环
 
 - 后端唯一边界：`src-tauri/src/ai/`；前端唯一适配器：`src/services/aiRepository.ts`；migration v6只新增`ai_settings / ai_provider_settings / ai_task_runs / ai_topic_insights`。
-- 设置页只显示 OpenRouter 和 DeepSeek 直连。API Key 输入后写入 Windows 凭据库，前端只能读取“是否已配置”；SQLite、日志和命令返回值均不含密钥。
+- 设置页只显示 OpenRouter 和 DeepSeek 直连。API Key 输入后写入 Windows 凭据库；日常读取只返回“是否已配置”，只有用户明确点击眼睛按钮时才通过独立命令读取当前通道密钥。SQLite、日志和普通设置命令返回值均不含密钥。
 - OpenRouter 目录动态筛选 OpenAI、Anthropic（Claude）、DeepSeek，各保留最新3个支持结构化输出的文本模型；DeepSeek 直连保留接口当前返回的最新3个。已配置目录超过24小时后，打开设置页会自动刷新。
 - 主题洞察标题区提供`用 AI 整理 / AI 重新整理`。输入复用正式`compileTopicContext`，结构化输出包含总结、关键洞察、证据边界、待验证问题与主题管理建议；结果不会触发合并、删除、改名或覆盖人工内容。
 - 每次任务记录成功/失败、供应商、模型、输入/输出/推理/缓存 Token。OpenRouter 优先记录接口实际费用，缺失时按目录价格估算；DeepSeek只有能匹配已知官方价格时才估算，无法可靠计价则明确记为不可用。
-- 当前验证证明代码、隔离内存数据库和 v94 Windows release 构建闭环；不证明真实 Key、供应商响应兼容性、正式库 migration v6、真实桌面布局或真实金额均已通过。
+- 当前验证证明代码、隔离内存数据库、设置页统一列宽和 v95 Windows release 构建闭环；真实v94路径只证明Key已写入Windows凭据库，不证明模型目录成功、供应商响应兼容性、正式库migration v6、v95真实桌面交互或真实金额已通过。
 
 > v93 当前覆盖说明：根目录唯一验收入口为`启动南枫知识库-当前验收.bat`。设置页显示版本、构建标签、EXE大小和运行文件自身SHA-256；媒体明确复位、视频输入所有权、附件有界加载、右键作用域和完整E2E阻断均已修复。下文历史段落中的v92及更早入口、运行包和“完整E2E被遮罩阻断”只作历史证据，不再表示当前状态。
 > v93启动器独占锁已实测：第二个`--prepare`在编译前被拒绝并返回非零状态。当前没有第二个Codex开发任务写入仓库；旧v89程序PID29668仍在运行，因此只保留其`*-app`目录，关闭后可重跑`scripts/cleanup-acceptance-artifacts.ps1`删除。

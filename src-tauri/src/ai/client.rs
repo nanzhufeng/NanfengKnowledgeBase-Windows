@@ -85,18 +85,9 @@ fn refresh_openrouter_models(api_key: &str) -> AppResult<Vec<AiModelDescriptor>>
         .bearer_auth(api_key)
         .send()
         .map_err(|error| AppError::Conflict(format!("OpenRouter 模型目录刷新失败：{error}")))?;
-    let status = response.status();
-    let payload: OpenRouterModelsResponse = response.json().map_err(|error| {
-        AppError::Conflict(format!(
-            "OpenRouter 模型目录解析失败（HTTP {status}）：{error}"
-        ))
-    })?;
-    if !status.is_success() {
-        return Err(AppError::Conflict(format!(
-            "OpenRouter 模型目录刷新失败（HTTP {}）",
-            status.as_u16()
-        )));
-    }
+    let value = checked_json(response)?;
+    let payload: OpenRouterModelsResponse = serde_json::from_value(value)
+        .map_err(|error| AppError::Conflict(format!("OpenRouter 模型目录解析失败：{error}")))?;
     Ok(select_latest_openrouter_models(payload.data))
 }
 
