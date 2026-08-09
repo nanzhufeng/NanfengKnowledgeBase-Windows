@@ -98,6 +98,7 @@ import type {
 import { AttachmentPreview } from "./components/AttachmentPreview";
 import { attachmentPreviewKind } from "./attachments/attachmentPreview";
 import { SourceAttachmentAsset } from "./components/SourceAttachmentAsset";
+import { AiAutomationSettings } from "./components/AiAutomationSettings";
 import {
   recordToUpdate,
   recordToSummary,
@@ -3034,6 +3035,7 @@ function SettingsPage({
           ) : <p>{runtimeBuildInfoError || "正在计算 EXE SHA-256…"}</p>}
         </div>
       </section>
+      <AiAutomationSettings onNotify={onNotify} />
       <div className="settings-list">
         {groups.map((group) => {
           const Icon = group.icon;

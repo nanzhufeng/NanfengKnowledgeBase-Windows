@@ -1,6 +1,6 @@
 # 架构所有权
 
-项目遵循根级 `docs/app-development/architecture-baseline.md`。当前最高产品规格已把核心从“记录管理”升级为“知识演化”。下表描述当前代码事实；migration v3 与 migration v4 的正式数据验证必须分层报告，不能由“代码已接入”推断。
+项目遵循根级 `docs/app-development/architecture-baseline.md`。当前最高产品规格已把核心从“记录管理”升级为“知识演化”。下表描述当前代码事实；migration v3–v6 的正式数据验证必须分层报告，不能由“代码已接入”推断。
 
 ## 当前合同判定顺序
 
@@ -28,13 +28,14 @@
 | Classification Exclusion Presentation | 主题级排除信号用于降低误归类，不删除来源，也不构成普通用户待补资料 | 默认规则由`personal_catalog.rs`持有；评分语义由`deterministicClassifier.ts`持有；主题页只读投影由`TopicStructureReadingWorkspace.tsx`持有；完整编辑仅在高级结构维护 | 目录升级下发保守排除信号；有有效项时显示`自动排除`摘要 | 主题管理详情、分类解释 | 空规则显示占位卡；在日常页要求用户补充、调整或维护技术规则；把排除误解为删除 | v7为非职业主题托管`招聘启事/岗位职责/简历投递`0.55排除信号，职业主题不排除；无规则时整块隐藏；36条knowledge Rust合同 + 前端呈现/E2E通过 |
 | Structural Operation | 合并、拆分、关系和撤销 | `knowledge/repository.rs` | `preview/merge/undoTopicMerge`、`previewTopicSplit`、`suggest/createTopicRelation` | 主题管理高级维护、操作日志 | 无预览直接批量改外键 | 合并、redirect 和撤销已实现；拆分按首版边界仍只预览；界面默认折叠 |
 | Research Context | 本地可审阅的研究上下文 | `knowledge/repository.rs` | `compileTopicContext` | 主题页、导出/后续 Codex 交换 | 调模型生成不透明摘要 | 本地确定性编译已接入 |
+| AI Topic Insight | 对单主题上下文进行结构化总结、证据边界梳理和主题管理建议的可重建派生层 | `src-tauri/src/ai/*`、migration v6、`src/services/aiRepository.ts` | `get/saveAiSettings`、`refreshAiModels`、`get/runAiTopicInsight` | 设置、主题洞察 | 页面直持 API Key；模型结果覆盖人工对象；每页各自请求模型；OpenAI/Claude 直连 | OpenRouter/DeepSeek 两通道；凭据进 Windows 凭据库；结果与逐任务 Token/费用落独立表；代码、100项Rust、224项前端和生产构建通过，真实 API 未执行 |
 | Proposition / Competing Hypothesis | 可复用命题；同一假设组允许并列竞争，不强制唯一结论 | `knowledge/repository.rs` | `create/update/supersedeProposition/getTopicDetail` | 主题洞察、判断、证据、决策账本、研究上下文 | 从展示文本临时推断身份；用新结论覆盖旧假设 | 独立生命周期、假设组、置信度、推翻条件和有效期已接入 |
 | Turning Point | 用户明确确认的判断转折 | `knowledge/repository.rs` | `createTurningPoint/getTopicDetail` | 主题洞察、研究上下文 | 填写变化原因自动制造转折 | 必须显式选择前后判断并确认 |
 | Decision Ledger | 当时决策、依据、风险、行动、结果与复盘 | `knowledge/repository.rs` | `create/updateDecision/getTopicDetail` | 主题洞察、研究上下文 | 用普通笔记模拟决策；结果覆盖当时依据 | 可关联命题和判断；结果状态、复核日期与复盘独立保存 |
 
 ### 运行与数据边界
 
-- `database::apply_migrations` 已接入 migration v3、v4 和 v5：每个尚未应用的知识迁移在正式文件库打开前先生成 SQLite online backup；v4 只追加推理字段和索引，v5追加统一来源目录、内容身份和多原件关系，不改写来源正文。
+- `database::apply_migrations` 已接入 migration v3–v6：正式文件库存在旧迁移时，应用最新迁移前先生成 SQLite online backup；v6只追加 AI 设置、目录、任务账单和主题洞察派生表，不改写来源正文、人工判断或证据。
 - `src/services/knowledgeRepository.ts` 是 WebView 到 Rust 知识命令的唯一前端适配器；浏览器无 Tauri 桥接时只显示诚实空状态。
 - `legacy_preview.rs`、`audit.rs` 和 `classification_input.rs` 继续承担只读审计与隔离预演，不是第二套生产写入口。
 - `.runtime-qa/knowledge-v3-20260727-qa1/` 已验证 901 条隔离 migration v3；`.runtime-qa/portable-recovery-20260727-qa4/` 已验证完整恢复和失败自动回滚；`.runtime-qa/hidden-tauri-bridge-20260727-qa1/` 已验证隐藏 Tauri/WebView2 正式命令桥和强制进程重启后的持久化。

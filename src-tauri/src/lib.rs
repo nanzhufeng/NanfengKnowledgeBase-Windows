@@ -1,4 +1,5 @@
 mod attachments;
+pub mod ai;
 pub mod chatgpt_export;
 mod commands;
 mod data_optimization;
@@ -56,6 +57,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_runtime_build_info,
+            commands::get_ai_settings,
+            commands::save_ai_settings,
+            commands::refresh_ai_models,
+            commands::get_ai_topic_insight,
+            commands::run_ai_topic_insight,
             commands::get_data_location,
             commands::inspect_data_migration,
             commands::migrate_data_directory,

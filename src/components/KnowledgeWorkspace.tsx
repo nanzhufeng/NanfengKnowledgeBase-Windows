@@ -78,6 +78,7 @@ import {
   loadTopicMaintenanceData,
 } from "../services/knowledgeWorkspaceData";
 import { classifySourceAsync } from "../services/classificationWorker";
+import { AiRepository, type AiTopicInsight } from "../services/aiRepository";
 import MarkdownContent, { ReadableMessageContent } from "./MarkdownContent";
 import { AttachmentTimelineMediaCard } from "./AttachmentTimelineMediaCard";
 import { SourceAttachmentAsset } from "./SourceAttachmentAsset";
@@ -690,6 +691,7 @@ function KnowledgeWorkspaceView({
 }) {
   const fallbackRepository = useMemo(() => new KnowledgeRepository(), []);
   const repository = providedRepository ?? fallbackRepository;
+  const aiRepository = useMemo(() => new AiRepository(), []);
   const [inbox, setInbox] = useState<KnowledgeInboxItem[]>(() => workspaceSession.inbox);
   const [inboxLimit, setInboxLimit] = useState(INITIAL_INBOX_LIMIT);
   const [sourceFilter, setSourceFilter] = useState<"all" | "pending" | "organized">("all");
@@ -790,6 +792,8 @@ function KnowledgeWorkspaceView({
   const [browserTopicId, setBrowserTopicId] = useState<number | null>(null);
   const [topicDetail, setTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [relatedTopicDetails, setRelatedTopicDetails] = useState<KnowledgeTopicDetail[]>([]);
+  const [aiInsight, setAiInsight] = useState<AiTopicInsight | null>(null);
+  const [aiRunning, setAiRunning] = useState(false);
   const [sourceTopicDetail, setSourceTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [topicMaintenanceOpen, setTopicMaintenanceOpen] = useState(false);
   const [topicStructureEditorOpen, setTopicStructureEditorOpen] = useState(false);
@@ -1981,6 +1985,39 @@ function KnowledgeWorkspaceView({
   }, [browserTopicId, knowledgeOrganizationRevision, mode, onNotify, repository]);
 
   useEffect(() => {
+    if (!browserTopicId || mode !== "knowledge") {
+      setAiInsight(null);
+      return;
+    }
+    let cancelled = false;
+    setAiInsight(null);
+    void aiRepository.getTopicInsight(browserTopicId)
+      .then((insight) => {
+        if (!cancelled) setAiInsight(insight);
+      })
+      .catch((error) => {
+        if (!cancelled) onNotify(error instanceof Error ? error.message : "AI 洞察读取失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aiRepository, browserTopicId, mode, onNotify]);
+
+  const runAiInsight = async () => {
+    if (!browserTopicId || aiRunning) return;
+    setAiRunning(true);
+    try {
+      const insight = await aiRepository.runTopicInsight(browserTopicId);
+      setAiInsight(insight);
+      onNotify("AI 主题洞察已更新；人工判断与证据未被修改");
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "AI 主题整理失败");
+    } finally {
+      setAiRunning(false);
+    }
+  };
+
+  useEffect(() => {
     if (mode !== "topics") return;
     void repository.suggestTopicRelations()
       .then(setRelationSuggestions)
@@ -2696,6 +2733,9 @@ function KnowledgeWorkspaceView({
           selectedTopicId={browserTopicId}
           onOpenSource={onNavigateToSource}
           navigationTarget={knowledgeNavigationTarget}
+          aiInsight={aiInsight}
+          aiRunning={aiRunning}
+          onRunAiInsight={() => void runAiInsight()}
           onSelectTopic={(topicId) => {
             setBrowserTopicId(topicId);
             resetNoteEditor();

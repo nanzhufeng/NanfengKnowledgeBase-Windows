@@ -14,5 +14,7 @@
 | chrono / uuid / sha2 / encoding_rs | 时间、标识、文件哈希与编码识别 | 标准库和其他小型 crate | 导入链路使用，移除需改写 |
 | ammonia | HTML 导入净化 | scraper + 自定义白名单 | 防止原始 HTML 进入可显示内容 |
 | @tauri-apps/plugin-dialog / plugin-opener | 本地文件选择与打开路径 | 自定义 Rust 命令 | 导入和数据目录入口使用 |
+| reqwest 0.11 | OpenRouter / DeepSeek HTTPS API 与动态模型目录 | 手写 HTTP、模型 SDK | 只在 Rust 后端使用；移除会失去 AI 接入 |
+| keyring 3.6（Windows native） | 把 API Key 保存到 Windows 凭据库 | 明文配置文件、系统 DPAPI 自封装 | 避免密钥进入 SQLite 和前端；当前产品平台为 Windows |
 
-当前不使用 Radix、Tailwind、云数据库、模型 SDK 或遥测 SDK。依赖只服务本地桌面 MVP。
+当前不使用 Radix、Tailwind、云数据库、供应商模型 SDK 或遥测 SDK。模型接入通过轻量 HTTP 边界完成。

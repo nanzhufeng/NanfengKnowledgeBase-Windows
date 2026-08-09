@@ -101,6 +101,138 @@ pub fn get_data_location(state: State<'_, AppState>) -> DataLocation {
 }
 
 #[tauri::command(async)]
+pub fn get_ai_settings(
+    state: State<'_, AppState>,
+) -> Result<crate::ai::models::AiSettingsView, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::ai::repository::get_settings(&connection))
+}
+
+#[tauri::command(async)]
+pub fn save_ai_settings(
+    state: State<'_, AppState>,
+    input: crate::ai::models::SaveAiSettingsInput,
+) -> Result<crate::ai::models::AiSettingsView, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::ai::repository::save_settings(&connection, &input))
+}
+
+#[tauri::command(async)]
+pub async fn refresh_ai_models(
+    state: State<'_, AppState>,
+    input: crate::ai::models::RefreshAiModelsInput,
+) -> Result<crate::ai::models::AiSettingsView, CommandError> {
+    if let Some(api_key) = input.api_key.as_deref() {
+        if !api_key.trim().is_empty() {
+            command(crate::ai::credentials::save_api_key(input.channel, api_key))?;
+        }
+    }
+    let api_key = command(crate::ai::credentials::get_api_key(input.channel))?
+        .ok_or_else(|| CommandError::from(AppError::Validation("请先填写并保存 API Key".to_string())))?;
+    let channel = input.channel;
+    let models = tauri::async_runtime::spawn_blocking(move || {
+        crate::ai::client::refresh_models(channel, &api_key)
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)?;
+    let connection = command(state.connection())?;
+    command(crate::ai::repository::save_model_catalog(
+        &connection,
+        channel,
+        &models,
+    ))?;
+    command(crate::ai::repository::get_settings(&connection))
+}
+
+#[tauri::command(async)]
+pub fn get_ai_topic_insight(
+    state: State<'_, AppState>,
+    topic_id: i64,
+) -> Result<Option<crate::ai::models::AiTopicInsightView>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::ai::repository::get_topic_insight(&connection, topic_id))
+}
+
+#[tauri::command(async)]
+pub async fn run_ai_topic_insight(
+    state: State<'_, AppState>,
+    topic_id: i64,
+) -> Result<crate::ai::models::AiTopicInsightView, CommandError> {
+    let (channel, model_id, descriptor, context, task_public_id) = {
+        let connection = command(state.connection())?;
+        let (channel, model_id) = command(crate::ai::repository::active_selection(&connection))?;
+        let descriptor = command(crate::ai::repository::model_descriptor(
+            &connection,
+            channel,
+            &model_id,
+        ))?;
+        let context = command(crate::knowledge::repository::compile_topic_context(
+            &connection,
+            topic_id,
+        ))?;
+        let task_public_id = command(crate::ai::repository::begin_topic_insight_task(
+            &connection,
+            topic_id,
+            channel,
+            &model_id,
+        ))?;
+        (channel, model_id, descriptor, context, task_public_id)
+    };
+    let api_key = match crate::ai::credentials::get_api_key(channel) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            let message = "当前 AI 通道尚未保存 API Key";
+            if let Ok(connection) = state.connection() {
+                let _ = crate::ai::repository::fail_task(&connection, &task_public_id, message);
+            }
+            return Err(CommandError::from(AppError::Validation(message.to_string())));
+        }
+        Err(error) => {
+            let message = error.to_string();
+            if let Ok(connection) = state.connection() {
+                let _ = crate::ai::repository::fail_task(&connection, &task_public_id, &message);
+            }
+            return Err(CommandError::from(error));
+        }
+    };
+    let run_channel = channel;
+    let run_model_id = model_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::ai::client::run_topic_insight(
+            run_channel,
+            &api_key,
+            &run_model_id,
+            &context,
+            descriptor.as_ref(),
+        )
+    })
+    .await
+    .map_err(background_task_error)?;
+    match result {
+        Ok(result) => {
+            let connection = command(state.connection())?;
+            command(crate::ai::repository::complete_topic_insight_task(
+                &connection,
+                &task_public_id,
+                topic_id,
+                channel,
+                &model_id,
+                &result.insight,
+                &result.usage,
+            ))
+        }
+        Err(error) => {
+            let message = error.to_string();
+            if let Ok(connection) = state.connection() {
+                let _ = crate::ai::repository::fail_task(&connection, &task_public_id, &message);
+            }
+            Err(CommandError::from(error))
+        }
+    }
+}
+
+#[tauri::command(async)]
 pub async fn inspect_data_migration(
     state: State<'_, AppState>,
     target_root: String,

@@ -25,7 +25,8 @@ describe("当前合同治理", () => {
     expect(masterSpec).toContain("现行合同说明（2026-08-03）");
     expect(architecture).toContain("当前合同判定顺序");
     expect(designBaseline).toContain("只用于证据定位");
-    expect(nextPrompt).toContain("当前已提交基线：`62e6a66`");
+    expect(nextPrompt).toContain("当前分支：`codex/nanfeng-ai-automation-mvp-20260810`");
+    expect(nextPrompt).toContain("AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`");
   });
 
   it("旧阶段和旧视觉规则不能重新取得当前所有权", () => {

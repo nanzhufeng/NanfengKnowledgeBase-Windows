@@ -22,6 +22,7 @@ const ORIGINAL_AT_MIGRATION_VERSION: i64 = 2;
 const KNOWLEDGE_MIGRATION_VERSION: i64 = 3;
 const KNOWLEDGE_REASONING_MIGRATION_VERSION: i64 = 4;
 const SOURCE_IDENTITY_MIGRATION_VERSION: i64 = 5;
+const AI_AUTOMATION_MIGRATION_VERSION: i64 = 6;
 const BACKUP_PAGES_PER_STEP: i32 = 512;
 const BACKUP_PAUSE: Duration = Duration::from_millis(1);
 
@@ -121,6 +122,11 @@ pub(crate) fn apply_migrations(connection: &mut Connection) -> AppResult<()> {
         SOURCE_IDENTITY_MIGRATION_VERSION,
         knowledge::schema::SOURCE_IDENTITY_SCHEMA_SQL,
     )?;
+    apply_migration(
+        connection,
+        AI_AUTOMATION_MIGRATION_VERSION,
+        crate::ai::AI_AUTOMATION_SCHEMA_SQL,
+    )?;
     knowledge::repository::backfill_legacy_records(connection)?;
     knowledge::repository::backfill_source_identity_and_collections(connection)?;
     Ok(())
@@ -141,7 +147,7 @@ fn create_pre_knowledge_migration_backup(connection: &Connection, path: &Path) -
     let already_applied = connection
         .query_row(
             "SELECT 1 FROM schema_migrations WHERE version = ?1",
-            [SOURCE_IDENTITY_MIGRATION_VERSION],
+            [AI_AUTOMATION_MIGRATION_VERSION],
             |_| Ok(()),
         )
         .optional()?

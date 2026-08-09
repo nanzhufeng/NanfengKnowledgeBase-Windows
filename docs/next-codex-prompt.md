@@ -4,9 +4,9 @@
 
 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 
-当前分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
+当前分支：`codex/nanfeng-ai-automation-mvp-20260810`
 
-当前已提交基线：`62e6a66`（工作区另含未提交的v82–v93持续成果，禁止覆盖）
+AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`
 
 工作区包含尚未提交的主题洞察、全部笔记、主题管理、图片预览、新笔记自动整理、固定材质、小卡片微交互、固定筛选磨砂连续性、正文搜索状态修复与合同治理成果；不得覆盖、清理、stash 或丢弃。
 
@@ -22,6 +22,9 @@
 再核对仓库根、当前分支、HEAD 和工作区摘要。不要先扫描旧聊天、历史审计、旧原型或旧隔离包。
 
 ## 当前合同
+
+- AI 自动整理是当前最高优先级。接入只保留`OpenRouter / DeepSeek 直连`；OpenAI 与 Claude 统一通过 OpenRouter。API Key 只进 Windows 凭据库，模型目录动态更新，逐任务记录 Token 和费用。
+- AI 洞察是独立派生结果，不覆盖人工判断、证据或主题身份；合并、删除、改名和覆盖人工确认内容必须保留一次确认。
 
 - 用户可见核心入口只使用`主题洞察 / 全部笔记 / 主题管理`；`knowledge / sources / Record / 来源档案 / 知识视图`只作内部兼容标识或历史证据。
 - 新笔记进入 App 唯一自动整理队列；高置信结果可撤销地归入主题，低置信、冲突或无匹配只留在全部笔记例外队列；侧栏不恢复`判断更新`。
@@ -42,21 +45,21 @@
 
 ## 当前唯一任务
 
-先由南烛枫关闭其他南枫知识库窗口并双击`启动南枫知识库-当前验收.bat`，核对设置页构建标签`v93-current-acceptance`及EXE SHA；再打开含真实MP4、图片、PDF和Markdown/TXT的长笔记，确认媒体复位、原生控制、多格式滚动加载、系统右键和Explorer定位。不得把隔离构建或自动测试冒充真实WebView2、Explorer或正式附件验收。
+先完成 v94 AI 自动整理的真实 OpenRouter 最小链路：由南烛枫在设置页输入 OpenRouter Key、刷新模型目录并选择一个模型，再选择一个有真实来源的主题执行`用 AI 整理`。核对结构化总结、主题管理建议、Token与美元费用是否返回，并确认人工判断、证据和主题名称没有变化。不要先扩展批量任务、RAG、AI聊天或新的顶层页面。
 
 重点确认：
 
-- 视频、图片、PDF、Markdown/TXT等正文原位预览都显示`定位文件`；
-- 点击后Explorer打开的是受控附件所在目录，并直接选中目标文件；
-- 进入最高层图片/视频/文档预览后，标题动作区的`定位文件`结果相同；
-- 定位操作不打开、移动、改名或改写附件，预览、播放、缩放和关闭行为不回归。
+- 设置页只出现 OpenRouter 和 DeepSeek 直连，没有 OpenAI/Claude 直连通道；
+- OpenRouter 模型目录只显示 OpenAI、Claude、DeepSeek 各自最新少量结构化文本模型；
+- 单主题 AI 结果可再次生成，失败任务有错误记录，成功任务有 Token 与实际或估算费用；
+- AI 结果只出现在派生洞察区，不改写人工判断、证据、主题名和原始资料。
 
 ## 当前验证层级
 
-- 代码与合同：前端222/222、Rust96/96、TypeScript、Vite、Sites4/4通过；默认Playwright17/17、媒体专项3/3通过。
-- Windows构建：v93隔离应用生成且`--prepare / --verify`通过；路径为`.runtime-qa/current-acceptance-v93-app/release/nanfeng-knowledge-base.exe`，35,704,320 bytes，SHA-256=`C8F865C3BFC93C748D85084575077C303341BD9B074F920C0F08FEBAEA9B7988`。
-- 真实桌面：真实MP4声音/进度/音量/全屏、Explorer定位、正式Markdown和多格式长笔记压力待南烛枫确认。
-- 正式数据：本轮未打开、未写入；migration v4/v5与完整正式导入仍不得声称通过。
+- 代码与合同：前端224/224、Rust100/100、TypeScript、Vite生产构建通过。
+- Windows构建：v94隔离应用`--prepare / --verify`通过；`.runtime-qa/current-acceptance-v94-app/release/nanfeng-knowledge-base.exe`，38,344,192 bytes，SHA-256=`BA9559AF61589021F2E6A9C6F4124CEA67282D2410BFE1CC725CD9D700761B1E`。
+- 真实 API / 桌面：未执行；必须由南烛枫提供 Key 并在真实 WebView2 中确认。
+- 正式数据：本轮未打开、未写入；migration v4/v5/v6均不得声称正式通过。
 
 ## 禁止项
 
@@ -64,6 +67,6 @@
 - 不读取、截图、展示旧 BAT 隔离包，除非明确做回归调查并标记为旧证据；
 - 不后台打开、写入、覆盖或重建正式 SQLite/来源；
 - 不恢复旧入口、假数据应用入口、人工判断更新入口或 CRUD 首屏；
-- 不扩大到模型 API、云同步、安装、签名、GitHub 上传或 Release。
+- 不扩大到 OpenAI/Claude 直连、更多供应商、批量模型工作流、RAG、云同步、签名、GitHub 上传或 Release。
 
 若南烛枫报告通过，只更新验收矩阵与当前交接中的真实桌面状态后停止；若报告问题，只修复明确范围并做最小充分验证。

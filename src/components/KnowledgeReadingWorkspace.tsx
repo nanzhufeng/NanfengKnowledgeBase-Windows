@@ -52,6 +52,7 @@ import {
   type SynthesizedKnowledgeAnchor,
 } from "../knowledge/knowledgeSynthesis";
 import MarkdownContent from "./MarkdownContent";
+import type { AiTopicInsight } from "../services/aiRepository";
 
 export type ReadingMode = "hypotheses" | "evolution" | "sources" | "decisions";
 
@@ -94,6 +95,9 @@ type KnowledgeReadingWorkspaceProps = {
   onSelectTopic: (topicId: number) => void;
   onOpenSource: (target: KnowledgeSourceTarget) => void;
   navigationTarget: KnowledgeReadingTarget | null;
+  aiInsight: AiTopicInsight | null;
+  aiRunning: boolean;
+  onRunAiInsight: () => void;
 };
 
 function formatDate(value: string | null | undefined): string {
@@ -633,6 +637,9 @@ export function KnowledgeReadingWorkspace({
   onSelectTopic,
   onOpenSource,
   navigationTarget,
+  aiInsight,
+  aiRunning,
+  onRunAiInsight,
 }: KnowledgeReadingWorkspaceProps) {
   const [mode, setMode] = useState<ReadingMode>("hypotheses");
   const [search, setSearch] = useState("");
@@ -1023,7 +1030,46 @@ export function KnowledgeReadingWorkspace({
                 <h1>{topicDetail.topic.name}</h1>
                 {topicDetail.topic.description ? <p>{topicDetail.topic.description}</p> : null}
               </div>
+              <div className="knowledge-final-heading-actions">
+                <button type="button" disabled={aiRunning} onClick={onRunAiInsight}>
+                  <Sparkles size={15} />{aiRunning ? "AI 整理中…" : aiInsight ? "AI 重新整理" : "用 AI 整理"}
+                </button>
+              </div>
             </header>
+
+            {aiInsight ? (
+              <section className="knowledge-ai-insight" aria-label="AI 主题洞察">
+                <header>
+                  <span><Sparkles size={15} /></span>
+                  <strong>AI 主题洞察</strong>
+                  <small>{aiInsight.modelId}</small>
+                  <time>{formatDate(aiInsight.generatedAt)}</time>
+                </header>
+                <MarkdownContent value={aiInsight.payload.summaryMarkdown} />
+                {aiInsight.payload.keyInsights.length ? (
+                  <div className="knowledge-ai-insight-grid">
+                    {aiInsight.payload.keyInsights.slice(0, 4).map((item) => (
+                      <article key={`${item.title}-${item.detail}`}>
+                        <strong>{item.title}</strong>
+                        <p>{item.detail}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+                {aiInsight.payload.topicManagementSuggestions.length ? (
+                  <details>
+                    <summary>主题管理建议 {aiInsight.payload.topicManagementSuggestions.length} 条</summary>
+                    <ul>
+                      {aiInsight.payload.topicManagementSuggestions.map((item) => (
+                        <li key={`${item.action}-${item.title}`}>
+                          <strong>{item.title}</strong><span>{item.reason}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </section>
+            ) : null}
 
             {overview ? (
               <section className="knowledge-overview" aria-label="自动知识摘要">

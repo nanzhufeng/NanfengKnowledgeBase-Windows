@@ -1,12 +1,12 @@
 # 南枫知识库当前交接
 
-更新时间：2026-08-09
+更新时间：2026-08-10
 
 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 
-分支：`codex/nanfeng-knowledge-production-checkpoint-20260727`
+分支：`codex/nanfeng-ai-automation-mvp-20260810`
 
-当前已提交基线：`62e6a66`
+本轮 AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`
 
 历史冷启动 checkpoint：`f8ff4ab`（仅作追溯，不是当前基线）
 
@@ -15,6 +15,17 @@
 > 当前读取规则：以“当前结论、验证真相、唯一下一步”为动态权威；1–96号记录是按时间保留的历史证据，其中旧入口名、旧 BAT、旧隔离包和旧版本号均不得覆盖现行合同。现行用户可见名称只使用`主题洞察 / 全部笔记 / 主题管理`，内部兼容标识不改名。
 >
 > 其他项目需要“参考南枫知识库的开发文档”时，统一从`docs/design-system.md`进入；本交接只提供当前实现与验证状态，不是跨项目规则正文。
+
+> v94 当前覆盖说明：南烛枫已把 AI 智能自动化整理设为最高优先级，并明确只保留`OpenRouter / DeepSeek 直连`；OpenAI 与 Claude 统一通过 OpenRouter。当前代码已完成设置、Windows 凭据库、动态最新模型目录、单主题结构化洞察、主题管理建议和逐任务 Token/美元费用记录。AI 洞察是独立派生层，不覆盖人工判断、证据或主题身份。前端224/224、Rust100/100、TypeScript、Vite生产构建和 v94 Windows 隔离`--prepare / --verify`通过；EXE 38,344,192 bytes，SHA-256=`BA9559AF61589021F2E6A9C6F4124CEA67282D2410BFE1CC725CD9D700761B1E`。真实 API、正式 SQLite和真实 WebView2尚未执行或确认。
+
+### v94 AI 自动整理最小闭环
+
+- 后端唯一边界：`src-tauri/src/ai/`；前端唯一适配器：`src/services/aiRepository.ts`；migration v6只新增`ai_settings / ai_provider_settings / ai_task_runs / ai_topic_insights`。
+- 设置页只显示 OpenRouter 和 DeepSeek 直连。API Key 输入后写入 Windows 凭据库，前端只能读取“是否已配置”；SQLite、日志和命令返回值均不含密钥。
+- OpenRouter 目录动态筛选 OpenAI、Anthropic（Claude）、DeepSeek，各保留最新3个支持结构化输出的文本模型；DeepSeek 直连保留接口当前返回的最新3个。已配置目录超过24小时后，打开设置页会自动刷新。
+- 主题洞察标题区提供`用 AI 整理 / AI 重新整理`。输入复用正式`compileTopicContext`，结构化输出包含总结、关键洞察、证据边界、待验证问题与主题管理建议；结果不会触发合并、删除、改名或覆盖人工内容。
+- 每次任务记录成功/失败、供应商、模型、输入/输出/推理/缓存 Token。OpenRouter 优先记录接口实际费用，缺失时按目录价格估算；DeepSeek只有能匹配已知官方价格时才估算，无法可靠计价则明确记为不可用。
+- 当前验证证明代码、隔离内存数据库和 v94 Windows release 构建闭环；不证明真实 Key、供应商响应兼容性、正式库 migration v6、真实桌面布局或真实金额均已通过。
 
 > v93 当前覆盖说明：根目录唯一验收入口为`启动南枫知识库-当前验收.bat`。设置页显示版本、构建标签、EXE大小和运行文件自身SHA-256；媒体明确复位、视频输入所有权、附件有界加载、右键作用域和完整E2E阻断均已修复。下文历史段落中的v92及更早入口、运行包和“完整E2E被遮罩阻断”只作历史证据，不再表示当前状态。
 > v93启动器独占锁已实测：第二个`--prepare`在编译前被拒绝并返回非零状态。当前没有第二个Codex开发任务写入仓库；旧v89程序PID29668仍在运行，因此只保留其`*-app`目录，关闭后可重跑`scripts/cleanup-acceptance-artifacts.ps1`删除。
@@ -389,7 +400,7 @@
 16. 全部笔记、我的收藏、持续跟踪的卡片是否统一为语义图标、标题、主题、来源和右上日期；来源卡是否不再重复`0篇笔记`。
 17. 主题洞察与主题管理的父子层级是否只缩进图标/标题，右侧数量是否保持一列对齐。
 
-通过时只更新真实桌面验收状态；失败时只修复明确反馈范围。不要主动扩大到模型 API、云同步、安装包或发布。
+通过时只更新真实桌面验收状态；失败时只修复明确反馈范围。AI 只在已确认的 OpenRouter / DeepSeek 单主题整理边界内继续，不主动扩大更多供应商、AI Hub、RAG、云同步、安装包或发布。
 
 ## 8. 停止条件与 Git 边界
 
