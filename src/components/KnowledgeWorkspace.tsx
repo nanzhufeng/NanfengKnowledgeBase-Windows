@@ -19,13 +19,12 @@ import {
   Copy,
   FileText,
   FolderTree,
-  Image as ImageIcon,
   Link2,
   Layers3,
   Maximize2,
   Merge,
-  Paperclip,
   Pencil,
+  Paperclip,
   Plus,
   RadioTower,
   Scissors,
@@ -39,6 +38,7 @@ import {
   connectorMetricsEqual,
   measureCardToCardConnector,
 } from "../connectionGeometry";
+import { useFixedVirtualList } from "../performance/fixedVirtualList";
 import { useRafScheduledCallback } from "../performance/useRafScheduledCallback";
 import { scheduleIdleWork } from "../performance/interactionScheduler";
 import {
@@ -49,7 +49,6 @@ import {
   autoOrganizeImportedSources,
   suggestionsForPersistence,
   undoAutoOrganization,
-  upgradeOutdatedInboxSuggestions,
 } from "../services/knowledgeAutoOrganizer";
 import {
   KnowledgeRepository,
@@ -70,6 +69,7 @@ import {
   type TopicRelationSuggestion,
   type TopicSplitPreview,
   type SourceCollection,
+  type SourceAttachmentCatalogHit,
 } from "../services/knowledgeRepository";
 import {
   loadKnowledgeEntryData,
@@ -79,24 +79,28 @@ import {
 } from "../services/knowledgeWorkspaceData";
 import { classifySourceAsync } from "../services/classificationWorker";
 import MarkdownContent, { ReadableMessageContent } from "./MarkdownContent";
+import { AttachmentTimelineMediaCard } from "./AttachmentTimelineMediaCard";
+import { SourceAttachmentAsset } from "./SourceAttachmentAsset";
 import type {
   AttachmentItem,
   IntelligenceRecord,
   RecordStatus,
   RecordSummary,
 } from "../domain/models";
-import {
-  resolveSourceAssetAttachment,
-  sourceAssetIsImage,
-} from "../knowledge/sourceAttachmentMatching";
+import { attachmentPreviewKind } from "../attachments/attachmentPreview";
+import { groupSourceAttachmentsByMonth } from "../attachments/sourceAttachmentCatalog";
+import { resolveSourceAssetAttachment } from "../knowledge/sourceAttachmentMatching";
 import {
   centeredSourceScrollTop,
   shouldResetSourceArchiveEntry,
   sourceCardIsFullyVisible,
 } from "../knowledge/sourceViewport";
 import {
+  clearSourceBodySearchHistory,
   clearSourceSearchHistory,
+  readSourceBodySearchHistory,
   readSourceSearchHistory,
+  rememberSourceBodySearch,
   rememberSourceSearch,
 } from "../knowledge/sourceSearchHistory";
 import { collectTopicStructuralAttentionIds } from "../knowledge/topicStructurePolicy";
@@ -117,6 +121,7 @@ import {
   UnifiedNoteListLocator,
   UnifiedNoteListPanel,
   UnifiedNoteListSearchRow,
+  UnifiedHistoricalSearchScope,
   UnifiedNoteListToolbar,
   UNIFIED_NOTE_FILTER_ALL,
   createUnifiedNoteSourceFilterField,
@@ -128,9 +133,18 @@ import {
   resolveNoteIconKey,
   sortUnifiedNoteListItems,
   type UnifiedNoteListSortMode,
+  type HistoricalSearchCategory,
 } from "./UnifiedNoteListCard";
 
 type Mode = "sources" | "topics" | "knowledge";
+export type KnowledgeSourceContext = {
+  title: string;
+  exportCurrent: () => Promise<void>;
+};
+export type KnowledgeSourceSearchTarget = {
+  query: string;
+  requestId: number;
+};
 type TopicStructureDialogState =
   | { kind: "create-domain" }
   | { kind: "edit-domain"; domainId: number }
@@ -179,6 +193,8 @@ function KnowledgeSourceDialog({
   fullText,
   attachments,
   onOpenAttachment,
+  onRevealAttachment,
+  recoveryStates,
   onClose,
 }: {
   title: string;
@@ -186,6 +202,8 @@ function KnowledgeSourceDialog({
   fullText: string;
   attachments: AttachmentItem[];
   onOpenAttachment: (attachment: AttachmentItem) => void;
+  onRevealAttachment: (attachment: AttachmentItem) => void;
+  recoveryStates: Record<string, { state: "pending" | "loading" | "failed"; message?: string }>;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -219,6 +237,8 @@ function KnowledgeSourceDialog({
                 message={message}
                 attachments={attachments}
                 onOpenAttachment={onOpenAttachment}
+                onRevealAttachment={onRevealAttachment}
+                recoveryStates={recoveryStates}
               />
             ))
           ) : (
@@ -334,11 +354,15 @@ function KnowledgeSourceMessage({
   attachments,
   compact = false,
   onOpenAttachment,
+  onRevealAttachment,
+  recoveryStates = {},
 }: {
   message: ReadableSourceMessage;
   attachments: AttachmentItem[];
   compact?: boolean;
   onOpenAttachment: (attachment: AttachmentItem) => void;
+  onRevealAttachment: (attachment: AttachmentItem) => void;
+  recoveryStates?: Record<string, { state: "pending" | "loading" | "failed"; message?: string }>;
 }) {
   return (
     <ReadableMessageContent
@@ -351,42 +375,15 @@ function KnowledgeSourceMessage({
           {message.assets.map((asset, index) => {
             const attachment = resolveSourceAssetAttachment(asset, attachments);
             const key = asset.fileUuid ?? `${asset.fileName}-${index}`;
-            if (attachment && sourceAssetIsImage(asset, attachment)) {
-              return (
-                <button
-                  className="source-image"
-                  key={key}
-                  onClick={() => onOpenAttachment(attachment)}
-                  title={`软件内预览图片：${asset.fileName}`}
-                >
-                  <img
-                    src={convertFileSrc(attachment.storedPath)}
-                    alt={asset.fileName}
-                    loading="lazy"
-                    decoding="async"
-                  />
-                  <span>{asset.fileName}</span>
-                </button>
-              );
-            }
-            if (attachment) {
-              return (
-                <button
-                  className="source-file-chip"
-                  key={key}
-                  onClick={() => onOpenAttachment(attachment)}
-                  title={`软件内预览附件：${asset.fileName}`}
-                >
-                  <Paperclip size={15} /><span>{asset.fileName}</span>
-                </button>
-              );
-            }
-            return (
-              <span className="source-image-placeholder" key={key}>
-                {asset.kind === "image" ? <ImageIcon size={19} /> : <Paperclip size={16} />}
-                <span><strong>{asset.fileName}</strong><em>原附件尚未进入受控目录</em></span>
-              </span>
-            );
+            return <SourceAttachmentAsset
+              key={key}
+              asset={asset}
+              attachment={attachment}
+              onOpenAttachment={onOpenAttachment}
+              onRevealAttachment={onRevealAttachment}
+              recoveryState={asset.fileUuid ? recoveryStates[asset.fileUuid]?.state ?? "pending" : "failed"}
+              recoveryMessage={asset.fileUuid ? recoveryStates[asset.fileUuid]?.message : undefined}
+            />;
           })}
         </div>
       ) : null}
@@ -433,17 +430,6 @@ function locatorKindsForSource(sourceType?: string): EvidenceLocator["kind"][] {
   if (["html", "web"].includes(sourceType ?? "")) return ["none", "html_paragraph", "text_quote"];
   if (sourceType === "markdown") return ["none", "markdown_heading", "text_quote"];
   return shared;
-}
-
-function readLocator(locatorJson: string | null): EvidenceLocator | null {
-  if (!locatorJson) return null;
-  try {
-    const parsed = JSON.parse(locatorJson) as Partial<EvidenceLocator>;
-    if (typeof parsed.kind !== "string" || typeof parsed.value !== "string") return null;
-    return parsed as EvidenceLocator;
-  } catch {
-    return null;
-  }
 }
 
 function formatSourceDate(value: string | null | undefined): string {
@@ -507,15 +493,146 @@ function scrollSourceElementWithinContainer(
   });
 }
 
+function resetSourceBodyViewport(container: HTMLElement | null) {
+  if (!container) return;
+  container.querySelectorAll("mark.source-search-highlight").forEach((element) => {
+    element.replaceWith(document.createTextNode(element.textContent ?? ""));
+  });
+  container.querySelectorAll(".source-anchor-highlight").forEach(
+    (element) => element.classList.remove("source-anchor-highlight"),
+  );
+  container.scrollTo({ top: 0, behavior: "auto" });
+}
+
+function markSourceTextMatches(container: HTMLElement, needle: string): HTMLElement | null {
+  resetSourceBodyViewport(container);
+  const normalizedNeedle = needle.toLocaleLowerCase("zh-CN");
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || ["SCRIPT", "STYLE", "MARK"].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue?.toLocaleLowerCase("zh-CN").includes(normalizedNeedle)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes: Text[] = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+  let first: HTMLElement | null = null;
+  nodes.forEach((node) => {
+    const text = node.nodeValue ?? "";
+    const lower = text.toLocaleLowerCase("zh-CN");
+    const fragment = document.createDocumentFragment();
+    let from = 0;
+    let index = lower.indexOf(normalizedNeedle, from);
+    while (index >= 0) {
+      fragment.append(document.createTextNode(text.slice(from, index)));
+      const mark = document.createElement("mark");
+      mark.className = "source-search-highlight";
+      mark.textContent = text.slice(index, index + needle.length);
+      fragment.append(mark);
+      first ??= mark;
+      from = index + needle.length;
+      index = lower.indexOf(normalizedNeedle, from);
+    }
+    fragment.append(document.createTextNode(text.slice(from)));
+    node.replaceWith(fragment);
+  });
+  return first;
+}
+
+const attachmentTimelineLabel: Record<Exclude<HistoricalSearchCategory, "text">, string> = {
+  all: "全部附件",
+  image: "图片资料",
+  video: "视频资料",
+  audio: "音频资料",
+  file: "文件资料",
+};
+
+function AttachmentTimelineDialog({
+  category,
+  hits,
+  busy,
+  onSearch,
+  onOpenHit,
+  onClose,
+}: {
+  category: Exclude<HistoricalSearchCategory, "text">;
+  hits: SourceAttachmentCatalogHit[];
+  busy: boolean;
+  onSearch: (query: string) => void;
+  onOpenHit: (hit: SourceAttachmentCatalogHit) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const monthGroups = useMemo(() => groupSourceAttachmentsByMonth(hits), [hits]);
+  const mediaCategory = category === "image" || category === "video" ? category : null;
+  useEffect(() => {
+    onSearch("");
+  }, [category, onSearch]);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return createPortal(
+    <div className="prototype-dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="prototype-dialog elevated-card attachment-timeline-dialog" role="dialog" aria-modal="true" aria-label={attachmentTimelineLabel[category]} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="prototype-dialog-heading">
+          <div><span>历史资料时间线</span><h2>{attachmentTimelineLabel[category]}</h2></div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        </div>
+        <form className="attachment-timeline-search" onSubmit={(event) => { event.preventDefault(); onSearch(query.trim()); }}>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`在${attachmentTimelineLabel[category]}中继续搜索`} aria-label={`搜索${attachmentTimelineLabel[category]}`} autoFocus />
+          <button type="submit"><Search size={15} />搜索</button>
+        </form>
+        <p className="attachment-timeline-caption">{mediaCategory
+          ? "按月显示全部媒体预览；图片点击查看，视频点击播放，缺失预览会在后台自动生成。"
+          : "正文已声明的文件会全部列出并按月分组；已加载文件可直接预览，未加载文件会在打开笔记后自动完成。"}</p>
+        <div className="attachment-timeline-list">
+          {busy ? <p className="knowledge-empty">正在读取完整附件目录…</p> : monthGroups.map((group) => (
+            <section className="attachment-timeline-month" key={group.key}>
+              <header><strong>{group.label}</strong><span>{group.hits.length}</span></header>
+              <div className={mediaCategory ? "attachment-timeline-media-grid" : undefined}>
+                {group.hits.map((hit) => mediaCategory ? (
+                  <AttachmentTimelineMediaCard
+                    key={hit.key}
+                    category={mediaCategory}
+                    hit={hit}
+                    dateLabel={formatSourceDate(hit.recordOriginalAt ?? hit.attachment?.createdAt)}
+                    onOpen={() => onOpenHit(hit)}
+                  />
+                ) : (
+                  <button type="button" key={hit.key} className="attachment-timeline-item" onClick={() => onOpenHit(hit)}>
+                    <time>{formatSourceDate(hit.recordOriginalAt ?? hit.attachment?.createdAt)}</time>
+                    <span><strong>{hit.fileName}</strong><em>{hit.recordTitle}</em></span>
+                    <small>{hit.availability === "ready" ? hit.mimeType ?? "文件" : "打开笔记后自动加载"}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+          {!busy && !hits.length ? <p className="knowledge-empty">当前分类没有找到附件声明。</p> : null}
+        </div>
+      </section>
+    </div>, document.body,
+  );
+}
+
 function KnowledgeWorkspaceView({
   repository: providedRepository,
   mode,
+  knowledgeOrganizationRevision,
   onNotify,
   sourceNavigationTarget,
   onSourceNavigationHandled,
   knowledgeNavigationTarget,
   onNavigateToSource,
   onNavigateToKnowledgeTopic,
+  canReturnFromSource,
+  onReturnFromSource,
   records,
   filterTopicValues,
   onToggleRecordFavorite,
@@ -523,12 +640,17 @@ function KnowledgeWorkspaceView({
   onMoveRecordToTrash,
   onExportRecord,
   onOpenAttachment,
+  onRevealAttachment,
   onSourceTitleUpdated,
   onSourceActionRecordCreated,
   onSourceCollectionsChanged,
+  onCurrentSourceContextChange,
+  sourceSearchTarget,
+  onSourceSearchTargetHandled,
 }: {
   repository?: KnowledgeRepository;
   mode: Mode;
+  knowledgeOrganizationRevision: number;
   onNotify: (message: string, options?: {
     durationMs?: number;
     actionLabel?: string;
@@ -543,6 +665,11 @@ function KnowledgeWorkspaceView({
     viewMode?: KnowledgeReadingTarget["viewMode"];
     sourceItemId?: number;
   }) => void;
+  canReturnFromSource: boolean;
+  onReturnFromSource: (fallback: {
+    topicId: number | null;
+    sourceItemId: number;
+  }) => void;
   records: RecordSummary[];
   filterTopicValues: string[];
   onToggleRecordFavorite: (recordId: number) => Promise<void>;
@@ -550,12 +677,16 @@ function KnowledgeWorkspaceView({
   onMoveRecordToTrash: (recordId: number) => Promise<boolean>;
   onExportRecord: (recordId: number) => Promise<void>;
   onOpenAttachment: (attachment: AttachmentItem) => void;
+  onRevealAttachment: (attachment: AttachmentItem) => void;
   onSourceTitleUpdated: (recordId: number | null, title: string, updatedAt: string) => void;
   onSourceActionRecordCreated: (
     record: IntelligenceRecord,
     primaryTopicName: string | null,
   ) => void;
   onSourceCollectionsChanged: () => Promise<void>;
+  onCurrentSourceContextChange: (context: KnowledgeSourceContext | null) => void;
+  sourceSearchTarget: KnowledgeSourceSearchTarget | null;
+  onSourceSearchTargetHandled: (requestId: number) => void;
 }) {
   const fallbackRepository = useMemo(() => new KnowledgeRepository(), []);
   const repository = providedRepository ?? fallbackRepository;
@@ -569,6 +700,13 @@ function KnowledgeWorkspaceView({
   const [sourceArchiveTotal, setSourceArchiveTotal] = useState(0);
   const [sourceSearchHistory, setSourceSearchHistory] = useState(() => readSourceSearchHistory());
   const [sourceSearchHistoryOpen, setSourceSearchHistoryOpen] = useState(false);
+  const [sourceSearchCategory, setSourceSearchCategory] = useState<HistoricalSearchCategory>("all");
+  const [sourceAttachmentHits, setSourceAttachmentHits] = useState<SourceAttachmentCatalogHit[]>([]);
+  const [sourceAttachmentSearchBusy, setSourceAttachmentSearchBusy] = useState(false);
+  const [attachmentTimelineCategory, setAttachmentTimelineCategory] = useState<Exclude<HistoricalSearchCategory, "text"> | null>(null);
+  const [attachmentTimelineHits, setAttachmentTimelineHits] = useState<SourceAttachmentCatalogHit[]>([]);
+  const [attachmentTimelineBusy, setAttachmentTimelineBusy] = useState(false);
+  const [attachmentTimelineQuery, setAttachmentTimelineQuery] = useState("");
   const [sourceFilterOpen, setSourceFilterOpen] = useState(false);
   const [sourceCollectionManagerOpen, setSourceCollectionManagerOpen] = useState(false);
   const [sourceCollections, setSourceCollections] = useState<SourceCollection[]>(
@@ -587,6 +725,10 @@ function KnowledgeWorkspaceView({
     text: string;
   } | null>(null);
   const [sourceAttachments, setSourceAttachments] = useState<AttachmentItem[]>([]);
+  const [sourceAttachmentsLoadedFor, setSourceAttachmentsLoadedFor] = useState<number | null>(null);
+  const [sourceAttachmentRecovery, setSourceAttachmentRecovery] = useState<
+    Record<string, { state: "pending" | "loading" | "failed"; message?: string }>
+  >({});
   const [sourceDetailOpen, setSourceDetailOpen] = useState(false);
   const [editingSourceTitle, setEditingSourceTitle] = useState(false);
   const [sourceTitleDraft, setSourceTitleDraft] = useState("");
@@ -596,21 +738,28 @@ function KnowledgeWorkspaceView({
   const [sourceSortMode, setSourceSortMode] = useState<UnifiedNoteListSortMode>("default");
   const sourceTextRequestSequence = useRef(0);
   const sourceSearchRequestSequence = useRef(0);
+  const sourceAttachmentSearchRequestSequence = useRef(0);
   const sourceActionRecordRequests = useRef(new Map<number, Promise<IntelligenceRecord>>());
+  const sourceAttachmentHydrationAttempts = useRef(new Set<string>());
+  const attachmentTimelineHydrationAttempts = useRef(new Set<string>());
   const loadedModes = useRef<Set<Mode>>(new Set());
   const cancelSourceSupportingLoad = useRef<(() => void) | null>(null);
   const preparedCatalogVersion = useRef<string | null>(null);
   const catalogPreparation = useRef<Promise<void> | null>(null);
-  const classificationUpgradeStarted = useRef(false);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>(() => workspaceSession.domains);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>(() => workspaceSession.topics);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selectedIdRef = useRef<number | null>(selectedId);
   selectedIdRef.current = selectedId;
   const [sourceBodySearch, setSourceBodySearch] = useState("");
+  const [sourceBodySearchHistory, setSourceBodySearchHistory] = useState(
+    () => readSourceBodySearchHistory(),
+  );
+  const [sourceBodySearchHistoryOpen, setSourceBodySearchHistoryOpen] = useState(false);
   const [knowledgeMaintenanceOpen, setKnowledgeMaintenanceOpen] = useState(false);
   const sourceBodyRef = useRef<HTMLDivElement | null>(null);
   const sourceSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const sourceBodySearchInputRef = useRef<HTMLInputElement | null>(null);
   const sourceListRef = useRef<HTMLDivElement | null>(null);
   const sourceLayoutRef = useRef<HTMLElement | null>(null);
   const sourceDetailRef = useRef<HTMLDivElement | null>(null);
@@ -623,6 +772,7 @@ function KnowledgeWorkspaceView({
   const [suggestions, setSuggestions] = useState<KnowledgeClassificationSuggestionRow[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
   const [loading, setLoading] = useState(() => !workspaceSession.loadedModes.has(mode));
+  const observedKnowledgeOrganizationRevision = useRef(knowledgeOrganizationRevision);
   const [busy, setBusy] = useState(false);
   const [domainName, setDomainName] = useState("");
   const [domainDescription, setDomainDescription] = useState("");
@@ -730,11 +880,33 @@ function KnowledgeWorkspaceView({
   const [ruleEnabled, setRuleEnabled] = useState(true);
 
   const sourceSearchQuery = deferredSourceSearch.trim();
-  const sourceCollection = sourceSearchQuery ? (sourceSearchResults ?? []) : inbox;
+  const sourceCollection = useMemo(() => {
+    if (!sourceSearchQuery) return inbox;
+    const textMatches = sourceSearchResults ?? [];
+    if (sourceSearchCategory === "text") return textMatches;
+    const attachmentSourceIds = new Set(
+      sourceAttachmentHits.map((hit) => hit.sourceItemId),
+    );
+    const attachmentMatches = inbox.filter((item) => (
+      attachmentSourceIds.has(item.id)
+    ));
+    if (sourceSearchCategory !== "all") return attachmentMatches;
+    const merged = new Map(textMatches.map((item) => [item.id, item]));
+    attachmentMatches.forEach((item) => merged.set(item.id, item));
+    return Array.from(merged.values());
+  }, [inbox, sourceAttachmentHits, sourceSearchCategory, sourceSearchQuery, sourceSearchResults]);
   const selected = sourceCollection.find((item) => item.id === selectedId)
     ?? inbox.find((item) => item.id === selectedId)
     ?? null;
   const selectedSourceItemId = selected?.id ?? null;
+
+  useEffect(() => {
+    if (mode !== "sources" || !sourceSearchTarget) return;
+    setSourceSearch(sourceSearchTarget.query);
+    setSourceSearchHistoryOpen(true);
+    sourceSearchInputRef.current?.focus();
+    onSourceSearchTargetHandled(sourceSearchTarget.requestId);
+  }, [mode, onSourceSearchTargetHandled, sourceSearchTarget]);
 
   useEffect(() => {
     if (mode !== "sources") return;
@@ -760,6 +932,11 @@ function KnowledgeWorkspaceView({
       setSourceSearchBusy(false);
       return;
     }
+    if (sourceSearchCategory !== "all" && sourceSearchCategory !== "text") {
+      setSourceSearchResults([]);
+      setSourceSearchBusy(false);
+      return;
+    }
     setSourceSearchBusy(true);
     const timer = window.setTimeout(() => {
       void repository.searchSourceArchive(
@@ -777,28 +954,73 @@ function KnowledgeWorkspaceView({
       });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [mode, onNotify, repository, sourceArchiveTotal, sourceSearchQuery]);
+  }, [mode, onNotify, repository, sourceArchiveTotal, sourceSearchCategory, sourceSearchQuery]);
 
   useEffect(() => {
-    if (!sourceSearchQuery || sourceSearchResults === null || sourceSearchBusy) return;
+    const query = sourceSearchQuery;
+    sourceAttachmentSearchRequestSequence.current += 1;
+    const requestId = sourceAttachmentSearchRequestSequence.current;
+    if (mode !== "sources" || !query || sourceSearchCategory === "text") {
+      setSourceAttachmentHits([]);
+      setSourceAttachmentSearchBusy(false);
+      return;
+    }
+    setSourceAttachmentSearchBusy(true);
+    const timer = window.setTimeout(() => {
+      void repository.searchSourceAttachmentCatalog(query, sourceSearchCategory)
+        .then((hits) => {
+          if (sourceAttachmentSearchRequestSequence.current !== requestId) return;
+          setSourceAttachmentHits(hits);
+        })
+        .catch((error) => {
+          if (sourceAttachmentSearchRequestSequence.current !== requestId) return;
+          setSourceAttachmentHits([]);
+          onNotify(error instanceof Error ? error.message : "附件历史搜索失败");
+        })
+        .finally(() => {
+          if (sourceAttachmentSearchRequestSequence.current === requestId) {
+            setSourceAttachmentSearchBusy(false);
+          }
+        });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [mode, onNotify, repository, sourceSearchCategory, sourceSearchQuery]);
+
+  useEffect(() => {
+    if (!sourceSearchQuery
+      || sourceSearchResults === null
+      || sourceSearchBusy
+      || sourceAttachmentSearchBusy) return;
     const timer = window.setTimeout(() => {
       setSourceSearchHistory(rememberSourceSearch(sourceSearchQuery));
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [sourceSearchBusy, sourceSearchQuery, sourceSearchResults]);
+  }, [
+    sourceAttachmentSearchBusy,
+    sourceSearchBusy,
+    sourceSearchQuery,
+    sourceSearchResults,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
     if (selectedSourceItemId === null) {
       setSourceAttachments([]);
+      setSourceAttachmentsLoadedFor(null);
+      setSourceAttachmentRecovery({});
       return () => {
         cancelled = true;
       };
     }
     setSourceAttachments([]);
+    setSourceAttachmentsLoadedFor(null);
+    setSourceAttachmentRecovery({});
     void repository.listSourceAttachments(selectedSourceItemId)
       .then((items) => {
-        if (!cancelled) setSourceAttachments(items);
+        if (!cancelled) {
+          setSourceAttachments(items);
+          setSourceAttachmentsLoadedFor(selectedSourceItemId);
+        }
       })
       .catch((error) => {
         if (!cancelled) setSourceAttachments([]);
@@ -942,6 +1164,27 @@ function KnowledgeWorkspaceView({
   }, [ensureSourceActionTarget, onNotify]);
 
   useEffect(() => {
+    if (mode !== "sources" || !selected) {
+      onCurrentSourceContextChange(null);
+      return;
+    }
+    onCurrentSourceContextChange({
+      title: selected.title,
+      exportCurrent: async () => {
+        const record = await ensureSourceActionTarget(selected);
+        await onExportRecord(record.id);
+      },
+    });
+    return () => onCurrentSourceContextChange(null);
+  }, [
+    ensureSourceActionTarget,
+    mode,
+    onCurrentSourceContextChange,
+    onExportRecord,
+    selected,
+  ]);
+
+  useEffect(() => {
     const closeMenu = (event: MouseEvent) => {
       if ((event.target as HTMLElement).closest(".note-list-actions")) return;
       setSourceListMenuRecordId(null);
@@ -991,6 +1234,14 @@ function KnowledgeWorkspaceView({
     0,
     visibleSources.findIndex((item) => item.id === selectedId),
   );
+  const sourceVirtualList = useFixedVirtualList({
+    scrollElementRef: sourceListRef,
+    itemCount: visibleSources.length,
+    // 卡片正文已限制两行；紧凑/舒展两种模式都有稳定的行高合同。
+    itemHeight: sourceCompactMode ? 82 : 96,
+    // 卡二在知识洞察/主题管理页面不会挂载；切回全部笔记时必须重新测量真实视口。
+    enabled: mode === "sources",
+  });
 
   useLayoutEffect(() => {
     const previousMode = previousModeRef.current;
@@ -1026,7 +1277,6 @@ function KnowledgeWorkspaceView({
     const list = sourceListRef.current;
     const detail = sourceDetailRef.current;
     const active = list?.querySelector<HTMLElement>("[data-source-id].active");
-    const filters = list?.querySelector<HTMLElement>(".knowledge-source-filters");
     if (!layout || !list || !active || !detail) {
       setSourceConnector((current) => connectorMetricsEqual(current, null) ? current : null);
       return;
@@ -1034,14 +1284,13 @@ function KnowledgeWorkspaceView({
     const layoutRect = layout.getBoundingClientRect();
     const listRect = list.getBoundingClientRect();
     const activeRect = active.getBoundingClientRect();
-    const filtersRect = filters?.getBoundingClientRect();
     const detailRect = detail.getBoundingClientRect();
     if (!sourceCardIsFullyVisible({
       cardTop: activeRect.top,
       cardBottom: activeRect.bottom,
       viewportTop: listRect.top,
       viewportBottom: listRect.bottom,
-      occlusionBottom: filtersRect?.bottom ?? listRect.top,
+      occlusionBottom: listRect.top,
     })) {
       setSourceConnector((current) => connectorMetricsEqual(current, null) ? current : null);
       return;
@@ -1056,6 +1305,7 @@ function KnowledgeWorkspaceView({
   const scheduleSourceConnectorUpdate = useRafScheduledCallback(updateSourceConnector);
 
   const handleSourceListScroll = () => {
+    sourceVirtualList.onScroll();
     setSourceConnector((current) => connectorMetricsEqual(current, null) ? current : null);
     scheduleSourceConnectorUpdate();
   };
@@ -1068,7 +1318,14 @@ function KnowledgeWorkspaceView({
     if (sourceLayoutRef.current) observer.observe(sourceLayoutRef.current);
     if (sourceDetailRef.current) observer.observe(sourceDetailRef.current);
     return () => observer.disconnect();
-  }, [mode, scheduleSourceConnectorUpdate, selectedId, visibleSources.length]);
+  }, [
+    mode,
+    scheduleSourceConnectorUpdate,
+    selectedId,
+    sourceVirtualList.end,
+    sourceVirtualList.start,
+    visibleSources.length,
+  ]);
 
   useEffect(() => {
     setSourceListMenuRecordId(null);
@@ -1088,8 +1345,11 @@ function KnowledgeWorkspaceView({
   useEffect(() => {
     const closeSourceMenu = (event: MouseEvent) => {
       const target = event.target;
-      if (!(target instanceof Element && target.closest(".knowledge-source-search-wrap"))) {
+      if (!(target instanceof Element && target.closest(
+        ".source-search-field, .source-body-search-wrap",
+      ))) {
         setSourceSearchHistoryOpen(false);
+        setSourceBodySearchHistoryOpen(false);
       }
       if (target instanceof Element && target.closest(".note-list-actions")) return;
       setSourceListMenuRecordId(null);
@@ -1098,6 +1358,7 @@ function KnowledgeWorkspaceView({
       if (event.key === "Escape") {
         setSourceListMenuRecordId(null);
         setSourceSearchHistoryOpen(false);
+        setSourceBodySearchHistoryOpen(false);
       }
     };
     window.addEventListener("mousedown", closeSourceMenu);
@@ -1116,15 +1377,8 @@ function KnowledgeWorkspaceView({
     const next = visibleSources[clampedIndex];
     if (!next) return;
     setSourceLocatorIndex(clampedIndex);
-    window.requestAnimationFrame(() => {
-      const list = sourceListRef.current;
-      const target = list?.querySelector<HTMLElement>(`[data-source-id="${next.id}"]`);
-      if (!list || !target) return;
-      list.scrollTop = Math.max(
-        0,
-        target.offsetTop - list.clientHeight / 2 + target.offsetHeight / 2,
-      );
-    });
+    sourceVirtualList.scrollToIndex(clampedIndex);
+    scheduleSourceConnectorUpdate();
   };
   const deferredLoadedSourceText = useDeferredValue(loadedSourceText);
   const selectedOriginalText = deferredLoadedSourceText?.sourceItemId === selectedId
@@ -1139,6 +1393,78 @@ function KnowledgeWorkspaceView({
     () => selectedOriginalText === null ? null : readImportedContent(selectedOriginalText),
     [selectedOriginalText],
   );
+  const selectedDeclaredAssets = useMemo(() => {
+    const assets = selectedReadableContent?.messages.flatMap((message) => message.assets) ?? [];
+    return [...new Map(assets.map((asset) => [
+      asset.fileUuid ?? `${asset.fileName}:${asset.sizeBytes ?? ""}`,
+      asset,
+    ])).values()];
+  }, [selectedReadableContent]);
+
+  // 当前笔记一旦读取完成，就按声明 ID 顺序自动物化全部缺失附件。
+  // 分类检索只读声明目录；真正的文件写入仅发生在用户实际打开该笔记时。
+  useEffect(() => {
+    const sourceItemId = selectedSourceItemId;
+    if (sourceItemId === null
+      || sourceAttachmentsLoadedFor !== sourceItemId
+      || !selectedReadableContent) return;
+    const missingIds = selectedDeclaredAssets
+      .filter((asset) => asset.fileUuid && !resolveSourceAssetAttachment(asset, sourceAttachments))
+      .map((asset) => asset.fileUuid as string);
+    if (!missingIds.length) return;
+    const signature = `${sourceItemId}:${[...missingIds].sort().join(",")}`;
+    if (sourceAttachmentHydrationAttempts.current.has(signature)) return;
+    sourceAttachmentHydrationAttempts.current.add(signature);
+    setSourceAttachmentRecovery((current) => {
+      const next = { ...current };
+      missingIds.forEach((id) => { next[id] = { state: "loading" }; });
+      return next;
+    });
+    let cancelled = false;
+    void repository.hydrateSourceAttachments(sourceItemId, missingIds)
+      .then((result) => {
+        if (cancelled || selectedIdRef.current !== sourceItemId) return;
+        setSourceAttachments((current) => {
+          const byId = new Map(current.map((item) => [item.id, item]));
+          result.attachments.forEach((item) => byId.set(item.id, item));
+          return [...byId.values()];
+        });
+        const failures = new Map(result.failures.map((failure) => [failure.attachmentId, failure.message]));
+        setSourceAttachmentRecovery((current) => {
+          const next = { ...current };
+          missingIds.forEach((id) => {
+            const message = failures.get(id);
+            if (message) next[id] = { state: "failed", message };
+            else delete next[id];
+          });
+          return next;
+        });
+        if (result.failures.length) {
+          onNotify(`已自动加载 ${result.attachments.length} 个附件；另有 ${result.failures.length} 个原始实体不可用`);
+        }
+      })
+      .catch((error) => {
+        if (cancelled || selectedIdRef.current !== sourceItemId) return;
+        const message = error instanceof Error ? error.message : "附件自动加载失败";
+        setSourceAttachmentRecovery((current) => {
+          const next = { ...current };
+          missingIds.forEach((id) => { next[id] = { state: "failed", message }; });
+          return next;
+        });
+        onNotify(message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    onNotify,
+    repository,
+    selectedDeclaredAssets,
+    selectedReadableContent,
+    selectedSourceItemId,
+    sourceAttachments,
+    sourceAttachmentsLoadedFor,
+  ]);
   const visibleSourceMessages = useMemo(() => {
     if (!selectedReadableContent?.messages.length) return [];
     return sourcePreviewIsTruncated
@@ -1162,6 +1488,8 @@ function KnowledgeWorkspaceView({
     setSourceFilter("all");
     setSourceSearch("");
     setSourceBodySearch("");
+    setSourceBodySearchHistoryOpen(false);
+    resetSourceBodyViewport(sourceBodyRef.current);
     const openTarget = async () => {
       if (!inbox.some((item) => item.id === sourceNavigationTarget.sourceItemId)) {
         const expanded = await repository.listSourceArchive(Math.max(inboxLimit, 5_000));
@@ -1169,7 +1497,10 @@ function KnowledgeWorkspaceView({
         setInbox(expanded);
         setInboxLimit(Math.max(inboxLimit, 5_000));
       }
-      if (!cancelled) setSelectedId(sourceNavigationTarget.sourceItemId);
+      if (!cancelled) {
+        setSelectedId(sourceNavigationTarget.sourceItemId);
+        onSourceNavigationHandled(sourceNavigationTarget.requestId);
+      }
     };
     void openTarget().catch((error) => {
       if (!cancelled) {
@@ -1193,50 +1524,9 @@ function KnowledgeWorkspaceView({
   useLayoutEffect(() => {
     if (mode !== "sources") return;
     setSourceBodySearch("");
-    const container = sourceBodyRef.current;
-    if (!container) return;
-    container.querySelectorAll(".source-anchor-highlight").forEach(
-      (element) => element.classList.remove("source-anchor-highlight"),
-    );
-    container.scrollTo({ top: 0, behavior: "auto" });
+    setSourceBodySearchHistoryOpen(false);
+    resetSourceBodyViewport(sourceBodyRef.current);
   }, [mode, selectedId]);
-
-  useEffect(() => {
-    if (
-      mode !== "sources"
-      || !sourceNavigationTarget
-      || selectedId !== sourceNavigationTarget.sourceItemId
-      || selectedReadableContent === null
-    ) {
-      return;
-    }
-    const frame = requestAnimationFrame(() => {
-      const container = sourceBodyRef.current;
-      if (!container) return;
-      const target = locateSourceElement(
-        container,
-        readLocator(sourceNavigationTarget.locatorJson),
-      );
-      container.querySelectorAll(".source-anchor-highlight").forEach(
-        (element) => element.classList.remove("source-anchor-highlight"),
-      );
-      if (!target) {
-        onSourceNavigationHandled(sourceNavigationTarget.requestId);
-        return;
-      }
-      target.classList.add("source-anchor-highlight");
-      scrollSourceElementWithinContainer(container, target, "smooth");
-      onSourceNavigationHandled(sourceNavigationTarget.requestId);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [
-    mode,
-    onSourceNavigationHandled,
-    selectedId,
-    selectedReadableContent,
-    sourceNavigationTarget,
-    visibleSourceMessages,
-  ]);
 
   const currentPendingSuggestions = suggestions.filter(
     (item) => item.status === "pending"
@@ -1263,6 +1553,8 @@ function KnowledgeWorkspaceView({
     ?? displayableClassificationSuggestions[0]
     ?? null;
   const sourceKnowledgeTopic = sourceTopicDetail?.topic ?? null;
+  // 标题动作必须由首帧已有的列表项决定；异步主题详情只补充内容，不能插入新按钮导致布局跳动。
+  const sourceReturnTopicId = sourceKnowledgeTopic?.id ?? selected?.primaryTopicId ?? null;
   const sourceKnowledgeDomain = sourceKnowledgeTopic
     ? domains.find((item) => item.id === sourceKnowledgeTopic.domainId) ?? null
     : null;
@@ -1279,22 +1571,111 @@ function KnowledgeWorkspaceView({
     const container = sourceBodyRef.current;
     const needle = sourceBodySearch.trim();
     if (!container || !needle) return;
-    container.querySelectorAll(".source-anchor-highlight").forEach(
-      (element) => element.classList.remove("source-anchor-highlight"),
-    );
-    const target = locateSourceElement(container, {
-      kind: "text_quote",
-      value: needle,
-      quote: needle,
-    });
+    setSourceBodySearchHistory(rememberSourceBodySearch(needle));
+    setSourceBodySearchHistoryOpen(false);
+    const target = markSourceTextMatches(container, needle);
     if (!target) {
       onNotify(`正文中没有找到“${needle}”`);
       return;
     }
-    target.classList.add("source-anchor-highlight");
+    target.closest("p,li,blockquote,pre,h1,h2,h3,h4,h5,h6")?.classList.add("source-anchor-highlight");
     scrollSourceElementWithinContainer(container, target, "smooth");
-    onNotify("已找到正文匹配位置");
+    onNotify("已跳转到正文匹配位置，并以黄色标记");
   };
+
+  const searchAttachmentTimeline = useCallback((query: string) => {
+    if (!attachmentTimelineCategory) return;
+    setAttachmentTimelineQuery(query);
+    setAttachmentTimelineBusy(true);
+    void repository.searchSourceAttachmentCatalog(query, attachmentTimelineCategory)
+      .then(setAttachmentTimelineHits)
+      .catch((error) => onNotify(error instanceof Error ? error.message : "资料时间线读取失败"))
+      .finally(() => setAttachmentTimelineBusy(false));
+  }, [attachmentTimelineCategory, onNotify, repository]);
+
+  // 图片/视频时间线打开后直接补齐缺失实体，让目录本身成为可视预览库。
+  // 这里只生成受控附件副本和内存代表帧，不改写导入 ZIP 或原始媒体。
+  useEffect(() => {
+    if ((attachmentTimelineCategory !== "image" && attachmentTimelineCategory !== "video")
+      || attachmentTimelineBusy) return;
+    const grouped = new Map<number, string[]>();
+    attachmentTimelineHits.forEach((hit) => {
+      if (hit.availability !== "recoverable" || !hit.fileUuid) return;
+      const current = grouped.get(hit.sourceItemId) ?? [];
+      current.push(hit.fileUuid);
+      grouped.set(hit.sourceItemId, current);
+    });
+    const pending = [...grouped.entries()].filter(([sourceItemId, ids]) => {
+      const signature = `${attachmentTimelineCategory}:${sourceItemId}:${[...ids].sort().join(",")}`;
+      return !attachmentTimelineHydrationAttempts.current.has(signature);
+    });
+    if (!pending.length) return;
+    let cancelled = false;
+    void (async () => {
+      let failureCount = 0;
+      for (const [sourceItemId, ids] of pending) {
+        const signature = `${attachmentTimelineCategory}:${sourceItemId}:${[...ids].sort().join(",")}`;
+        attachmentTimelineHydrationAttempts.current.add(signature);
+        try {
+          const result = await repository.hydrateSourceAttachments(sourceItemId, ids);
+          failureCount += result.failures.length;
+        } catch {
+          failureCount += ids.length;
+        }
+      }
+      if (cancelled || !attachmentTimelineCategory) return;
+      try {
+        const refreshed = await repository.searchSourceAttachmentCatalog(
+          attachmentTimelineQuery,
+          attachmentTimelineCategory,
+        );
+        if (!cancelled) setAttachmentTimelineHits(refreshed);
+      } catch (error) {
+        if (!cancelled) onNotify(error instanceof Error ? error.message : "媒体预览刷新失败");
+      }
+      if (!cancelled && failureCount) {
+        onNotify(`已有 ${failureCount} 个原始媒体实体不可用，其余预览已继续生成`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [
+    attachmentTimelineBusy,
+    attachmentTimelineCategory,
+    attachmentTimelineHits,
+    attachmentTimelineQuery,
+    onNotify,
+    repository,
+  ]);
+
+  const openSourceAttachmentCatalogHit = useCallback(async (hit: SourceAttachmentCatalogHit) => {
+    setAttachmentTimelineCategory(null);
+    let attachment = hit.attachment;
+    if (!attachment && hit.fileUuid && hit.availability === "recoverable") {
+      try {
+        const result = await repository.hydrateSourceAttachments(hit.sourceItemId, [hit.fileUuid]);
+        attachment = result.attachments[0] ?? null;
+        if (!attachment) {
+          onNotify(result.failures[0]?.message ?? "该媒体预览暂时无法生成");
+        }
+      } catch (error) {
+        onNotify(error instanceof Error ? error.message : "该媒体预览暂时无法生成");
+      }
+    }
+    if (!inbox.some((item) => item.id === hit.sourceItemId)) {
+      try {
+        const expanded = await repository.listSourceArchive(
+          Math.max(sourceArchiveTotal, inboxLimit, 5_000),
+        );
+        setInbox(expanded);
+        setInboxLimit(Math.max(inboxLimit, expanded.length));
+      } catch (error) {
+        onNotify(error instanceof Error ? error.message : "附件所属笔记读取失败");
+        return;
+      }
+    }
+    setSelectedId(hit.sourceItemId);
+    if (attachment) onOpenAttachment(attachment);
+  }, [inbox, inboxLimit, onNotify, onOpenAttachment, repository, sourceArchiveTotal]);
   const hasCurrentClassificationRun = suggestions.some(
     (item) => item.status === "pending"
       && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
@@ -1444,68 +1825,17 @@ function KnowledgeWorkspaceView({
   }, [mode]);
 
   useEffect(() => {
-    if (
-      mode !== "sources"
-      || !inbox.length
-      || classificationUpgradeStarted.current
-    ) return;
-    classificationUpgradeStarted.current = true;
-    const controller = new AbortController();
-    let finished = false;
-    const cancelScheduledUpgrade = scheduleIdleWork(() => {
-      void upgradeOutdatedInboxSuggestions(repository, {
-        signal: controller.signal,
-        onProgress: (progress) => {
-          if (progress.total > 0 && progress.completed > 0 && progress.completed % 100 === 0) {
-            onNotify(`主题建议后台整理：${progress.completed}/${progress.total}`);
-          }
-        },
-      })
-        .then(async (progress) => {
-          if (controller.signal.aborted) return;
-          const supporting = await loadSourceSupportingData(repository);
-          if (controller.signal.aborted) return;
-          workspaceSession.domains = supporting.domains;
-          workspaceSession.topics = supporting.topics;
-          workspaceSession.sourceCollections = supporting.sourceCollections;
-          startTransition(() => {
-            setDomains(supporting.domains);
-            setTopics(supporting.topics);
-            setSourceCollections(supporting.sourceCollections);
-            applyCatalogSelectionState(supporting.domains, supporting.topics);
-          });
-          if (progress.total) {
-            const refreshed = await loadSourceEntryData(repository, inboxLimit);
-            if (controller.signal.aborted) return;
-            workspaceSession.inbox = refreshed.inbox;
-            startTransition(() => setInbox(refreshed.inbox));
-            const currentSelectedId = selectedIdRef.current;
-            if (currentSelectedId) {
-              setSuggestions(await repository.listSuggestions(currentSelectedId));
-            }
-            onNotify(
-              `主题建议整理完成：${progress.completed} 条${progress.failures ? `，失败 ${progress.failures} 条` : ""}`,
-              { durationMs: 8_000 },
-            );
-          }
-          finished = true;
-        })
-        .catch((error) => {
-          if (!controller.signal.aborted) {
-            onNotify(error instanceof Error ? error.message : "主题建议后台整理失败");
-          }
-        })
-        .finally(() => {
-          if (!finished) classificationUpgradeStarted.current = false;
-        });
-    }, { delayMs: 1_200, timeoutMs: 3_000 });
-
+    if (observedKnowledgeOrganizationRevision.current === knowledgeOrganizationRevision) return;
+    observedKnowledgeOrganizationRevision.current = knowledgeOrganizationRevision;
+    let active = true;
+    void reload(mode, () => active)
+      .catch((error) => {
+        if (active) onNotify(error instanceof Error ? error.message : "自动整理结果刷新失败");
+      });
     return () => {
-      cancelScheduledUpgrade();
-      controller.abort();
-      if (!finished) classificationUpgradeStarted.current = false;
+      active = false;
     };
-  }, [inbox.length, mode, onNotify, repository]);
+  }, [knowledgeOrganizationRevision, mode]);
 
   useEffect(() => {
     const current = inbox.find((item) => item.id === selectedId);
@@ -1648,7 +1978,7 @@ function KnowledgeWorkspaceView({
     return () => {
       cancelled = true;
     };
-  }, [browserTopicId, mode, onNotify, repository]);
+  }, [browserTopicId, knowledgeOrganizationRevision, mode, onNotify, repository]);
 
   useEffect(() => {
     if (mode !== "topics") return;
@@ -1880,7 +2210,7 @@ function KnowledgeWorkspaceView({
       const detail = await repository.getTopicDetail(topicId);
       setMaintenanceTopicDetails((current) => ({ ...current, [topicId]: detail }));
     } catch (error) {
-      onNotify(error instanceof Error ? error.message : "主题笔记读取失败");
+      onNotify(error instanceof Error ? error.message : "主题整合读取失败");
     }
   };
 
@@ -2278,7 +2608,7 @@ function KnowledgeWorkspaceView({
         { durationMs: persistedCandidates.length ? 6_000 : 10_000 },
       );
     } catch (error) {
-      onNotify(error instanceof Error ? error.message : "分类失败，来源仍保留在来源档案待确认");
+      onNotify(error instanceof Error ? error.message : "分类失败，来源仍保留在全部笔记中待确认");
     } finally {
       setBusy(false);
     }
@@ -2312,7 +2642,7 @@ function KnowledgeWorkspaceView({
         },
       );
     } catch (error) {
-      onNotify(error instanceof Error ? error.message : "自动整理失败；来源仍保留在来源档案待确认");
+      onNotify(error instanceof Error ? error.message : "自动整理失败；来源仍保留在全部笔记中待确认");
     } finally {
       setBusy(false);
     }
@@ -2339,7 +2669,7 @@ function KnowledgeWorkspaceView({
         onAction: async () => {
           await repository.undoClassification(result.operationId);
           await reload();
-          onNotify("分类已撤销，来源已返回来源档案待确认");
+          onNotify("分类已撤销，来源已返回全部笔记并等待确认");
         },
       });
     } catch (error) {
@@ -3494,7 +3824,7 @@ function KnowledgeWorkspaceView({
                           {detail && !detail.notes.length && !detail.sources.length ? (
                             <p>当前主题尚无笔记或来源。</p>
                           ) : null}
-                          {!detail ? <p>正在读取主题笔记…</p> : null}
+                          {!detail ? <p>正在读取主题整合…</p> : null}
                         </div>
                       ) : null}
                     </div>
@@ -3791,16 +4121,6 @@ function KnowledgeWorkspaceView({
   return (
     <>
     <main className="knowledge-page knowledge-inbox-page">
-      <header className="knowledge-page-header source-page-actions-only">
-        <div className="knowledge-header-actions">
-          <button
-            disabled={busy || !inbox.some((item) => item.organizationState === "inbox")}
-            onClick={() => void autoOrganizeLoadedInbox()}
-          >
-            <Sparkles size={16} />自动整理待归类来源
-          </button>
-        </div>
-      </header>
       <section
         className="knowledge-inbox-layout"
         ref={sourceLayoutRef}
@@ -3812,12 +4132,10 @@ function KnowledgeWorkspaceView({
       >
         <UnifiedNoteListPanel
           className="knowledge-card knowledge-inbox-list"
-          ref={sourceListRef}
-          onScroll={handleSourceListScroll}
+          data-hover-wheel-panel=""
         >
-          <div className="knowledge-source-filters">
-            <UnifiedNoteListSearchRow className="knowledge-source-search-row">
-              <label className="search-field knowledge-source-search-wrap">
+          <UnifiedNoteListSearchRow className="knowledge-source-search-row">
+              <label className="search-field source-search-field">
                 <Search size={19} />
                 <input
                   ref={sourceSearchInputRef}
@@ -3827,12 +4145,15 @@ function KnowledgeWorkspaceView({
                     setSourceSearch(nextValue);
                     if (!nextValue.trim()) {
                       sourceSearchRequestSequence.current += 1;
+                      sourceAttachmentSearchRequestSequence.current += 1;
                       setSourceSearchResults(null);
                       setSourceSearchBusy(false);
+                      setSourceAttachmentHits([]);
+                      setSourceAttachmentSearchBusy(false);
                     }
-                    setSourceSearchHistoryOpen(!nextValue && sourceSearchHistory.length > 0);
+                    setSourceSearchHistoryOpen(true);
                   }}
-                  onFocus={() => setSourceSearchHistoryOpen(sourceSearchHistory.length > 0)}
+                  onFocus={() => setSourceSearchHistoryOpen(true)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
@@ -3840,10 +4161,12 @@ function KnowledgeWorkspaceView({
                     }
                     if (event.key === "Escape") setSourceSearchHistoryOpen(false);
                   }}
-                  placeholder="搜索来源"
-                  aria-label="搜索全部来源档案和正文"
+                  placeholder="搜索笔记、图片、视频与文件"
+                  aria-label="搜索全部笔记、正文和附件"
                 />
-                {sourceSearchBusy ? <span className="save-spinner" aria-label="正在搜索全库" /> : null}
+                {sourceSearchBusy || sourceAttachmentSearchBusy
+                  ? <span className="save-spinner" aria-label="正在搜索全库" />
+                  : null}
                 {sourceSearch ? (
                   <button
                     type="button"
@@ -3851,8 +4174,11 @@ function KnowledgeWorkspaceView({
                     onClick={() => {
                       setSourceSearch("");
                       sourceSearchRequestSequence.current += 1;
+                      sourceAttachmentSearchRequestSequence.current += 1;
                       setSourceSearchResults(null);
                       setSourceSearchBusy(false);
+                      setSourceAttachmentHits([]);
+                      setSourceAttachmentSearchBusy(false);
                       sourceSearchInputRef.current?.focus();
                     }}
                   >
@@ -3860,26 +4186,43 @@ function KnowledgeWorkspaceView({
                   </button>
                 ) : <kbd>⌘ K</kbd>}
                 {sourceSearchHistoryOpen ? (
-                  <div className="source-search-history" role="listbox" aria-label="最近搜索">
-                    <header><strong>最近搜索</strong><button type="button" onClick={() => {
-                      clearSourceSearchHistory();
-                      setSourceSearchHistory([]);
-                      setSourceSearchHistoryOpen(false);
-                    }}>清空</button></header>
+                  <div className="source-search-history" role="dialog" aria-label="历史资料搜索">
+                    <header>
+                      <strong>历史资料搜索</strong>
+                      {sourceSearchHistory.length ? <button type="button" onClick={() => {
+                        clearSourceSearchHistory();
+                        setSourceSearchHistory([]);
+                      }}>清空</button> : null}
+                    </header>
+                    <UnifiedHistoricalSearchScope
+                      value={sourceSearchCategory}
+                      onChange={setSourceSearchCategory}
+                      onOpenCategory={(category) => {
+                        if (category === "text") return;
+                        setSourceSearchHistoryOpen(false);
+                        setAttachmentTimelineCategory(category);
+                      }}
+                    />
+                    {sourceSearchHistory.length ? (
+                      <small className="source-search-history-label">最近使用</small>
+                    ) : null}
                     {sourceSearchHistory.map((term) => (
                       <button
                         type="button"
                         role="option"
                         key={term}
+                        onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
                           setSourceSearch(term);
                           setSourceSearchHistory(rememberSourceSearch(term));
-                          setSourceSearchHistoryOpen(false);
                         }}
                       >
                         <Search size={13} /><span>{term}</span>
                       </button>
                     ))}
+                    {!sourceSearchHistory.length ? (
+                      <small className="source-search-history-empty">输入关键词后，会保留在这里。</small>
+                    ) : null}
                   </div>
                 ) : null}
               </label>
@@ -3929,18 +4272,52 @@ function KnowledgeWorkspaceView({
                   }),
                 ]}
               />
-            </UnifiedNoteListSearchRow>
-            <UnifiedNoteListDisplayToolbar
+          </UnifiedNoteListSearchRow>
+          {sourceSearchQuery
+            && sourceSearchCategory !== "text"
+            && (sourceAttachmentSearchBusy || sourceAttachmentHits.length) ? (
+            <section className="attachment-history-results source-attachment-history-results" aria-label="附件历史搜索结果">
+              <div>
+                <strong>附件命中</strong>
+                <span>{sourceAttachmentSearchBusy ? "正在检索…" : `${sourceAttachmentHits.length} 项`}</span>
+              </div>
+              <div className="attachment-history-grid">
+                {sourceAttachmentHits.map((hit) => {
+                  const kind = hit.attachment ? attachmentPreviewKind(hit.attachment) : null;
+                  return (
+                    <button
+                      type="button"
+                      className="attachment-history-hit"
+                      data-card-interaction="lift"
+                      key={hit.key}
+                      onClick={() => {
+                        void openSourceAttachmentCatalogHit(hit);
+                      }}
+                    >
+                      {kind === "image" && hit.attachment
+                        ? <img src={convertFileSrc(hit.attachment.storedPath)} alt="" />
+                        : <Paperclip size={18} />}
+                      <span>
+                        <strong>{hit.fileName}</strong>
+                        <small>{hit.recordTitle}{hit.availability === "ready" ? "" : " · 打开笔记后自动加载"}</small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+          <UnifiedNoteListDisplayToolbar
               className="knowledge-source-display-toolbar"
-              label="来源档案"
+              label="全部笔记"
               count={visibleSources.length}
-              countLabel="条来源"
+              countLabel="篇笔记"
               compactMode={sourceCompactMode}
               sortMode={sourceSortMode}
               onToggleCompact={() => setSourceCompactMode((value) => !value)}
               onCycleSort={() => setSourceSortMode(cycleUnifiedNoteListSortMode)}
-            />
-            <UnifiedNoteListToolbar className="knowledge-source-filter-control-row">
+          />
+          <UnifiedNoteListToolbar className="knowledge-source-filter-control-row">
               <div className="source-filter-tabs">
                 {([
                   ["all", "全部", inbox.length],
@@ -3975,61 +4352,78 @@ function KnowledgeWorkspaceView({
               >
                 {inbox.length >= sourceArchiveTotal ? "已全部加载" : `全部加载 ${sourceArchiveTotal}`}
               </button>
-            </UnifiedNoteListToolbar>
-            {visibleSources.length ? (
-              <UnifiedNoteListLocator
-                className="source-list-locator"
-                aria-label="快速定位来源列表"
-                count={visibleSources.length}
-                value={sourceLocatorIndex}
-                currentIndex={selectedSourceIndex}
-                itemLabel="来源"
-                onLocate={scrollToSource}
-              />
-            ) : null}
-          </div>
-          {visibleSources.map((item) => {
+          </UnifiedNoteListToolbar>
+          {visibleSources.length ? (
+            <UnifiedNoteListLocator
+              className="source-list-locator"
+              aria-label="快速定位来源列表"
+              count={visibleSources.length}
+              value={sourceLocatorIndex}
+              currentIndex={selectedSourceIndex}
+              itemLabel="来源"
+              onLocate={scrollToSource}
+            />
+          ) : null}
+          <div className="knowledge-source-list-viewport">
+          <div
+            className="knowledge-source-list-scroll"
+            ref={sourceListRef}
+            onScroll={handleSourceListScroll}
+            data-hover-wheel-scroll=""
+          >
+          {visibleSources.length ? (
+            <div
+              className="fixed-virtual-list-spacer"
+              style={{ height: sourceVirtualList.totalHeight }}
+            >
+          {sourceVirtualList.visibleIndexes.map((index) => {
+            const item = visibleSources[index];
+            if (!item) return null;
             const itemRecord = item.legacyRecordId
               ? recordById.get(item.legacyRecordId) ?? null
               : null;
             const active = item.id === selectedId;
             return (
-              <UnifiedNoteListCard
+              <div
                 key={item.id}
-                sourceId={item.id}
-                className={`knowledge-source-list-item ${active ? "active" : ""}`}
-                compact={sourceCompactMode}
-                selected={active}
-                menuOpen={sourceListMenuRecordId === item.id}
-                onSelect={() => {
-                  setSelectedId(item.id);
-                  setSourceListMenuRecordId(null);
-                }}
-                iconKey={resolveNoteIconKey(
-                  item.title,
-                  item.primaryTopicName,
-                  item.platform,
-                  item.sourceType,
-                )}
-                title={item.title}
-                theme={item.primaryTopicName
-                  ?? (item.organizationState === "inbox" ? "等待自动归类" : "已整理")}
-                source={sourceOriginLabel(item)}
-                date={item.originalAt ?? item.importedAt}
-                actions={
-                  <NoteListActions
-                    isFavorite={itemRecord?.isFavorite ?? false}
-                    menuOpen={sourceListMenuRecordId === item.id}
-                    onToggleFavorite={() => {
-                      runSourceRecordAction(item, (record) => onToggleRecordFavorite(record.id));
-                    }}
-                    onExport={() => {
-                      runSourceRecordAction(item, (record) => onExportRecord(record.id));
-                    }}
-                    onToggleMenu={() => setSourceListMenuRecordId((current) => (
-                      current === item.id ? null : item.id
-                    ))}
-                  >
+                className="fixed-virtual-list-row"
+                style={{ top: index * sourceVirtualList.itemHeight }}
+              >
+                <UnifiedNoteListCard
+                  sourceId={item.id}
+                  className={`knowledge-source-list-item ${active ? "active" : ""}`}
+                  compact={sourceCompactMode}
+                  selected={active}
+                  menuOpen={sourceListMenuRecordId === item.id}
+                  onSelect={() => {
+                    setSelectedId(item.id);
+                    setSourceListMenuRecordId(null);
+                  }}
+                  iconKey={resolveNoteIconKey(
+                    item.title,
+                    item.primaryTopicName,
+                    item.platform,
+                    item.sourceType,
+                  )}
+                  title={item.title}
+                  theme={item.primaryTopicName
+                    ?? (item.organizationState === "inbox" ? "等待自动归类" : "已整理")}
+                  source={sourceOriginLabel(item)}
+                  date={item.originalAt ?? item.importedAt}
+                  actions={
+                    <NoteListActions
+                      isFavorite={itemRecord?.isFavorite ?? false}
+                      menuOpen={sourceListMenuRecordId === item.id}
+                      onToggleFavorite={() => {
+                        runSourceRecordAction(item, (record) => onToggleRecordFavorite(record.id));
+                      }}
+                      onExport={() => {
+                        runSourceRecordAction(item, (record) => onExportRecord(record.id));
+                      }}
+                      onToggleMenu={() => setSourceListMenuRecordId((current) => (
+                        current === item.id ? null : item.id
+                      ))}
+                    >
                     <button
                       type="button"
                       role="menuitem"
@@ -4082,11 +4476,14 @@ function KnowledgeWorkspaceView({
                     >
                       <Trash2 size={15} />移入回收站
                     </button>
-                  </NoteListActions>
-                }
-              />
+                    </NoteListActions>
+                  }
+                />
+              </div>
             );
           })}
+            </div>
+          ) : null}
           {inbox.length >= inboxLimit ? (
             <button
               className="knowledge-inbox-load-more"
@@ -4108,16 +4505,22 @@ function KnowledgeWorkspaceView({
             </button>
           ) : null}
           {!visibleSources.length ? <p className="knowledge-empty">当前筛选下没有来源。</p> : null}
+          </div>
+          </div>
         </UnifiedNoteListPanel>
         {sourceConnector && sourceConnector.width > 0 ? (
           <span className="source-final-connector" aria-hidden="true"><i /><b /></span>
         ) : null}
-        <div className="knowledge-card knowledge-inbox-detail association-link-target" ref={sourceDetailRef}>
+        <div
+          className="knowledge-card knowledge-inbox-detail association-link-target"
+          ref={sourceDetailRef}
+          data-hover-wheel-panel=""
+        >
           {selected ? (
             <>
               <div className="knowledge-detail-heading">
                 <div>
-                  <span>{selected.sourceType} · {formatSourceDate(selected.originalAt ?? selected.importedAt)}</span>
+                  <span>{selected.sourceType} · {formatSourceDate(visibleSourceMessages[0]?.createdAt ?? selected.originalAt ?? selected.importedAt)}</span>
                   <div className="source-title-line">
                     {editingSourceTitle ? (
                       <input
@@ -4165,23 +4568,30 @@ function KnowledgeWorkspaceView({
                   </div>
                 </div>
                 <div className="knowledge-detail-actions">
-                  {sourceKnowledgeTopic ? (
-                    <button onClick={() => onNavigateToKnowledgeTopic({
-                      topicId: sourceKnowledgeTopic.id,
-                      viewMode: "sources",
+                  <button
+                    type="button"
+                    className="source-auto-organize-action"
+                    disabled={busy || !inbox.some((item) => item.organizationState === "inbox")}
+                    onClick={() => void autoOrganizeLoadedInbox()}
+                    aria-label="自动整理待归类来源"
+                    title="自动整理待归类来源"
+                  >
+                    <Sparkles size={16} />自动整理
+                  </button>
+                  {sourceReturnTopicId !== null || canReturnFromSource ? (
+                    <button onClick={() => onReturnFromSource({
+                      topicId: sourceReturnTopicId,
                       sourceItemId: selected.id,
                     })}>
-                      <Link2 size={16} />返回主题来源
+                      <Link2 size={16} />返回上一级
                     </button>
                   ) : null}
-                  {selectedOriginalText ? (
-                    <button
-                      type="button"
-                      onClick={() => setSourceDetailOpen(true)}
-                    >
-                      <Maximize2 size={16} />查看详情
-                    </button>
-                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setSourceDetailOpen(true)}
+                  >
+                    <Maximize2 size={16} />查看详情
+                  </button>
                   {selected.organizationState === "inbox" ? (
                     <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
                       <Sparkles size={16} />
@@ -4202,25 +4612,64 @@ function KnowledgeWorkspaceView({
                   <div className="source-final-section-heading">
                     <div><span>原始资料</span><h3>来源正文</h3></div>
                     <div className="source-body-tools">
-                      <label>
+                      <label className="source-body-search-wrap">
                         <Search size={14} />
                         <input
+                          ref={sourceBodySearchInputRef}
                           value={sourceBodySearch}
-                          onChange={(event) => setSourceBodySearch(event.target.value)}
+                          onChange={(event) => {
+                            const nextValue = event.target.value;
+                            setSourceBodySearch(nextValue);
+                            setSourceBodySearchHistoryOpen(
+                              !nextValue.trim() && sourceBodySearchHistory.length > 0,
+                            );
+                          }}
+                          onFocus={() => setSourceBodySearchHistoryOpen(
+                            sourceBodySearchHistory.length > 0,
+                          )}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
                               searchSourceText();
                             }
+                            if (event.key === "Escape") setSourceBodySearchHistoryOpen(false);
                           }}
                           placeholder="搜索正文文字"
                           aria-label="搜索来源正文"
                         />
+                        {sourceBodySearchHistoryOpen ? (
+                          <div
+                            className="source-search-history source-body-search-history"
+                            role="listbox"
+                            aria-label="正文最近搜索"
+                          >
+                            <header><strong>最近搜索</strong><button type="button" onClick={() => {
+                              clearSourceBodySearchHistory();
+                              setSourceBodySearchHistory([]);
+                              setSourceBodySearchHistoryOpen(false);
+                            }}>清空</button></header>
+                            {sourceBodySearchHistory.map((term) => (
+                              <button
+                                type="button"
+                                role="option"
+                                key={term}
+                                onClick={() => {
+                                  setSourceBodySearch(term);
+                                  setSourceBodySearchHistory(rememberSourceBodySearch(term));
+                                  setSourceBodySearchHistoryOpen(false);
+                                  sourceBodySearchInputRef.current?.focus();
+                                }}
+                              >
+                                <Search size={13} /><span>{term}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </label>
-                      <button type="button" onClick={searchSourceText}>搜索</button>
+                      <button type="button" onClick={searchSourceText} aria-label="执行正文搜索"><Search size={14} />搜索</button>
                     </div>
                   </div>
-                  <div className="knowledge-source-preview" ref={sourceBodyRef}>
+                  <div className="knowledge-source-preview" ref={sourceBodyRef} data-hover-wheel-scroll="">
                     {selectedReadableContent === null
                       ? <div className="page-loading"><span className="save-spinner" />正在读取当前来源正文…</div>
                       : <>
@@ -4233,6 +4682,8 @@ function KnowledgeWorkspaceView({
                                 compact
                                 attachments={sourceAttachments}
                                 onOpenAttachment={onOpenAttachment}
+                                onRevealAttachment={onRevealAttachment}
+                                recoveryStates={sourceAttachmentRecovery}
                               />
                             ))}
                           </div>
@@ -4337,7 +4788,21 @@ function KnowledgeWorkspaceView({
         fullText={selectedReadableContent.fullText}
         attachments={sourceAttachments}
         onOpenAttachment={onOpenAttachment}
+        onRevealAttachment={onRevealAttachment}
+        recoveryStates={sourceAttachmentRecovery}
         onClose={() => setSourceDetailOpen(false)}
+      />
+    ) : null}
+    {attachmentTimelineCategory ? (
+      <AttachmentTimelineDialog
+        category={attachmentTimelineCategory}
+        hits={attachmentTimelineHits}
+        busy={attachmentTimelineBusy}
+        onSearch={searchAttachmentTimeline}
+        onOpenHit={(hit) => {
+          void openSourceAttachmentCatalogHit(hit);
+        }}
+        onClose={() => setAttachmentTimelineCategory(null)}
       />
     ) : null}
     </>

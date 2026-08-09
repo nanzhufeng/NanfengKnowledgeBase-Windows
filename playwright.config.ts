@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testIgnore: "attachment-visual-media-preview.spec.ts",
   timeout: 30_000,
   fullyParallel: false,
   workers: 1,

@@ -69,4 +69,5 @@ describe("knowledge skins", () => {
       expect(palette.surfaceMuted).toBe("#52647a");
     }
   });
+
 });

@@ -929,6 +929,17 @@ pub fn open_export_directory(paths: &AppPaths) -> AppResult<()> {
         .map_err(|error| AppError::Io(std::io::Error::other(error.to_string())))
 }
 
+/// 在 Windows 资源管理器中直接选中本次导出的单个文件，而不是仅打开导出目录。
+/// 路径必须是当前受控导出目录内的现存文件，防止外部路径被意外打开。
+pub fn reveal_exported_file(paths: &AppPaths, file_path: &str) -> AppResult<()> {
+    let export_root = paths.exports.canonicalize()?;
+    let selected = Path::new(file_path).canonicalize()?;
+    if !selected.is_file() || !selected.starts_with(&export_root) {
+        return Err(AppError::Validation("只能定位南枫知识库刚导出的文件".to_string()));
+    }
+    crate::external_open::reveal_path(&selected)
+}
+
 fn backup_connection(source: &Connection, destination: &Path) -> AppResult<()> {
     let mut target = Connection::open(destination)?;
     database::copy_database(source, &mut target)?;

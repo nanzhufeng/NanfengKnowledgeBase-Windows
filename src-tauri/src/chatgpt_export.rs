@@ -176,6 +176,7 @@ pub fn inspect_chatgpt_export(
 
     let mut conversation_count = 0_usize;
     let mut attachment_occurrence_count = 0_usize;
+    let mut warnings = Vec::new();
     let mut links_by_entry = BTreeMap::<String, BTreeSet<MessageAttachmentLink>>::new();
     for shard_name in &shard_names {
         let shard = read_json_entry(&mut archive, shard_name)?;
@@ -207,9 +208,12 @@ pub fn inspect_chatgpt_export(
                     attachment_occurrence_count += 1;
                     let normalized = normalize_attachment_entry_name(&reference);
                     if !entry_names.contains(&normalized) {
-                        return Err(ChatGptExportError::Validation(format!(
-                            "消息引用的附件实体不存在：{reference}"
-                        )));
+                        // 导出包偶尔只保留对话中的媒体声明，不再包含二进制实体。
+                        // 保留声明并给出可见警告，不能因一个缺失媒体让整包无法导入。
+                        warnings.push(format!(
+                            "消息声明了附件 {reference}，但导出包未携带可恢复实体"
+                        ));
+                        continue;
                     }
                     links_by_entry
                         .entry(normalized.clone())
@@ -235,7 +239,6 @@ pub fn inspect_chatgpt_export(
         ));
     }
 
-    let mut warnings = Vec::new();
     let mut assets = Vec::with_capacity(dat_entries.len());
     for entry in dat_entries {
         let entry_key = entry.name.to_ascii_lowercase();
@@ -391,6 +394,42 @@ pub fn materialize_chatgpt_assets(
         return Err(error);
     }
     Ok(materialization)
+}
+
+/// 只物化一次用户明确点击的 ChatGPT 附件。调用方必须先使用同一归档的
+/// `inspect_chatgpt_export` 结果完成来源与消息归属校验，避免为单个预览解压整包素材。
+pub fn materialize_inspected_chatgpt_asset(
+    archived_zip: impl AsRef<Path>,
+    attachment_directory: impl AsRef<Path>,
+    inspected_asset: &ChatGptAssetInspection,
+) -> ChatGptExportResult<PreservedChatGptAsset> {
+    let archived_zip = archived_zip.as_ref();
+    let attachment_directory = attachment_directory.as_ref();
+    if attachment_directory.exists() {
+        return Err(ChatGptExportError::Validation(format!(
+            "为避免混入既有附件，目标目录已存在：{}",
+            attachment_directory.display()
+        )));
+    }
+    if let Some(parent) = attachment_directory.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::create_dir(attachment_directory)?;
+    let assets = match extract_inspected_assets(
+        archived_zip,
+        attachment_directory,
+        std::slice::from_ref(inspected_asset),
+    ) {
+        Ok(assets) => assets,
+        Err(error) => {
+            let _ = fs::remove_dir_all(attachment_directory);
+            return Err(error);
+        }
+    };
+    assets.into_iter().next().ok_or_else(|| {
+        let _ = fs::remove_dir_all(attachment_directory);
+        ChatGptExportError::Validation("没有生成选中的附件实体".to_string())
+    })
 }
 
 pub fn preserve_chatgpt_export(
@@ -656,10 +695,20 @@ fn string_field(object: &serde_json::Map<String, Value>, field: &str) -> Option<
 fn collect_attachment_references(value: &Value, output: &mut Vec<String>) {
     match value {
         Value::Object(object) => {
+            // 新版 ChatGPT 把用户上传媒体存为 metadata.attachments[] 的
+            // id/name/mime_type 组合。不能把任何 message.id 都当附件，只接受
+            // 同时带文件描述的对象，避免消息节点误关联。
+            let looks_like_attachment = object.contains_key("mime_type")
+                && (object.contains_key("name") || object.contains_key("file_name"));
+            if looks_like_attachment {
+                if let Some(reference) = string_field(object, "id") {
+                    output.push(reference);
+                }
+            }
             for (key, child) in object {
-                if matches!(key.as_str(), "asset_pointer" | "file_id") {
+                if matches!(key.as_str(), "asset_pointer" | "file_id" | "file_uuid") {
                     if let Some(reference) = child.as_str() {
-                        if reference.contains("file-") || reference.contains("file_") {
+                        if !reference.trim().is_empty() {
                             output.push(reference.to_string());
                         }
                     }
@@ -1040,6 +1089,24 @@ mod tests {
             inspection.assets[1].message_links[0].conversation_id,
             "conversation-1"
         );
+    }
+
+    #[test]
+    fn metadata_attachment_id_is_collected_without_treating_message_id_as_file() {
+        let message = serde_json::json!({
+            "id": "message-1",
+            "metadata": {
+                "attachments": [{
+                    "id": "file_000000003d3081f5812c4bd6b7b107a8",
+                    "name": "original.mp4",
+                    "mime_type": "video/mp4",
+                    "size": 19633733
+                }]
+            }
+        });
+        let mut references = Vec::new();
+        collect_attachment_references(&message, &mut references);
+        assert_eq!(references, vec!["file_000000003d3081f5812c4bd6b7b107a8"]);
     }
 
     #[test]

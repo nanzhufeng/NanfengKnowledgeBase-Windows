@@ -32,6 +32,7 @@ export type SynthesizedJudgment = {
 export type SynthesizedDecisionDraft = {
   id: string;
   title: string;
+  basis: string;
   decision: string;
   decidedAt: string;
   knownRisks: string[];
@@ -73,6 +74,15 @@ export type KnowledgeOverview = {
   actions: KnowledgeOverviewItem[];
 };
 
+export type KnowledgeTopicIntegration = {
+  mode: "curated" | "automatic" | "pending";
+  title: string;
+  statusLabel: string;
+  summary: string;
+  bodyMarkdown: string;
+  sourceItemIds: number[];
+};
+
 type SemanticUnit = {
   id: string;
   text: string;
@@ -90,6 +100,9 @@ const RISK_SIGNAL = /(?:风险|问题|不足|失败|冲突|限制|不确定|不�
 const OPPOSITION_SIGNAL = /(?:但是|但|相反|并非|不是|不能|不应|不要|低于|失败|反例|冲突|否定)/;
 const QUESTION_SIGNAL = /[?？]$|^(?:是否|为什么|为何|如何|能否|要不要|哪一种|什么条件)/;
 const META_LINE = /^(?:用户|助手|系统|记录|metadata|model|create_time|update_time|conversation_id|source|tags?|aliases|created|updated)\s*[:：]?$/i;
+const CONVERSATIONAL_OFFER_SIGNAL = /(?:如果你愿意|如果你需要(?:我|进一步|继续|更多|帮助|协助)|如有需要|需要的话(?:[，,。！？\s]|$)|我可以(?:再|继续|单独|帮你|为你)|我能(?:再|继续|帮你|为你)|你可以告诉我|欢迎继续)/;
+const CONTEXT_FRAGMENT_START = /^(?:的话|这句话|上面(?:这|的)|前面(?:这|的)|然后|接下来)[，,、：:\s]/;
+const DECISION_CANDIDATE_SIGNAL = /^(?:建议|需要|应该|应当|优先|采用|选择|保持|避免|不要|先|下一步)|^(?:核心)?(?:判断|结论)[^。！？；]{0,80}(?:应当|应该|需要|优先|采用|选择|保持|避免)/;
 
 function compactText(value: string): string {
   return value
@@ -98,9 +111,15 @@ function compactText(value: string): string {
     .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
     .replace(/https?:\/\/\S+/g, " ")
     .replace(/^[\s>#*_`~\-\d.)、•]+/g, "")
+    .replace(/^(?:用户|助手|系统|user|assistant|system)\s*[:：]\s*/i, "")
     .replace(/[*_`~]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function isIndependentKnowledgeStatement(value: string): boolean {
+  return !CONVERSATIONAL_OFFER_SIGNAL.test(value)
+    && !CONTEXT_FRAGMENT_START.test(value);
 }
 
 function splitSemanticUnits(value: string): string[] {
@@ -114,7 +133,12 @@ function splitSemanticUnits(value: string): string[] {
     .map(compactText)
     .filter((line) => {
       const length = Array.from(line).length;
-      if (length < 8 || length > 240 || META_LINE.test(line)) return false;
+      if (
+        length < 8
+        || length > 240
+        || META_LINE.test(line)
+        || !isIndependentKnowledgeStatement(line)
+      ) return false;
       if (/^[\d\s./:_-]+$/.test(line)) return false;
       const key = line.toLocaleLowerCase("zh-CN");
       if (seen.has(key)) return false;
@@ -255,10 +279,84 @@ function judgmentUnits(units: SemanticUnit[]): SemanticUnit[] {
     .slice(-4);
 }
 
-function conciseTitle(value: string): string {
-  const withoutPrefix = value.replace(/^(?:建议|需要|应该|应当|优先|可以)\s*/, "");
-  const characters = Array.from(withoutPrefix);
-  return characters.length > 24 ? `${characters.slice(0, 24).join("")}…` : withoutPrefix;
+function bestUnitPerSource(detail: KnowledgeTopicDetail, units: SemanticUnit[]): SemanticUnit[] {
+  const unitsBySource = new Map<number, SemanticUnit[]>();
+  units.forEach((unit) => {
+    const items = unitsBySource.get(unit.sourceItemId) ?? [];
+    items.push(unit);
+    unitsBySource.set(unit.sourceItemId, items);
+  });
+  return detail.sources
+    .map((source) => [...(unitsBySource.get(source.id) ?? [])]
+      .sort((left, right) => right.score - left.score)[0])
+    .filter((unit): unit is SemanticUnit => Boolean(unit));
+}
+
+/**
+ * 把底层 KnowledgeNote 与来源统一收口为一个主题整合阅读模型。
+ * 正式整理内容优先；缺失时只摘取真实来源正文，不写回数据库，也不把单一来源伪装成成熟主题。
+ */
+export function buildKnowledgeTopicIntegration(
+  detail: KnowledgeTopicDetail,
+): KnowledgeTopicIntegration | null {
+  const sourceItemIds = detail.sources.map((source) => source.id);
+  if (detail.notes.length) {
+    const bodyMarkdown = detail.notes
+      .map((note) => [
+        `## ${note.title}`,
+        note.summary.trim() ? `> ${note.summary.trim()}` : "",
+        note.bodyMarkdown.trim(),
+      ].filter(Boolean).join("\n\n"))
+      .join("\n\n---\n\n");
+    return {
+      mode: "curated",
+      title: `${detail.topic.name} · 主题整合`,
+      statusLabel: `正式整合 · ${detail.notes.length} 项整理内容 · ${detail.sources.length} 条关联来源`,
+      summary: detail.topic.description.trim(),
+      bodyMarkdown: bodyMarkdown || detail.topic.description.trim(),
+      sourceItemIds,
+    };
+  }
+
+  if (!detail.sources.length) return null;
+
+  const units = sourceUnits(detail);
+  const coverageUnits = bestUnitPerSource(detail, units).slice(0, 8);
+  const remainingSources = detail.sources.filter((source) => (
+    !coverageUnits.some((unit) => unit.sourceItemId === source.id)
+  ));
+  const bodyParts = [
+    detail.topic.description.trim()
+      ? `## 主题范围\n\n${detail.topic.description.trim()}`
+      : "",
+    coverageUnits.length
+      ? `## 来源要点\n\n${coverageUnits.map((unit) => (
+        `- **《${unit.sourceTitle}》**：${unit.text}`
+      )).join("\n")}`
+      : "",
+    remainingSources.length
+      ? `## 关联资料\n\n${remainingSources.map((source) => `- 《${source.title}》`).join("\n")}`
+      : "",
+  ].filter(Boolean);
+  const pending = detail.sources.length < 2;
+  return {
+    mode: pending ? "pending" : "automatic",
+    title: pending
+      ? `${detail.topic.name} · 待聚合`
+      : `${detail.topic.name} · 自动整合`,
+    statusLabel: pending
+      ? "待聚合 · 当前仅 1 条来源"
+      : `自动整合 · ${detail.sources.length} 条关联来源`,
+    summary: pending
+      ? "当前材料不足以形成成熟主题，先保留真实来源并等待更多相关笔记。"
+      : "根据当前主题下的真实来源自动汇集，所有要点均可从右侧回溯。",
+    bodyMarkdown: bodyParts.join("\n\n") || "当前来源暂无可提炼正文。",
+    sourceItemIds,
+  };
+}
+
+function decisionDraftTitle(sourceTitle: string): string {
+  return `《${sourceTitle}》中的待确认建议`;
 }
 
 export function buildKnowledgeSynthesis(detail: KnowledgeTopicDetail): KnowledgeSynthesis {
@@ -300,21 +398,33 @@ export function buildKnowledgeSynthesis(detail: KnowledgeTopicDetail): Knowledge
   });
 
   const risks = selectDiverse(units.filter((unit) => RISK_SIGNAL.test(unit.text)), 5);
-  const actions = selectDiverse(units.filter((unit) => ACTION_SIGNAL.test(unit.text)), 3);
+  const actions = selectDiverse(
+    units.filter((unit) => DECISION_CANDIDATE_SIGNAL.test(unit.text)),
+    3,
+  );
   const decisionDrafts = actions.map((unit) => {
     const relatedRisk = risks.find((risk) => (
       risk.sourceItemId === unit.sourceItemId || similarity(risk.text, unit.text) > 0.08
     ));
-    const expected = units
-      .filter((candidate) => candidate.id !== unit.id && !RISK_SIGNAL.test(candidate.text))
-      .sort((left, right) => similarity(right.text, unit.text) - similarity(left.text, unit.text))[0];
+    const basis = units
+      .filter((candidate) => (
+        candidate.id !== unit.id
+        && candidate.sourceItemId === unit.sourceItemId
+        && !QUESTION_SIGNAL.test(candidate.text)
+        && !RISK_SIGNAL.test(candidate.text)
+      ))
+      .sort((left, right) => (
+        similarity(right.text, unit.text) - similarity(left.text, unit.text)
+        || right.score - left.score
+      ))[0];
     return {
       id: `decision-${unit.id}`,
-      title: conciseTitle(unit.text),
+      title: decisionDraftTitle(unit.sourceTitle),
+      basis: basis?.text ?? `该建议来自《${unit.sourceTitle}》正文，仍需结合其他来源核对成立条件。`,
       decision: unit.text,
       decidedAt: unit.occurredAt,
       knownRisks: relatedRisk ? [relatedRisk.text] : [],
-      expectedResult: expected?.text ?? "执行后需要补充可观测结果并在复核时间点回写。",
+      expectedResult: "待确认：补充可观测指标与复核时间后，再评估该建议是否达到预期。",
       actualActions: [],
       finalResult: "",
       retrospective: "",
@@ -344,7 +454,7 @@ function uniqueOverviewItems(items: KnowledgeOverviewItem[], limit = 3): Knowled
 }
 
 /**
- * 统一生成知识视图首屏摘要。正式知识对象优先；缺失时只从真实正文确定性提炼，
+ * 统一生成主题洞察首屏摘要。正式知识对象优先；缺失时只从真实正文确定性提炼，
  * 不写回数据库，也不把建议行动伪装成已经执行的结果。
  */
 export function buildKnowledgeOverview(

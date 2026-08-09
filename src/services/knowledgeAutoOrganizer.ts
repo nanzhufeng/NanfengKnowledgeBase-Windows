@@ -92,7 +92,7 @@ export async function autoOrganizeImportedSources(
   const catalog = await ensureEditableTopicCatalog(repository);
   result.catalogBootstrapped = catalog.catalogBootstrapped;
   if (!catalog.hasTopics) {
-    result.failures.push("尚无可用主题，来源已保留在来源档案待确认");
+    result.failures.push("尚无可用主题，来源已保留在全部笔记中待确认");
     return result;
   }
 

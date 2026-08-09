@@ -219,6 +219,43 @@ describe("readImportedContent", () => {
     });
   });
 
+  it("keeps a ChatGPT video declaration visible even before its binary is recovered", () => {
+    const result = readImportedContent(JSON.stringify({
+      current_node: "assistant",
+      mapping: {
+        user: {
+          parent: null,
+          message: {
+            author: { role: "user" },
+            create_time: 1_721_987_500,
+            metadata: { attachments: [{
+              id: "file-video-01",
+              name: "产业解读.mp4",
+              mime_type: "video/mp4",
+              size: 19633733,
+            }] },
+            content: { content_type: "text", parts: ["请看这个视频"] },
+          },
+        },
+        assistant: {
+          parent: "user",
+          message: {
+            author: { role: "assistant" },
+            content: { content_type: "text", parts: ["已收到"] },
+          },
+        },
+      },
+    }));
+
+    expect(result.messages[0]?.assets).toEqual([{
+      fileUuid: "file-video-01",
+      fileName: "产业解读.mp4",
+      kind: "video",
+      mimeType: "video/mp4",
+      sizeBytes: 19633733,
+    }]);
+  });
+
   it("uses the first ChatGPT user message when an imported title is generic", () => {
     const source = JSON.stringify({
       current_node: "answer",

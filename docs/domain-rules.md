@@ -32,7 +32,7 @@
 - Source Collection 是四个单篇列表共同读取的来源目录，不等于导入文件名；同一平台的 ZIP/JSON 分片只显示一个目录名称。
 - 默认目录为`ChatGPT 导入 / Claude 导入 / 零散文件导入 / JSON 导入 / 手动记录 / 其他导入`；MD、TXT、HTML 及未来 DOC/DOCX/PDF 等单篇文件统一进入`零散文件导入`。
 - 用户可以重命名目录；重命名只改变统一显示名称，原文件名、路径、文件哈希、导入任务和条目外部 ID 必须继续保真。
-- 来源筛选、来源档案卡片以及收藏/跟踪/判断更新卡片只能消费同一 Source Collection 名称，不得各自从文件名、类型或旧平台字段生成第二套来源。
+- 来源筛选、全部笔记卡片以及收藏/跟踪卡片只能消费同一 Source Collection 名称，不得各自从文件名、类型或旧平台字段生成第二套来源；历史`updated`记录继续读取同一名称，但不生成独立入口。
 
 ### Note
 
@@ -115,7 +115,8 @@ classifySource(context: ClassificationContext): ClassificationResult
 - 每条新来源仍统一调用 `classifySource`，并保存候选、分数、理由、信号贡献和算法版本。
 - 只有 `auto_eligible`（严格 `>65`）可以由自动整理用例确认；确认必须写操作日志，并允许按批次撤销。
 - `candidates` 和 `manual` 只保存为待确认建议；65 分本身不得自动确认。
-- 来源档案首次加载当前版本后自动处理全部待升级来源，不限于首屏 120 条；按当前算法版本读取持久化完成标记并断点续算，不得复制分类权重或产生第二套页面规则。
+- App 启动后的空闲阶段自动处理全部待升级来源，不依赖用户进入某个页面，也不限于首屏 120 条；按当前算法版本读取持久化完成标记并断点续算，不得复制分类权重或产生第二套页面规则。
+- 批量导入与字段映射导入只提交本次新增的 Source Item ID，由`App.organizeImportedKnowledge`进入同一串行队列；导入页不得各自复制通知、阈值或确认逻辑。自动整理完成后递增知识数据版本，已打开的主题洞察与全部笔记必须刷新正式读取模型。
 - 有候选时保存最多 5 条；无候选时也保存 `topic_id = NULL` 的当前版本完成标记，使“已计算但证据不足”可恢复、可统计且不会无限重试。
 - 全量升级与新导入使用同一裁决：`auto_eligible` 自动确认，`candidates` 与 `manual` 只保存建议；不得维护两套阈值。
 - Domain/Topic 的名称和描述允许用户编辑；编辑保留 ID、来源归属、判断、证据和关系。
@@ -155,7 +156,7 @@ classifySource(context: ClassificationContext): ClassificationResult
 - `src/knowledge/classificationFixtures.ts`：固定验收数据，不是生产词典。
 - `src/services/knowledgeAutoOrganizer.ts`：导入后和来源档案批量整理的唯一前端编排；只调用分类器和仓库公开用例。
 - `src/services/knowledgeRepository.ts`：正式 WebView 到 Tauri 知识命令的唯一前端适配器。
-- `src/components/KnowledgeWorkspace.tsx`：正式`知识视图 / 来源档案 / 主题管理`三入口；旧收录箱、主题浏览器和整理工作台仅保留为历史概念，不再是导航入口。
+- `src/components/KnowledgeWorkspace.tsx`：正式`主题洞察 / 全部笔记 / 主题管理`三入口；旧收录箱、主题浏览器和整理工作台仅保留为历史概念，不再是导航入口。
 - `src-tauri/src/knowledge/schema.rs`：正式知识表、约束和 FTS5 合同，已由 migration v3 接入。
 - `src-tauri/src/knowledge/repository.rs`：正式知识仓库，负责 Source Item 回填、分类确认/撤销、主题详情、判断、证据、问题、上下文、合并和关系。
 - `src-tauri/src/knowledge/legacy_preview.rs`：旧 `Record` 的只读映射预演；标签仅作候选，标题不自动升格为主题。

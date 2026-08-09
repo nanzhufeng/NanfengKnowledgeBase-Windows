@@ -37,7 +37,7 @@ describe("UnifiedNoteListCard", () => {
 
     expect(app).toContain("<UnifiedNoteListPanel");
     expect(app).toContain("<UnifiedNoteListCard");
-    expect(workspace).toContain("visibleSources.map((item) =>");
+    expect(workspace).toContain("sourceVirtualList.visibleIndexes.map((index) =>");
     expect(workspace).toContain("<UnifiedNoteListPanel");
     expect(workspace).toContain("<UnifiedNoteListCard");
     expect(workspace).toContain("ensureSourceActionTarget");
@@ -70,7 +70,7 @@ describe("UnifiedNoteListCard", () => {
         />
         <UnifiedNoteListToolbar>工具栏</UnifiedNoteListToolbar>
         <UnifiedNoteListDisplayToolbar
-          label="来源档案"
+          label="全部笔记"
           count={4}
           countLabel="条来源"
           compactMode
@@ -105,7 +105,9 @@ describe("UnifiedNoteListCard", () => {
     expect(toolbar).toContain('aria-label="拖动快速定位记录"');
     expect(toolbar).toContain("舒展卡片");
     expect(toolbar).toContain("按更新时间");
-    expect(workspace).toContain('placeholder="搜索来源"');
+    expect(workspace).toContain('placeholder="搜索笔记、图片、视频与文件"');
+    expect(app).toContain("<UnifiedHistoricalSearchScope");
+    expect(workspace).toContain("<UnifiedHistoricalSearchScope");
     expect(app).toContain("<UnifiedNoteListFilter");
     expect(workspace).toContain("<UnifiedNoteListFilter");
     for (const owner of [app, workspace]) {
@@ -212,7 +214,7 @@ describe("UnifiedNoteListCard", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     const toolbar = renderToStaticMarkup(
       <UnifiedNoteListDisplayToolbar
-        label="来源档案"
+        label="全部笔记"
         count={999}
         countLabel="条来源"
         compactMode
@@ -222,7 +224,7 @@ describe("UnifiedNoteListCard", () => {
       />,
     );
 
-    expect(toolbar).toContain('aria-label="来源档案 999 条来源"');
+    expect(toolbar).toContain('aria-label="全部笔记 999 条来源"');
     expect(toolbar).toContain(">999<");
     expect(toolbar).toContain("舒展卡片");
     expect(toolbar).toContain("按更新时间");

@@ -1502,17 +1502,18 @@ fn append_record_sort(sql: &mut String, query: &RecordQuery) {
 pub fn derive_original_at(source_text: &str) -> Option<String> {
     let value = serde_json::from_str::<serde_json::Value>(source_text).ok()?;
     let object = value.as_object()?;
+    // 对话归档默认展示创建时间；更新/导入时间仅能作为回退。
     const DATE_KEYS: [&str; 18] = [
-        "update_time",
-        "updated_at",
-        "updatedAt",
-        "updateTime",
         "create_time",
         "created_at",
         "createdAt",
         "createTime",
         "conversation_start_time",
         "conversationStartTime",
+        "update_time",
+        "updated_at",
+        "updatedAt",
+        "updateTime",
         "timestamp",
         "time",
         "date",
@@ -2374,6 +2375,13 @@ mod tests {
         let milliseconds =
             derive_original_at(r#"{"update_time":1714950489000}"#).expect("Unix milliseconds");
         assert_eq!(seconds, milliseconds);
+    }
+
+    #[test]
+    fn original_date_prefers_conversation_creation_over_later_update() {
+        let date = derive_original_at(r#"{"create_time":1721833500,"update_time":1721865600}"#)
+            .expect("conversation creation date");
+        assert_eq!(date, "2024-07-24T15:05:00+00:00");
     }
 
     #[test]

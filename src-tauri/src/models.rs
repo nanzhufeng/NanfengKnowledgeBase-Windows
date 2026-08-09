@@ -89,6 +89,48 @@ pub struct AttachmentItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AttachmentSearchHit {
+    pub attachment: AttachmentItem,
+    pub record_title: String,
+    pub record_summary: String,
+    pub record_original_at: Option<String>,
+}
+
+/// 来源正文中声明过的全部附件。`attachment` 为空只表示受控实体尚未物化，
+/// 不能把它从历史资料搜索中静默删除。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAttachmentCatalogHit {
+    pub key: String,
+    pub source_item_id: i64,
+    pub record_id: Option<i64>,
+    pub file_uuid: Option<String>,
+    pub file_name: String,
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub availability: String,
+    pub attachment: Option<AttachmentItem>,
+    pub record_title: String,
+    pub record_summary: String,
+    pub record_original_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAttachmentHydrationFailure {
+    pub attachment_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAttachmentHydrationResult {
+    pub attachments: Vec<AttachmentItem>,
+    pub failures: Vec<SourceAttachmentHydrationFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct IntelligenceRecord {
     pub id: i64,
     pub title: String,
@@ -330,6 +372,31 @@ pub struct DataLocation {
     pub logs: String,
 }
 
+/// 更换数据目录前的只读预检结果。目录切换仅会在复制和校验全部通过后发生。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataMigrationPreview {
+    pub source_root: String,
+    pub target_root: String,
+    pub file_count: u64,
+    pub total_bytes: u64,
+    pub required_bytes: u64,
+    pub available_bytes: u64,
+    pub target_is_empty: bool,
+}
+
+/// 成功复制并持久化下次启动路径后的结果；当前进程仍继续使用旧目录直到重启。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataMigrationResult {
+    pub source_root: String,
+    pub target_root: String,
+    pub copied_file_count: u64,
+    pub copied_bytes: u64,
+    pub integrity_check: String,
+    pub restart_required: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageStats {
@@ -342,4 +409,46 @@ pub struct StorageStats {
     pub disk_available_bytes: u64,
     pub disk_total_bytes: u64,
     pub last_backup_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataOptimizationPreview {
+    pub database_reclaimable_bytes: u64,
+    pub duplicate_backup_count: u64,
+    pub duplicate_backup_bytes: u64,
+    pub incomplete_backup_count: u64,
+    pub incomplete_backup_bytes: u64,
+    pub estimated_reclaimable_bytes: u64,
+    pub protected_business_record_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DataOptimizationResult {
+    pub safety_backup: String,
+    pub removed_duplicate_backup_count: u64,
+    pub removed_incomplete_backup_count: u64,
+    pub reclaimed_bytes: u64,
+    pub database_bytes_before: u64,
+    pub database_bytes_after: u64,
+    pub integrity_check: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyAttachmentRecoveryPreview {
+    pub archive_count: i64,
+    pub record_count: i64,
+    pub recoverable_attachment_count: i64,
+    pub unresolved_attachment_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyAttachmentRecoveryResult {
+    pub archive_count: i64,
+    pub recovered_attachment_count: i64,
+    pub unresolved_attachment_count: i64,
+    pub failed_attachment_count: i64,
 }

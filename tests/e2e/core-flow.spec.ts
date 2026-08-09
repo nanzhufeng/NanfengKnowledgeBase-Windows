@@ -14,8 +14,9 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("搜索、选择、收藏和长详情按需展示保持可操作", async ({ page }) => {
-  const search = page.getByLabel("搜索记录");
+  const search = page.getByLabel("搜索笔记、图片、视频与文件");
   await search.fill("资本开支");
+  await page.keyboard.press("Escape");
   await expect(page.locator(".list-result-summary")).toHaveAttribute("aria-label", /条记录/);
   await expect(page.locator(".record-card").first()).toBeVisible();
   await page.locator(".record-card").first().click();
@@ -80,31 +81,38 @@ test("快捷键设置使用独立的紧凑比例和两列信息布局", async ({
   });
 });
 
-test("当前判断自动保存并在刷新后恢复", async ({ page }) => {
+test("来源记录编辑自动保存并在刷新后恢复", async ({ page }) => {
   await page.locator(".record-card").first().click();
   await expect(page.locator(".detail-panel h1")).toBeVisible();
-  await page.locator(".judgment-card").getByRole("button", { name: /编辑/ }).click();
-  const textarea = page.locator(".judgment-card textarea");
-  const value = `自动保存验收 ${Date.now()}`;
-  await textarea.fill(value);
-  await expect(page.getByText("正在保存草稿…")).toBeVisible();
-  await expect(page.getByText("本地草稿已保存")).toBeVisible({ timeout: 5_000 });
+  await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "编辑来源记录" });
+  const titleInput = dialog.locator(".form-grid label").filter({ hasText: "标题" }).locator("input");
+  const value = `自动保存标题 ${Date.now()}`;
+  await titleInput.fill(value);
+  await expect(dialog.getByText("正在自动保存…")).toBeVisible();
+  await expect(dialog.getByText("编辑已自动保存")).toBeVisible({ timeout: 5_000 });
   await page.reload();
   await page.getByRole("button", { name: /持续跟踪/ }).click();
-  await expect(page.getByText(value)).toBeVisible();
+  await expect(page.locator(".detail-panel h1")).toHaveText(value);
 });
 
-test("异常刷新前的未提交判断从本机草稿恢复", async ({ page }) => {
+test("来源记录明确保存后可重新打开完整字段", async ({ page }) => {
   await page.locator(".record-card").first().click();
   await expect(page.locator(".detail-panel h1")).toBeVisible();
-  await page.locator(".judgment-card").getByRole("button", { name: /编辑/ }).click();
-  const value = `崩溃草稿恢复 ${Date.now()}`;
-  await page.locator(".judgment-card textarea").fill(value);
-  await expect(page.getByText("正在保存草稿…")).toBeVisible();
+  await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+  let dialog = page.getByRole("dialog", { name: "编辑来源记录" });
+  const value = `明确保存摘要 ${Date.now()}`;
+  const summaryInput = dialog.locator(".edit-record-form > label").filter({ hasText: "摘要" }).locator("textarea");
+  await summaryInput.fill(value);
+  await dialog.getByRole("button", { name: /保存完整记录/ }).click();
+  await expect(dialog).toBeHidden();
   await page.reload();
   await page.getByRole("button", { name: /持续跟踪/ }).click();
-  await expect(page.getByText(value)).toBeVisible();
-  await expect(page.getByText(/已恢复异常退出前的本地草稿/).first()).toBeVisible();
+  await page.locator(".record-card").first().click();
+  await page.getByRole("button", { name: "编辑记录", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "编辑来源记录" });
+  await expect(dialog.locator(".edit-record-form > label").filter({ hasText: "摘要" }).locator("textarea"))
+    .toHaveValue(value);
 });
 
 test("导入字段映射支持边界、模板和重复策略", async ({ page }) => {
@@ -259,6 +267,14 @@ test("设置将完整备份和数据库高级维护分层", async ({ page }) => 
   await expect(page.getByText("备份与恢复", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /创建完整备份/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /恢复完整备份/ })).toBeVisible();
+  await page.getByRole("button", { name: /扫描可优化项/ }).click();
+  const optimizationDialog = page.getByRole("dialog", { name: "确认优化数据占用" });
+  await expect(optimizationDialog).toBeVisible();
+  await expect(optimizationDialog.getByText(/不会删除笔记、知识对象、历史版本、附件或导入原件/)).toBeVisible();
+  await expect(optimizationDialog.getByText(/完全重复备份/)).toBeVisible();
+  await expect(optimizationDialog.getByText(/超过 24 小时/)).toBeVisible();
+  await expect(optimizationDialog.getByRole("button", { name: /创建安全快照并优化/ })).toBeDisabled();
+  await optimizationDialog.getByRole("button", { name: "取消", exact: true }).click();
 
   const advanced = page.locator("details.settings-advanced-maintenance");
   await expect(advanced).not.toHaveAttribute("open", "");

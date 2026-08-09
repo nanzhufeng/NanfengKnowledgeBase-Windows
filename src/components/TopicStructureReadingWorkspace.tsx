@@ -236,7 +236,11 @@ export function TopicStructureReadingWorkspace({
         <span className="topic-final-connector" aria-hidden="true"><i /><b /></span>
       ) : null}
 
-      <article className="topic-final-reader knowledge-card association-link-target" ref={readerRef}>
+      <article
+        className="topic-final-reader knowledge-card association-link-target"
+        ref={readerRef}
+        data-hover-wheel-panel=""
+      >
         {topic ? (
           <>
             <header className="topic-final-heading">
@@ -247,10 +251,13 @@ export function TopicStructureReadingWorkspace({
               </div>
             </header>
 
-            <div className="topic-final-scroll">
+            <div className="topic-final-scroll" data-hover-wheel-scroll="">
               <div className="topic-final-content">
                 <main>
-                  <section className="topic-final-section topic-boundary">
+                  <section
+                    className="topic-final-section topic-boundary"
+                    data-card-interaction="surface-lift"
+                  >
                     <h2>主题边界</h2>
                     <div className={negativeRules.length ? "has-system-exclusions" : undefined}>
                       <article>
@@ -274,7 +281,7 @@ export function TopicStructureReadingWorkspace({
                     </div>
                   </section>
 
-                  <section className="topic-final-section">
+                  <section className="topic-final-section" data-card-interaction="surface-lift">
                     <h2>自动归类依据</h2>
                     <div className="topic-final-basis">
                       <p><Sparkles size={15} /><strong>归类信号</strong>{positiveRules.length ? positiveRules.slice(0, 5).map((item) => item.pattern).join("、") : "由主题边界、别名与正文证据自动判断"}</p>
@@ -284,7 +291,7 @@ export function TopicStructureReadingWorkspace({
                   </section>
 
                   {showTopicHierarchy ? (
-                    <section className="topic-final-section">
+                    <section className="topic-final-section" data-card-interaction="surface-lift">
                       <h2>主题层级</h2>
                       <div className="topic-final-relations">
                         {parent ? <p><span>父主题</span><button onClick={() => onSelectTopic(parent.id)}>{parent.name}</button></p> : null}
@@ -300,7 +307,7 @@ export function TopicStructureReadingWorkspace({
                     </section>
                   ) : null}
 
-                  <section className="topic-final-section">
+                  <section className="topic-final-section" data-card-interaction="surface-lift">
                     <h2>别名与术语</h2>
                     <div className="topic-final-aliases">
                       {topicAliases.map((item) => <span key={item.id}>{item.alias}</span>)}
@@ -324,15 +331,17 @@ export function TopicStructureReadingWorkspace({
                   >
                     <Network size={15} />进入主题管理
                   </button>
-                  <section>
+                  <section
+                    data-card-interaction={maintenanceTasks.length + topicSuggestions.length ? undefined : "surface-lift"}
+                  >
                     <h3>待处理事项 <span>{maintenanceTasks.length + topicSuggestions.length}</span></h3>
                     {maintenanceTasks.map((item) => (
-                      <article key={item.key}>
+                      <article key={item.key} data-card-interaction="surface-lift">
                         <strong>{item.title}</strong>
                         <p>{item.copy}</p>
                         <footer>
                           <button type="button" onClick={() => onOpenMaintenance(item.task, topic.id)}>处理</button>
-                          <ArrowRight size={14} />
+                          <ArrowRight size={14} data-card-cue="forward" />
                         </footer>
                       </article>
                     ))}
@@ -344,7 +353,10 @@ export function TopicStructureReadingWorkspace({
                         ? suggestion.toTopicName
                         : suggestion.fromTopicName;
                       return (
-                        <article key={`${suggestion.fromTopicId}-${suggestion.toTopicId}-${suggestion.relationType}`}>
+                        <article
+                          key={`${suggestion.fromTopicId}-${suggestion.toTopicId}-${suggestion.relationType}`}
+                          data-card-interaction="surface-lift"
+                        >
                           <strong>建议关联：{relatedName}</strong>
                           <p>{suggestion.reason}</p>
                           <footer className="topic-final-suggestion-actions">

@@ -8,7 +8,7 @@ export type ReadableSourceMessage = {
 export type ReadableSourceAsset = {
   fileUuid: string | null;
   fileName: string;
-  kind: "image" | "file";
+  kind: "image" | "video" | "audio" | "file";
   mimeType: string | null;
   sizeBytes: number | null;
 };
@@ -71,6 +71,15 @@ function isImageFile(fileName: string, mimeType: string | null): boolean {
     || /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i.test(fileName);
 }
 
+function sourceAssetKind(fileName: string, mimeType: string | null, contentType = ""): ReadableSourceAsset["kind"] {
+  const normalizedMime = mimeType?.toLocaleLowerCase() ?? "";
+  const normalizedContentType = contentType.toLocaleLowerCase();
+  if (normalizedMime.startsWith("image/") || normalizedContentType.startsWith("image_") || isImageFile(fileName, mimeType)) return "image";
+  if (normalizedMime.startsWith("video/") || normalizedContentType.startsWith("video_") || /\.(?:avi|m4v|mkv|mov|mp4|mpeg|webm)$/i.test(fileName)) return "video";
+  if (normalizedMime.startsWith("audio/") || normalizedContentType.startsWith("audio_") || /\.(?:aac|flac|m4a|mp3|ogg|opus|wav)$/i.test(fileName)) return "audio";
+  return "file";
+}
+
 function imageReferences(value: unknown, references: Set<string>) {
   if (Array.isArray(value)) {
     value.forEach((item) => imageReferences(item, references));
@@ -106,7 +115,7 @@ function messageAssets(message: JsonObject): ReadableSourceAsset[] {
     const asset: ReadableSourceAsset = {
       fileUuid,
       fileName: displayName,
-      kind: imageUuids.has(fileUuid ?? "") || isImageFile(displayName, mimeType) ? "image" : "file",
+      kind: imageUuids.has(fileUuid ?? "") ? "image" : sourceAssetKind(displayName, mimeType),
       mimeType,
       sizeBytes: typeof rawSize === "number" && Number.isFinite(rawSize) ? rawSize : null,
     };
@@ -151,29 +160,49 @@ function unixDateTime(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function chatGptMessageAssets(content: JsonObject): ReadableSourceAsset[] {
-  if (!Array.isArray(content.parts)) return [];
-  const assets = content.parts
+function chatGptMessageAssets(content: JsonObject, message: JsonObject): ReadableSourceAsset[] {
+  const parts = Array.isArray(content.parts) ? content.parts : [];
+  const directAssets = [
+    ...parts,
+    ...(Array.isArray(message.attachments) ? message.attachments : []),
+    ...(Array.isArray(message.files) ? message.files : []),
+    ...(Array.isArray(asObject(message.metadata)?.attachments) ? asObject(message.metadata)?.attachments as unknown[] : []),
+  ];
+  const assets = directAssets
     .map(asObject)
     .filter((part): part is JsonObject => Boolean(part))
-    .filter((part) => /_asset_pointer$/i.test(nonEmptyString(part.content_type) ?? ""))
+    .filter((part) => /_asset_pointer$/i.test(nonEmptyString(part.content_type) ?? "")
+      || Boolean(nonEmptyString(part.asset_pointer))
+      || Boolean(nonEmptyString(part.file_id))
+      || Boolean(nonEmptyString(part.file_uuid))
+      || Boolean(nonEmptyString(part.id) && (nonEmptyString(part.name) || nonEmptyString(part.mime_type))))
     .map((part): ReadableSourceAsset | null => {
-      const pointer = nonEmptyString(part.asset_pointer);
+      const pointer = nonEmptyString(part.asset_pointer)
+        ?? nonEmptyString(part.file_id)
+        ?? nonEmptyString(part.file_uuid)
+        ?? nonEmptyString(part.fileUuid)
+        // ChatGPT 当前导出把用户上传的媒体放在 metadata.attachments，
+        // 使用 id/name/size，而不是 file_id/file_uuid。
+        ?? (nonEmptyString(part.id) && (nonEmptyString(part.name) || nonEmptyString(part.mime_type))
+          ? nonEmptyString(part.id)
+          : null);
       if (!pointer) return null;
       const fileUuid = pointer.replace(/^[a-z]+:\/\//i, "");
       const contentType = nonEmptyString(part.content_type)?.toLocaleLowerCase() ?? "";
-      const kind = contentType.startsWith("image_") ? "image" : "file";
-      const rawSize = part.size_bytes;
+      const fileName = nonEmptyString(part.file_name)
+        ?? nonEmptyString(part.name)
+        ?? nonEmptyString(part.filename);
+      const mimeType = nonEmptyString(part.mime_type) ?? nonEmptyString(part.mimeType);
+      const kind = sourceAssetKind(fileName ?? "", mimeType, contentType);
+      const rawSize = part.size_bytes ?? part.size;
       const shortId = fileUuid.length > 22
         ? `${fileUuid.slice(0, 18)}…`
         : fileUuid;
       return {
         fileUuid,
-        fileName: nonEmptyString(part.file_name)
-          ?? nonEmptyString(part.name)
-          ?? `${kind === "image" ? "图片" : "文件"} ${shortId}`,
+        fileName: fileName ?? `${kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文件"} ${shortId}`,
         kind,
-        mimeType: nonEmptyString(part.mime_type),
+        mimeType,
         sizeBytes: typeof rawSize === "number" && Number.isFinite(rawSize) ? rawSize : null,
       };
     })
@@ -234,7 +263,7 @@ function chatGptMappingMessages(root: JsonObject): ReadableSourceMessage[] {
       const content = asObject(message.content);
       if (!content) return null;
       const text = chatGptMessageText(content);
-      const assets = chatGptMessageAssets(content);
+      const assets = chatGptMessageAssets(content, message);
       if (!text && !assets.length) return null;
       return {
         role: roleLabel(role),

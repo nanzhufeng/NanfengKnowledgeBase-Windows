@@ -42,7 +42,7 @@ export type TopicMaintenanceData = KnowledgeCatalogData & {
   rules: KnowledgeClassificationRuleRow[];
 };
 
-/** 来源档案的点击关键路径只读取轻量列表，不能夹带主题维护或目录写入。 */
+/** 全部笔记的点击关键路径只读取轻量列表，不能夹带主题维护或目录写入。 */
 export async function loadSourceEntryData(
   repository: WorkspaceDataRepository,
   limit: number,
@@ -62,7 +62,7 @@ export async function loadSourceSupportingData(
   return { domains, topics, sourceCollections };
 }
 
-/** 知识视图只拥有阅读目录，不读取主题维护对象。 */
+/** 主题洞察只拥有阅读目录，不读取主题维护对象。 */
 export async function loadKnowledgeEntryData(
   repository: WorkspaceDataRepository,
 ): Promise<KnowledgeCatalogData> {

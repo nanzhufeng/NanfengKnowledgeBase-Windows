@@ -10,8 +10,16 @@ import {
 } from "../mockData";
 import {
   dataLocationSchema,
+  runtimeBuildInfoSchema,
+  dataMigrationPreviewSchema,
+  dataMigrationResultSchema,
+  dataOptimizationPreviewSchema,
+  dataOptimizationResultSchema,
+  legacyAttachmentRecoveryPreviewSchema,
+  legacyAttachmentRecoveryResultSchema,
   backupPreviewSchema,
   attachmentItemSchema,
+  attachmentSearchHitSchema,
   favoriteUpdateSchema,
   importPreviewSchema,
   importResultSchema,
@@ -30,8 +38,12 @@ import {
   type CommandError,
   type BackupPreview,
   type AttachmentItem,
+  type AttachmentSearchHit,
   type CreateRecordInput,
   type DataLocation,
+  type RuntimeBuildInfo,
+  type DataMigrationPreview,
+  type DataMigrationResult,
   type FavoriteUpdate,
   type IntelligenceRecord,
   type ImportPreview,
@@ -48,6 +60,10 @@ import {
   type PatchRecordInput,
   type RecordSummary,
   type StorageStats,
+  type DataOptimizationPreview,
+  type DataOptimizationResult,
+  type LegacyAttachmentRecoveryPreview,
+  type LegacyAttachmentRecoveryResult,
   type RecordSourceInput,
   type RecordVersion,
   type TagItem,
@@ -76,7 +92,15 @@ export interface RecordRepository {
   renameTag(tagId: number, name: string): Promise<TagItem>;
   deleteTag(tagId: number): Promise<void>;
   getDataLocation(): Promise<DataLocation>;
+  getRuntimeBuildInfo(): Promise<RuntimeBuildInfo>;
+  inspectDataMigration(targetRoot: string): Promise<DataMigrationPreview>;
+  migrateDataDirectory(targetRoot: string): Promise<DataMigrationResult>;
+  rollbackDataDirectorySwitch(): Promise<string>;
   getStorageStats(): Promise<StorageStats>;
+  inspectDataOptimization(): Promise<DataOptimizationPreview>;
+  optimizeData(): Promise<DataOptimizationResult>;
+  inspectLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryPreview>;
+  recoverLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryResult>;
   openDataDirectory(): Promise<void>;
   rebuildSearchIndex(): Promise<void>;
   runIntegrityCheck(): Promise<string>;
@@ -89,8 +113,10 @@ export interface RecordRepository {
   cancelImport(jobId: string): Promise<void>;
   listImportJobs(): Promise<ImportJobSummary[]>;
   listAttachments(recordId: number): Promise<AttachmentItem[]>;
+  searchAttachments(keyword: string, category: "all" | "image" | "video" | "audio" | "file", limit?: number): Promise<AttachmentSearchHit[]>;
   addAttachment(recordId: number, sourcePath: string): Promise<AttachmentItem>;
   openAttachment(attachmentId: number): Promise<void>;
+  revealAttachment(attachmentId: number): Promise<void>;
   removeAttachment(attachmentId: number): Promise<void>;
   exportRecord(recordId: number, format: "md" | "json"): Promise<ExportResult>;
   writeDocxExport(fileName: string, bytes: number[]): Promise<ExportResult>;
@@ -108,6 +134,7 @@ export interface RecordRepository {
     currentPreferencesJson: string,
   ): Promise<PortableRestoreResult>;
   openExportDirectory(): Promise<void>;
+  revealExportedFile(filePath: string): Promise<void>;
 }
 
 export type ImportDuplicateStrategy = "skip" | "copy" | "version" | "manual";
@@ -234,8 +261,40 @@ class TauriRecordRepository implements RecordRepository {
     return dataLocationSchema.parse(await invoke("get_data_location"));
   }
 
+  async getRuntimeBuildInfo(): Promise<RuntimeBuildInfo> {
+    return runtimeBuildInfoSchema.parse(await invoke("get_runtime_build_info"));
+  }
+
+  async inspectDataMigration(targetRoot: string): Promise<DataMigrationPreview> {
+    return dataMigrationPreviewSchema.parse(await invoke("inspect_data_migration", { targetRoot }));
+  }
+
+  async migrateDataDirectory(targetRoot: string): Promise<DataMigrationResult> {
+    return dataMigrationResultSchema.parse(await invoke("migrate_data_directory", { targetRoot, confirmed: true }));
+  }
+
+  async rollbackDataDirectorySwitch(): Promise<string> {
+    return invoke<string>("rollback_data_directory_switch");
+  }
+
   async getStorageStats(): Promise<StorageStats> {
     return storageStatsSchema.parse(await invoke("get_storage_stats"));
+  }
+
+  async inspectDataOptimization(): Promise<DataOptimizationPreview> {
+    return dataOptimizationPreviewSchema.parse(await invoke("inspect_data_optimization"));
+  }
+
+  async optimizeData(): Promise<DataOptimizationResult> {
+    return dataOptimizationResultSchema.parse(await invoke("optimize_data", { confirmed: true }));
+  }
+
+  async inspectLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryPreview> {
+    return legacyAttachmentRecoveryPreviewSchema.parse(await invoke("inspect_legacy_attachment_recovery", { sourceDirectory }));
+  }
+
+  async recoverLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryResult> {
+    return legacyAttachmentRecoveryResultSchema.parse(await invoke("recover_legacy_attachment_recovery", { confirmed: true, sourceDirectory }));
   }
 
   async openDataDirectory(): Promise<void> {
@@ -282,12 +341,24 @@ class TauriRecordRepository implements RecordRepository {
     return attachmentItemSchema.array().parse(await invoke("list_attachments", { recordId }));
   }
 
+  async searchAttachments(
+    keyword: string,
+    category: "all" | "image" | "video" | "audio" | "file",
+    limit?: number,
+  ): Promise<AttachmentSearchHit[]> {
+    return attachmentSearchHitSchema.array().parse(await invoke("search_attachments", { keyword, category, limit }));
+  }
+
   async addAttachment(recordId: number, sourcePath: string): Promise<AttachmentItem> {
     return attachmentItemSchema.parse(await invoke("add_attachment", { recordId, sourcePath }));
   }
 
   async openAttachment(attachmentId: number): Promise<void> {
     await invoke("open_attachment", { attachmentId });
+  }
+
+  async revealAttachment(attachmentId: number): Promise<void> {
+    await invoke("reveal_attachment", { attachmentId });
   }
 
   async removeAttachment(attachmentId: number): Promise<void> {
@@ -354,6 +425,10 @@ class TauriRecordRepository implements RecordRepository {
 
   async openExportDirectory(): Promise<void> {
     await invoke("open_export_directory");
+  }
+
+  async revealExportedFile(filePath: string): Promise<void> {
+    await invoke("reveal_exported_file", { filePath });
   }
 }
 
@@ -681,6 +756,27 @@ export class BrowserRecordRepository implements RecordRepository {
     };
   }
 
+  async getRuntimeBuildInfo(): Promise<RuntimeBuildInfo> {
+    return {
+      version: "0.2.0",
+      buildLabel: "浏览器演示",
+      executableSizeBytes: 0,
+      executableSha256: "浏览器演示不提供 EXE 校验",
+    };
+  }
+
+  async inspectDataMigration(): Promise<DataMigrationPreview> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能预检数据目录迁移");
+  }
+
+  async migrateDataDirectory(): Promise<DataMigrationResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能迁移数据目录");
+  }
+
+  async rollbackDataDirectorySwitch(): Promise<string> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能撤销数据目录切换");
+  }
+
   async getStorageStats(): Promise<StorageStats> {
     const records = this.state.records.filter((record) => !record.isDeleted);
     const totalBytes = new Blob([JSON.stringify(this.state)]).size;
@@ -695,6 +791,35 @@ export class BrowserRecordRepository implements RecordRepository {
       diskTotalBytes: 0,
       lastBackupAt: null,
     };
+  }
+
+  async inspectDataOptimization(): Promise<DataOptimizationPreview> {
+    return {
+      databaseReclaimableBytes: 0,
+      duplicateBackupCount: 0,
+      duplicateBackupBytes: 0,
+      incompleteBackupCount: 0,
+      incompleteBackupBytes: 0,
+      estimatedReclaimableBytes: 0,
+      protectedBusinessRecordCount: this.state.records.length,
+    };
+  }
+
+  async optimizeData(): Promise<DataOptimizationResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不会清理本机数据");
+  }
+
+  async inspectLegacyAttachmentRecovery(_sourceDirectory?: string): Promise<LegacyAttachmentRecoveryPreview> {
+    return {
+      archiveCount: 0,
+      recordCount: 0,
+      recoverableAttachmentCount: 0,
+      unresolvedAttachmentCount: 0,
+    };
+  }
+
+  async recoverLegacyAttachmentRecovery(_sourceDirectory?: string): Promise<LegacyAttachmentRecoveryResult> {
+    throw new RepositoryError("unsupported", "浏览器演示模式没有可恢复的本机附件");
   }
 
   async openDataDirectory(): Promise<void> {
@@ -727,12 +852,20 @@ export class BrowserRecordRepository implements RecordRepository {
     return [];
   }
 
+  async searchAttachments(): Promise<AttachmentSearchHit[]> {
+    return [];
+  }
+
   async addAttachment(): Promise<AttachmentItem> {
     throw new RepositoryError("unsupported", "浏览器演示模式不能添加附件");
   }
 
   async openAttachment(): Promise<void> {
     throw new RepositoryError("unsupported", "浏览器演示模式不能打开附件");
+  }
+
+  async revealAttachment(): Promise<void> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能在资源管理器中定位附件");
   }
 
   async removeAttachment(): Promise<void> {
@@ -810,6 +943,10 @@ export class BrowserRecordRepository implements RecordRepository {
 
   async openExportDirectory(): Promise<void> {
     throw new RepositoryError("unsupported", "浏览器演示模式没有导出目录");
+  }
+
+  async revealExportedFile(): Promise<void> {
+    throw new RepositoryError("unsupported", "浏览器演示模式不能在资源管理器中定位文件");
   }
 
   async copyExportedFile(): Promise<void> {
@@ -915,7 +1052,17 @@ class SafeTauriRepository implements RecordRepository {
   renameTag = (tagId: number, name: string) => this.run(() => this.inner.renameTag(tagId, name));
   deleteTag = (tagId: number) => this.run(() => this.inner.deleteTag(tagId));
   getDataLocation = () => this.run(() => this.inner.getDataLocation());
+  getRuntimeBuildInfo = () => this.run(() => this.inner.getRuntimeBuildInfo());
+  inspectDataMigration = (targetRoot: string) => this.run(() => this.inner.inspectDataMigration(targetRoot));
+  migrateDataDirectory = (targetRoot: string) => this.run(() => this.inner.migrateDataDirectory(targetRoot));
+  rollbackDataDirectorySwitch = () => this.run(() => this.inner.rollbackDataDirectorySwitch());
   getStorageStats = () => this.run(() => this.inner.getStorageStats());
+  inspectDataOptimization = () => this.run(() => this.inner.inspectDataOptimization());
+  optimizeData = () => this.run(() => this.inner.optimizeData());
+  inspectLegacyAttachmentRecovery = (sourceDirectory?: string) =>
+    this.run(() => this.inner.inspectLegacyAttachmentRecovery(sourceDirectory));
+  recoverLegacyAttachmentRecovery = (sourceDirectory?: string) =>
+    this.run(() => this.inner.recoverLegacyAttachmentRecovery(sourceDirectory));
   openDataDirectory = () => this.run(() => this.inner.openDataDirectory());
   rebuildSearchIndex = () => this.run(() => this.inner.rebuildSearchIndex());
   runIntegrityCheck = () => this.run(() => this.inner.runIntegrityCheck());
@@ -925,10 +1072,14 @@ class SafeTauriRepository implements RecordRepository {
   cancelImport = (jobId: string) => this.run(() => this.inner.cancelImport(jobId));
   listImportJobs = () => this.run(() => this.inner.listImportJobs());
   listAttachments = (recordId: number) => this.run(() => this.inner.listAttachments(recordId));
+  searchAttachments = (keyword: string, category: "all" | "image" | "video" | "audio" | "file", limit?: number) =>
+    this.run(() => this.inner.searchAttachments(keyword, category, limit));
   addAttachment = (recordId: number, sourcePath: string) =>
     this.run(() => this.inner.addAttachment(recordId, sourcePath));
   openAttachment = (attachmentId: number) =>
     this.run(() => this.inner.openAttachment(attachmentId));
+  revealAttachment = (attachmentId: number) =>
+    this.run(() => this.inner.revealAttachment(attachmentId));
   removeAttachment = (attachmentId: number) =>
     this.run(() => this.inner.removeAttachment(attachmentId));
   exportRecord = (recordId: number, format: "md" | "json") =>
@@ -951,6 +1102,7 @@ class SafeTauriRepository implements RecordRepository {
   restorePortableBackup = (sourcePath: string, currentPreferencesJson: string) =>
     this.run(() => this.inner.restorePortableBackup(sourcePath, currentPreferencesJson));
   openExportDirectory = () => this.run(() => this.inner.openExportDirectory());
+  revealExportedFile = (filePath: string) => this.run(() => this.inner.revealExportedFile(filePath));
 }
 
 function isTauriRuntime(): boolean {

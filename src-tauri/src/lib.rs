@@ -1,6 +1,7 @@
 mod attachments;
 pub mod chatgpt_export;
 mod commands;
+mod data_optimization;
 mod database;
 mod error;
 mod external_open;
@@ -54,8 +55,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::get_runtime_build_info,
             commands::get_data_location,
+            commands::inspect_data_migration,
+            commands::migrate_data_directory,
+            commands::rollback_data_directory_switch,
             commands::get_storage_stats,
+            commands::inspect_data_optimization,
+            commands::optimize_data,
             commands::open_data_directory,
             commands::copy_exported_file,
             commands::list_knowledge_inbox,
@@ -68,6 +75,9 @@ pub fn run() {
             commands::ensure_knowledge_source_action_record,
             commands::get_knowledge_source_original_text,
             commands::list_knowledge_source_attachments,
+            commands::recover_knowledge_source_attachment,
+            commands::search_knowledge_source_attachment_catalog,
+            commands::hydrate_knowledge_source_attachments,
             commands::list_knowledge_domains,
             commands::list_knowledge_topics,
             commands::get_personal_topic_catalog_proposal,
@@ -154,9 +164,15 @@ pub fn run() {
             commands::inspect_portable_backup,
             commands::restore_portable_backup,
             commands::open_export_directory,
+            commands::reveal_exported_file,
             commands::list_attachments,
+            commands::search_attachments,
+            commands::inspect_legacy_attachment_recovery,
+            commands::recover_legacy_attachment_recovery,
             commands::add_attachment,
             commands::open_attachment,
+            commands::reveal_attachment,
+            commands::read_attachment_text,
             commands::open_external_url,
             commands::remove_attachment,
         ])

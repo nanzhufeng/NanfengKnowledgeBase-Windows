@@ -8,7 +8,7 @@ test.beforeAll(async () => {
   await mkdir(evidenceDirectory, { recursive: true });
 });
 
-test("知识视图默认竞争假设，可稳定切换判断演变并保持四套皮肤结构一致", async ({ page }) => {
+test("主题洞察默认竞争假设，可稳定切换判断演变并保持四套皮肤结构一致", async ({ page }) => {
   test.setTimeout(120_000);
   const browserErrors: string[] = [];
   const failedResources: string[] = [];
@@ -94,6 +94,15 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
         originalAt: "2026-07-23T10:00:00+08:00",
         importedAt: "2026-07-24T10:00:00+08:00",
       },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        ...sourceArchiveItem,
+        id: 104 + index,
+        publicId: `source-${104 + index}`,
+        legacyRecordId: 904 + index,
+        title: `来源滚动定位样本 ${index + 1}`,
+        originalAt: `2026-07-${String(8 + index).padStart(2, "0")}T10:00:00+08:00`,
+        importedAt: `2026-07-${String(9 + index).padStart(2, "0")}T10:00:00+08:00`,
+      })),
     ];
     const trashedRecordIds = new Set<number>();
     const recordSummary = {
@@ -122,6 +131,38 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
       searchSnippet: `${source.title} 正文摘要`,
       originalAt: source.originalAt,
       summary: index === 0 ? recordSummary.summary : "用于列表快速定位与滚动合同验证",
+      isFavorite: index === 0,
+    }));
+    const recordDetails = recordSummaries.map((item) => ({
+      id: item.id,
+      title: item.title,
+      summary: item.summary,
+      status: item.status,
+      tags: item.tags,
+      currentJudgment: "仅作旧数据兼容，不再在来源记录详情展示。",
+      confirmedFacts: [],
+      keyEvidence: [],
+      openQuestions: [],
+      nextActions: [],
+      notes: "",
+      sourceText: `# ${item.title}\n\n${item.summary}\n\n这是用于验证全部笔记阅读格式的正文。`,
+      sources: [{
+        id: item.id * 10,
+        recordId: item.id,
+        sourceType: "markdown",
+        title: item.sourceTitle,
+        url: null,
+        localPath: null,
+        externalId: null,
+        createdAt: item.createdAt,
+      }],
+      isFavorite: item.isFavorite,
+      isDeleted: item.isDeleted,
+      originalAt: item.originalAt,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      deletedAt: item.deletedAt,
+      versionCount: item.versionCount,
     }));
     const hypotheses = [
       {
@@ -294,19 +335,43 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
       createdAt: now,
       updatedAt: now,
     };
+    const relatedSourceTitles = [
+      "GPU 供给与云业务数据",
+      "账户批量导入金关系",
+      "雪盈账号身份更新",
+      "盈透银行身份更新问题",
+      "订阅内容分析总结",
+      "查看盈透报表路径",
+      "盈透账户税务处理",
+      "跨境券商整治下的账户策略调整",
+      "境内券商监管分析",
+      "不注资影响分析",
+      "关闭 uSMART 结单邮件推送",
+      "香港开户风险分析",
+      "西九龙站开户流程与长桥人才流失",
+      "跨境券商监管风险与账户迁移决策",
+      "券商价格管理算法设置指南",
+      "盈透雪盈账户安全建议",
+      "美股税务与持仓结构复盘",
+      "长期账户风险监测记录",
+      "跨市场交易成本比较",
+      "年度投资账户整理计划",
+    ];
+    const relatedSources = relatedSourceTitles.map((title, index) => ({
+      id: 101 + index,
+      publicId: `source-${101 + index}`,
+      title,
+      sourceType: index === 0 ? "pdf" : "file",
+      originalAt: now,
+      importedAt: now,
+      confidence: 92 - (index % 7) * 4,
+      contentText: index === 0
+        ? "# GPU 供给与云业务数据\n\n头部厂商推理调用量持续增长。"
+        : `# ${title}\n\n这是用于验证关联笔记完整卡片与独立滚动的来源正文。`,
+    }));
     const detail = {
       topic,
-      sources: [
-        {
-          id: 101,
-          publicId: "source-101",
-          title: "GPU 供给与云业务数据",
-          sourceType: "pdf",
-          originalAt: now,
-          importedAt: now,
-          confidence: 92,
-        },
-      ],
+      sources: relatedSources,
       judgments,
       evidence,
       questions: [
@@ -370,6 +435,8 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
       relations: [],
     };
     let callbackId = 0;
+    (window as typeof window & { __knowledgeSourceActionDataDelayMs?: number })
+      .__knowledgeSourceActionDataDelayMs = 0;
     Object.assign(window, {
       __TAURI_INTERNALS__: {
         metadata: {
@@ -382,18 +449,34 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
         invoke: async (command: string, args?: Record<string, unknown>) => {
           if (command === "plugin:event|listen") return 1;
           if (command === "plugin:event|unlisten") return null;
+          if (["get_knowledge_source_original_text", "get_knowledge_topic_detail"].includes(command)) {
+            const delayMs = (window as typeof window & { __knowledgeSourceActionDataDelayMs?: number })
+              .__knowledgeSourceActionDataDelayMs ?? 0;
+            if (delayMs > 0) {
+              await new Promise((resolveDelay) => window.setTimeout(resolveDelay, delayMs));
+            }
+          }
           if (command === "list_record_summaries") {
-            const query = args?.query as { deletedOnly?: boolean } | undefined;
+            const query = args?.query as { deletedOnly?: boolean; favoritesOnly?: boolean } | undefined;
             return recordSummaries
               .filter((item) => query?.deletedOnly
                 ? trashedRecordIds.has(item.id)
                 : !trashedRecordIds.has(item.id))
+              .filter((item) => !query?.favoritesOnly || item.id === 901)
               .map((item) => ({
                 ...item,
+                isFavorite: query?.favoritesOnly ? item.id === 901 : item.isFavorite,
                 isDeleted: trashedRecordIds.has(item.id),
                 deletedAt: trashedRecordIds.has(item.id) ? now : null,
               }));
           }
+          if (command === "get_record") {
+            const recordId = Number(args?.recordId);
+            const record = recordDetails.find((item) => item.id === recordId);
+            if (!record) throw new Error("记录不存在");
+            return structuredClone(record);
+          }
+          if (command === "list_attachments") return [];
           if (command === "list_tags") return [];
           if (command === "get_storage_stats") {
             return {
@@ -465,7 +548,15 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
             };
           }
           if (command === "get_knowledge_source_original_text") {
-            return "# GPU 供给与云业务数据\n\n## 关键数据\n\n头部厂商推理调用量持续增长。\n";
+            return [
+              "# GPU 供给与云业务数据",
+              "## 关键数据",
+              "头部厂商推理调用量持续增长。",
+              ...Array.from(
+                { length: 36 },
+                (_, index) => `## 持续观察 ${index + 1}\n\n用于验证鼠标悬浮后，当前卡片能够立即接管滚轮。`,
+              ),
+            ].join("\n\n");
           }
           if (command === "move_to_trash") {
             const recordId = Number(args?.recordId);
@@ -577,7 +668,12 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
               createdAt: now,
             };
           }
-          if (command === "get_knowledge_topic_detail") return structuredClone(detail);
+          if (command === "get_knowledge_topic_detail") {
+            const topicId = Number(args?.topicId);
+            return structuredClone(topicId === relatedTopic.id
+              ? { ...detail, topic: relatedTopic, notes: [], sources: [relatedSources[0]] }
+              : detail);
+          }
           throw new Error(`未模拟的 Tauri 命令：${command}`);
         },
       },
@@ -585,12 +681,143 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   });
 
   const openKnowledgeView = async () => {
-    await page.getByRole("button", { name: /知识视图/ }).click();
+    await page.getByRole("button", { name: /主题洞察/ }).click();
     await expect(page.getByRole("heading", { name: "AI 资本开支", exact: true })).toBeVisible();
   };
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  const readActiveNavigationMaterial = async () => {
+    const activeItem = page.locator(".sidebar .nav-item.active");
+    await expect(activeItem).toHaveCSS("color", "rgb(237, 78, 40)");
+    return activeItem.evaluate((item) => {
+      const style = getComputedStyle(item);
+      return {
+        backgroundImage: style.backgroundImage,
+        boxShadow: style.boxShadow,
+        color: style.color,
+        borderRadius: style.borderRadius,
+      };
+    });
+  };
+  const assertSearchShadowContinuity = async (
+    selector: string,
+    screenshotName?: string,
+  ) => {
+    const search = page.locator(selector).first();
+    const input = search.locator("input");
+    await expect(search).toBeVisible();
+    const restingShadow = await search.evaluate((element) => getComputedStyle(element).boxShadow);
+    expect(restingShadow).toContain("10px 22px -16px");
+    await input.focus();
+    const focusedShadow = await search.evaluate((element) => getComputedStyle(element).boxShadow);
+    expect(focusedShadow).toContain("0px 0px 0px 2px");
+    expect(focusedShadow).toContain("10px 22px -16px");
+    if (screenshotName) {
+      await page.screenshot({
+        path: resolve(evidenceDirectory, screenshotName),
+        fullPage: false,
+      });
+    }
+    await input.evaluate((element) => element.blur());
+  };
+  const readCardMaterial = async (selector: string) => {
+    const card = page.locator(selector).first();
+    await expect(card).toBeVisible();
+    return card.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundImage: style.backgroundImage,
+        backgroundColor: style.backgroundColor,
+        backdropFilter: style.backdropFilter,
+      };
+    });
+  };
+  await page.evaluate(() => {
+    (window as typeof window & { __knowledgeSourceActionDataDelayMs?: number })
+      .__knowledgeSourceActionDataDelayMs = 1_200;
+  });
+  await page.getByRole("button", { name: /全部笔记/ }).click();
+  await expect(page.locator(".knowledge-detail-heading h2")).toHaveText("GPU 供给与云业务数据");
+  const sourceActionSnapshot = async () => page.locator(".knowledge-detail-actions").evaluate((actions) => ({
+    labels: Array.from(actions.querySelectorAll("button")).map((button) => button.textContent?.trim()),
+    box: (() => {
+      const rect = actions.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    })(),
+  }));
+  const sourceActionsBeforeSupportingData = await sourceActionSnapshot();
+  expect(sourceActionsBeforeSupportingData.labels.slice(0, 3)).toEqual([
+    "自动整理",
+    "返回上一级",
+    "查看详情",
+  ]);
+  await page.waitForTimeout(1_300);
+  const sourceActionsAfterSupportingData = await sourceActionSnapshot();
+  expect(sourceActionsAfterSupportingData).toEqual(sourceActionsBeforeSupportingData);
+  await page.evaluate(() => {
+    (window as typeof window & { __knowledgeSourceActionDataDelayMs?: number })
+      .__knowledgeSourceActionDataDelayMs = 0;
+  });
+  await page.getByRole("button", { name: /回收站/ }).click();
+  await expect(page.getByText("回收站为空", { exact: true })).toBeVisible();
+  const bottomNavigationMaterial = await readActiveNavigationMaterial();
+  expect(bottomNavigationMaterial.backgroundImage).toContain("105deg");
+  expect(bottomNavigationMaterial.backgroundImage).toContain("rgba(255, 247, 243, 0.94)");
+  const emptyStateMaterial = await page.locator(".scene-surface-state").evaluate((state) => {
+    const style = getComputedStyle(state);
+    return {
+      backgroundImage: style.backgroundImage,
+      borderWidth: style.borderTopWidth,
+      boxShadow: style.boxShadow,
+    };
+  });
+  expect(emptyStateMaterial.backgroundImage).toContain("radial-gradient");
+  expect(emptyStateMaterial.backgroundImage).toContain("linear-gradient");
+  expect(emptyStateMaterial.borderWidth).toBe("0px");
+  expect(emptyStateMaterial.boxShadow).toContain("inset");
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "sidebar-active-and-empty-state-material-1702x1066.png"),
+    fullPage: false,
+  });
+  await page.getByRole("button", { name: /我的收藏/ }).click();
+  await expect(page.locator('.sidebar .nav-item[aria-current="page"]')).toContainText("我的收藏");
+  const sourceArchiveDetail = page.locator(".source-archive-detail");
+  await expect(sourceArchiveDetail).toBeVisible();
+  await expect(sourceArchiveDetail.getByText("记录内容", { exact: true })).toBeVisible();
+  await expect(sourceArchiveDetail.getByText("附件", { exact: true })).toBeVisible();
+  for (const obsoleteLabel of ["当前判断", "已确认事实", "关键证据", "待验证问题", "下一步行动", "历史版本"]) {
+    await expect(sourceArchiveDetail.getByText(obsoleteLabel, { exact: true })).toHaveCount(0);
+  }
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "record-source-detail-clean-1702x1066.png"),
+    fullPage: false,
+  });
+  const supportingNavigationMaterial = await readActiveNavigationMaterial();
+  expect(supportingNavigationMaterial).toEqual(bottomNavigationMaterial);
+  const recordWorkspaceMaterial = await page.evaluate(() => {
+    const workspace = document.querySelector(".records-workspace");
+    const navigation = document.querySelector(".records-workspace .record-pane");
+    const search = document.querySelector(".records-workspace .search-field");
+    if (!workspace || !navigation || !search) return null;
+    return {
+      workspaceFilter: getComputedStyle(workspace).backdropFilter,
+      navigationFilter: getComputedStyle(navigation).backdropFilter,
+      searchFilter: getComputedStyle(search).backdropFilter,
+    };
+  });
+  expect(recordWorkspaceMaterial).toEqual({
+    workspaceFilter: expect.stringContaining("blur"),
+    navigationFilter: "none",
+    searchFilter: "none",
+  });
+  await assertSearchShadowContinuity(".records-workspace .search-field");
   await openKnowledgeView();
+  await assertSearchShadowContinuity(
+    ".knowledge-final-search",
+    "search-focus-shadow-continuity-1702x1066.png",
+  );
+  const coreNavigationMaterial = await readActiveNavigationMaterial();
+  expect(coreNavigationMaterial).toEqual(bottomNavigationMaterial);
 
   const overview = page.locator(".knowledge-overview");
   await expect(overview).toBeVisible();
@@ -600,10 +827,86 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   await expect(overview.getByText("关键证据", { exact: true })).toBeVisible();
   await expect(overview.getByText("待验证问题", { exact: true })).toBeVisible();
   await expect(overview.getByText("建议下一步", { exact: true })).toBeVisible();
+  await expect(overview.locator(".knowledge-overview-judgment"))
+    .toHaveAttribute("data-card-interaction", "surface-lift");
+  await expect(overview.locator(":scope [data-card-interaction] [data-card-interaction]"))
+    .toHaveCount(0);
+  const overviewMotionCard = overview.locator(".knowledge-overview-card.fact");
+  await expect(overviewMotionCard).toHaveAttribute("data-card-interaction", "lift");
+  const restingOverviewShadow = await overviewMotionCard.evaluate(
+    (element) => getComputedStyle(element).boxShadow,
+  );
+  await overviewMotionCard.hover();
+  await expect.poll(() => overviewMotionCard.evaluate(
+    (element) => getComputedStyle(element).translate,
+  )).toContain("-2px");
+  await expect.poll(() => overviewMotionCard.evaluate(
+    (element) => getComputedStyle(element).boxShadow,
+  )).not.toBe(restingOverviewShadow);
+  await expect.poll(() => overviewMotionCard.locator('[data-card-cue="forward"]').evaluate(
+    (element) => getComputedStyle(element).translate,
+  )).toContain("2px");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.mouse.move(0, 0);
+  await overviewMotionCard.hover();
+  await expect.poll(() => overviewMotionCard.evaluate(
+    (element) => getComputedStyle(element).translate,
+  )).toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await overview.locator(".knowledge-overview-card.evidence").getByRole("button", { name: "查看全部" }).click();
   const overviewDialog = page.getByRole("dialog", { name: "关键证据" });
   await expect(overviewDialog).toBeVisible();
   await expect(overviewDialog.locator(".knowledge-overview-dialog-list li")).toHaveCount(3);
+  const materialSample = await page.evaluate(() => {
+    const sidebar = document.querySelector(".sidebar");
+    const supportingNavigation = document.querySelector(".nav-group-supporting");
+    const workspace = document.querySelector(".knowledge-reading-page");
+    const navigation = document.querySelector(".knowledge-final-tree-card");
+    const reader = document.querySelector(".knowledge-final-reader");
+    const dialog = document.querySelector(".knowledge-overview-dialog");
+    const backdrop = document.querySelector(".knowledge-overview-dialog-backdrop");
+    if (!sidebar || !supportingNavigation || !workspace || !navigation || !reader || !dialog || !backdrop) return null;
+    return {
+      sidebarBackground: getComputedStyle(sidebar).backgroundImage,
+      sidebarColor: getComputedStyle(sidebar).color,
+      sidebarFilter: getComputedStyle(sidebar).backdropFilter,
+      supportingSurface: getComputedStyle(supportingNavigation).backgroundImage,
+      workspaceBorderWidth: getComputedStyle(workspace).borderTopWidth,
+      navigationBorderWidth: getComputedStyle(navigation).borderTopWidth,
+      readerBorderWidth: getComputedStyle(reader).borderTopWidth,
+      workspaceFilter: getComputedStyle(workspace).backdropFilter,
+      navigationFilter: getComputedStyle(navigation).backdropFilter,
+      navigationBackground: getComputedStyle(navigation).backgroundImage,
+      readerFilter: getComputedStyle(reader).backdropFilter,
+      readerBackground: getComputedStyle(reader).backgroundImage,
+      dialogFilter: getComputedStyle(dialog).backdropFilter,
+      backdropFilter: getComputedStyle(backdrop).backdropFilter,
+    };
+  });
+  expect(materialSample).not.toBeNull();
+  expect(materialSample!.sidebarBackground).toContain("radial-gradient");
+  expect(materialSample!.sidebarBackground).toContain("linear-gradient");
+  expect(materialSample!.sidebarColor).toBe("rgb(23, 59, 99)");
+  expect(materialSample!.sidebarFilter).toContain("blur");
+  expect(materialSample!.supportingSurface).toContain("linear-gradient");
+  expect(materialSample!.workspaceBorderWidth).toBe("0px");
+  expect(materialSample!.navigationBorderWidth).toBe("0px");
+  expect(materialSample!.readerBorderWidth).toBe("0px");
+  expect(materialSample!.workspaceFilter).toContain("blur");
+  expect(materialSample!.navigationFilter).toBe("none");
+  expect(materialSample!.navigationBackground).toContain("linear-gradient");
+  expect(materialSample!.navigationBackground).toContain("fractalNoise");
+  expect(materialSample!.readerFilter).toBe("none");
+  expect(materialSample!.readerBackground).toContain("linear-gradient");
+  expect(materialSample!.readerBackground).toContain("fractalNoise");
+  expect(materialSample!.dialogFilter).toContain("blur");
+  expect(materialSample!.backdropFilter).toBe("none");
+  await page.waitForTimeout(220);
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "knowledge-apple-glass-dialog-1702x1066.png"),
+    fullPage: false,
+  });
   const dialogReadingLayout = await overviewDialog.evaluate((dialog) => {
     const list = dialog.querySelector(".knowledge-overview-dialog-list");
     const text = dialog.querySelector(".knowledge-overview-dialog-list p");
@@ -637,6 +940,21 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     beforeTabs: true,
     noHorizontalOverflow: true,
   });
+  const readerScroller = page.locator(".knowledge-final-scroll");
+  const readerTabs = page.locator(".knowledge-final-tabs");
+  await readerScroller.evaluate((element) => {
+    // 基准首屏内容刚好无需滚动；临时收紧测试容器，验证真实滚动事件而不改变产品布局。
+    element.style.maxHeight = "180px";
+    element.scrollTop = 32;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect(readerTabs).toHaveAttribute("data-scroll-edge", "visible");
+  await readerScroller.evaluate((element) => {
+    element.scrollTop = 0;
+    element.style.removeProperty("max-height");
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect(readerTabs).toHaveAttribute("data-scroll-edge", "hidden");
   await page.screenshot({
     path: resolve(evidenceDirectory, "knowledge-auto-overview-above-fold-1702x1066.png"),
     fullPage: false,
@@ -644,7 +962,7 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
 
   const hypothesesTab = page.getByRole("tab", { name: /竞争假设/ });
   const evolutionTab = page.getByRole("tab", { name: /判断演变/ });
-  const sourcesTab = page.getByRole("tab", { name: /笔记与来源/ });
+  const sourcesTab = page.getByRole("tab", { name: /主题整合/ });
   const decisionsTab = page.getByRole("tab", { name: /决策版本/ });
   await expect(hypothesesTab).toHaveAttribute("aria-selected", "true");
   await expect(evolutionTab).toHaveAttribute("aria-selected", "false");
@@ -656,8 +974,35 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     "投入回收期过长，现金流承压",
     { exact: true },
   )).toBeVisible();
-  await expect(page.getByRole("button", { name: /知识视图/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /知识视图/ }).locator(".lucide-book-open"))
+  const hypothesisGroup = page.locator(".knowledge-final-hypothesis").first();
+  const hypothesisThesis = hypothesisGroup.locator(".knowledge-final-hypothesis-thesis");
+  const hypothesisEvidence = hypothesisGroup.locator(".knowledge-final-evidence-column").first();
+  await expect(hypothesisGroup).not.toHaveAttribute("data-card-interaction", /.+/);
+  await expect(hypothesisThesis).toHaveAttribute("data-card-interaction", "surface-lift");
+  await expect(hypothesisEvidence).toHaveAttribute("data-card-interaction", "surface-lift");
+  await hypothesisThesis.hover();
+  await expect.poll(() => hypothesisThesis.evaluate(
+    (element) => getComputedStyle(element).translate,
+  )).toContain("-2px");
+  expect(await hypothesisEvidence.evaluate((element) => getComputedStyle(element).translate)).toBe("none");
+  expect(await hypothesisGroup.evaluate((element) => getComputedStyle(element).translate)).toBe("none");
+  expect(await page.locator(".knowledge-final-insight-card").evaluateAll(
+    (elements) => elements.length === 2
+      && elements.every((element) => element.getAttribute("data-card-interaction") === "surface-lift"),
+  )).toBe(true);
+  const browserItemMaterial = await readCardMaterial(
+    ".knowledge-final-domain > button:not(.knowledge-final-domain-heading):not(.active)",
+  );
+  const hypothesisMaterial = await readCardMaterial(".knowledge-final-hypothesis:not(.oppose)");
+  const nestedHypothesisMaterial = await readCardMaterial(".knowledge-final-hypothesis-thesis");
+  expect(browserItemMaterial.backgroundImage).toContain("253, 254, 255");
+  expect(hypothesisMaterial.backgroundImage).toContain("247, 253, 251");
+  expect(nestedHypothesisMaterial.backgroundImage).toContain("254, 255, 255");
+  expect(browserItemMaterial.backdropFilter).toBe("none");
+  expect(nestedHypothesisMaterial.backdropFilter).toBe("none");
+  await expect(page.getByRole("button", { name: /主题洞察/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "判断更新", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /主题洞察/ }).locator(".lucide-book-open"))
     .toBeVisible();
   await expect(page.getByText("建立领域与主题", { exact: true })).toBeHidden();
 
@@ -665,6 +1010,7 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   await page.getByRole("button", { name: /主题管理/ }).click();
   const sharedTopicHierarchy = page.locator(".topic-final-browser > .knowledge-final-tree-card");
   await expect(sharedTopicHierarchy).toBeVisible();
+  await assertSearchShadowContinuity(".topic-final-search");
   await expect(page.locator(".topic-final-browser .knowledge-final-domain-heading").first()).toBeVisible();
   await expect(page.locator(".topic-final-browser .topic-final-tree")).toHaveCount(0);
   const sharedHierarchyLayout = await page.evaluate(() => {
@@ -687,13 +1033,40 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     noHorizontalOverflow: true,
     selectedInsideCard: true,
   });
+  const topicMaterial = await page.evaluate(() => {
+    const workspace = document.querySelector(".topic-reading-page");
+    const navigation = document.querySelector(".topic-final-browser > .knowledge-final-tree-card");
+    const reader = document.querySelector(".topic-final-reader");
+    const search = document.querySelector(".topic-final-search");
+    if (!workspace || !navigation || !reader || !search) return null;
+    return {
+      workspaceBorder: getComputedStyle(workspace).borderTopWidth,
+      workspaceFilter: getComputedStyle(workspace).backdropFilter,
+      navigationBorder: getComputedStyle(navigation).borderTopWidth,
+      navigationFilter: getComputedStyle(navigation).backdropFilter,
+      readerBorderColor: getComputedStyle(reader).borderTopColor,
+      readerFilter: getComputedStyle(reader).backdropFilter,
+      searchBorderColor: getComputedStyle(search).borderTopColor,
+      searchFilter: getComputedStyle(search).backdropFilter,
+    };
+  });
+  expect(topicMaterial).toEqual({
+    workspaceBorder: "0px",
+    workspaceFilter: expect.stringContaining("blur"),
+    navigationBorder: "0px",
+    navigationFilter: "none",
+    readerBorderColor: "rgba(0, 0, 0, 0)",
+    readerFilter: "none",
+    searchBorderColor: "rgba(92, 117, 146, 0.18)",
+    searchFilter: "none",
+  });
   await page.screenshot({
     path: resolve(evidenceDirectory, "topic-shared-knowledge-hierarchy-1702x1066.png"),
     fullPage: false,
   });
   await openKnowledgeView();
 
-  await page.getByRole("tab", { name: /笔记与来源/ }).click();
+  await page.getByRole("tab", { name: /主题整合/ }).click();
   await expect(page.locator(".knowledge-final-source-mode")).toBeVisible();
   await expect(page.locator(".knowledge-final-source-mode").getByText(
     "管理层电话会备注",
@@ -703,6 +1076,48 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     "关注利用率与自由现金流。",
     { exact: true },
   )).toBeVisible();
+  const relatedSourceList = page.locator(".knowledge-final-source-list");
+  const relatedSourceCards = relatedSourceList.locator(":scope > .knowledge-final-source-item");
+  await expect(relatedSourceCards).toHaveCount(20);
+  const relatedSourceLayout = await relatedSourceList.evaluate((list) => {
+    const cards = Array.from(list.querySelectorAll<HTMLElement>(":scope > .knowledge-final-source-item"));
+    const metadataRows = cards.map((card) => card.querySelector<HTMLElement>("small"));
+    return {
+      clientHeight: list.clientHeight,
+      scrollHeight: list.scrollHeight,
+      cardHeights: cards.map((card) => Math.round(card.getBoundingClientRect().height)),
+      metadataHeights: metadataRows.map((row) => Math.round(row?.getBoundingClientRect().height ?? 0)),
+    };
+  });
+  expect(relatedSourceLayout.scrollHeight).toBeGreaterThan(relatedSourceLayout.clientHeight);
+  expect(Math.min(...relatedSourceLayout.cardHeights)).toBeGreaterThanOrEqual(52);
+  expect(Math.min(...relatedSourceLayout.metadataHeights)).toBeGreaterThan(0);
+  await relatedSourceList.evaluate((list) => list.scrollTo({ top: list.scrollHeight, behavior: "auto" }));
+  await expect(relatedSourceCards.last()).toBeVisible();
+  await relatedSourceList.evaluate((list) => list.scrollTo({ top: 0, behavior: "auto" }));
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "knowledge-related-sources-full-cards-v88-1702x1066.png"),
+    fullPage: false,
+  });
+  const relatedSourceItem = page.locator(".knowledge-final-source-item").filter({
+    hasText: "GPU 供给与云业务数据",
+  });
+  await relatedSourceItem.getByRole("button", { name: /在当前主题内阅读/ }).click();
+  await expect(page.locator(".knowledge-final-source-mode")).toBeVisible();
+  await expect(page.locator(".knowledge-final-note-detail > header h3"))
+    .toHaveText("GPU 供给与云业务数据");
+  await expect(page.locator(".knowledge-final-note-detail")).toContainText("头部厂商推理调用量持续增长。");
+  await expect(relatedSourceItem).toHaveClass(/active/);
+  await page.getByRole("button", { name: "返回主题整合", exact: true }).click();
+  await expect(page.locator(".knowledge-final-note-detail > header h3"))
+    .toHaveText("AI 资本开支 · 主题整合");
+  await relatedSourceItem.getByRole("button", { name: /在全部笔记中打开/ }).click();
+  await expect(page.locator(".knowledge-detail-heading").getByRole(
+    "heading",
+    { name: "GPU 供给与云业务数据", exact: true },
+  )).toBeVisible();
+  await page.getByRole("button", { name: /返回上一级/ }).click();
+  await expect(page.getByRole("tab", { name: /主题整合/ })).toHaveAttribute("aria-selected", "true");
   await page.screenshot({
     path: resolve(evidenceDirectory, "desert-lantern-notes-and-sources.png"),
     fullPage: false,
@@ -722,16 +1137,73 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   await page.getByRole("button", {
     name: /GPU 供给与云业务数据 · Markdown 标题：关键数据/,
   }).click();
-  await expect(page.getByRole("heading", { name: "来源档案", exact: true })).toHaveCount(0);
-  await expect(page.locator(".source-page-actions-only")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "全部笔记", exact: true })).toHaveCount(0);
+  await expect(page.locator(".source-page-actions-only")).toHaveCount(0);
+  await expect(page.locator(".knowledge-detail-actions").getByRole(
+    "button",
+    { name: "自动整理待归类来源", exact: true },
+  )).toBeVisible();
   await expect(page.getByText("原始来源与自动整理结果", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/已加载 \d+ 条有效来源/)).toHaveCount(0);
   await expect(page.locator(".knowledge-detail-heading").getByRole(
     "heading",
     { name: "GPU 供给与云业务数据", exact: true },
   )).toBeVisible();
+  const initialSourceListPanel = page.locator(".knowledge-source-list-scroll");
+  await expect.poll(() => initialSourceListPanel.evaluate((scroller) => {
+    const rows = [...scroller.querySelectorAll<HTMLElement>(".fixed-virtual-list-row")];
+    const lastRow = rows.at(-1);
+    if (!lastRow) return false;
+    return lastRow.getBoundingClientRect().bottom >= scroller.getBoundingClientRect().bottom;
+  })).toBe(true);
+  if (process.env.PLAYWRIGHT_CARD_TWO_VIEWPORT_ONLY === "1") {
+    expect(browserErrors).toEqual([]);
+    expect(failedResources).toEqual([]);
+    return;
+  }
+  const bodySearchInput = page.getByLabel("搜索来源正文");
+  const sourceBodyPreview = page.locator(".knowledge-source-preview");
+  await expect(bodySearchInput).toHaveValue("");
+  await expect(page.locator(".source-anchor-highlight")).toHaveCount(0);
+  await expect.poll(() => sourceBodyPreview.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await bodySearchInput.fill("关键数据");
+  await page.getByRole("button", { name: "执行正文搜索", exact: true }).click();
   await expect(page.locator(".source-anchor-highlight")).toContainText("关键数据");
-  await expect(page.getByRole("button", { name: /返回主题来源/ })).toBeVisible();
+
+  const alternateSourceCard = page.locator(".knowledge-source-list-item")
+    .filter({ hasNotText: "GPU 供给与云业务数据" })
+    .first();
+  const alternateSourceTitle = (await alternateSourceCard.locator("strong").first().textContent())?.trim();
+  expect(alternateSourceTitle).toBeTruthy();
+  await alternateSourceCard.click();
+  await expect(page.locator(".knowledge-detail-heading").getByRole(
+    "heading",
+    { name: alternateSourceTitle!, exact: true },
+  )).toBeVisible();
+  await expect(bodySearchInput).toHaveValue("");
+  await expect(page.locator(".source-anchor-highlight")).toHaveCount(0);
+  await expect.poll(() => sourceBodyPreview.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await bodySearchInput.focus();
+  const bodySearchHistory = page.getByRole("listbox", { name: "正文最近搜索" });
+  await expect(bodySearchHistory).toBeVisible();
+  await bodySearchHistory.getByRole("option", { name: "关键数据", exact: true }).click();
+  await expect(bodySearchInput).toHaveValue("关键数据");
+  await expect(page.locator(".source-anchor-highlight")).toHaveCount(0);
+  await expect.poll(() => sourceBodyPreview.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await page.locator(".knowledge-source-list-item").filter({
+    hasText: "GPU 供给与云业务数据",
+  }).click();
+  await expect(page.locator(".knowledge-detail-heading").getByRole(
+    "heading",
+    { name: "GPU 供给与云业务数据", exact: true },
+  )).toBeVisible();
+  await expect(bodySearchInput).toHaveValue("");
+  await expect(page.locator(".source-anchor-highlight")).toHaveCount(0);
+  await expect.poll(() => sourceBodyPreview.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(page.getByRole("button", { name: /返回上一级/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /查看详情/ })).toBeVisible();
   const sourceDetailActionLayout = await page.evaluate(() => {
     const heading = document.querySelector(".knowledge-detail-heading");
@@ -773,22 +1245,22 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   });
 
   const sourceSearchLayout = await page.evaluate(() => {
-    const filters = document.querySelector(".knowledge-source-filters");
-    const searchRow = document.querySelector(".knowledge-source-search-wrap > input");
+    const panel = document.querySelector(".knowledge-inbox-list");
+    const searchRow = document.querySelector(".source-search-field > input");
     const tabs = document.querySelector(".source-filter-tabs");
-    if (!filters || !searchRow || !tabs) return null;
-    const filterRect = filters.getBoundingClientRect();
+    if (!panel || !searchRow || !tabs) return null;
+    const panelRect = panel.getBoundingClientRect();
     const searchRect = searchRow.getBoundingClientRect();
     const tabsRect = tabs.getBoundingClientRect();
     return {
-      widthRatio: searchRect.width / filterRect.width,
+      widthRatio: searchRect.width / panelRect.width,
       searchAboveTabs: searchRect.bottom <= tabsRect.top + 1,
     };
   });
   // 搜索框与筛选、显示工具栏共用左栏，只防止其被挤压消失，不再锁死旧版 65% 比例。
   expect(sourceSearchLayout?.widthRatio).toBeGreaterThan(0.25);
   expect(sourceSearchLayout?.searchAboveTabs).toBe(true);
-  const archiveSearch = page.getByLabel("搜索全部来源档案和正文");
+  const archiveSearch = page.getByLabel("搜索全部笔记、正文和附件");
   await archiveSearch.fill("调用量");
   await archiveSearch.press("Enter");
   await expect(page.locator(".knowledge-inbox-list").getByText(
@@ -797,22 +1269,44 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   )).toBeVisible();
   await archiveSearch.fill("");
   await archiveSearch.focus();
-  await expect(page.getByRole("option", { name: "调用量" })).toBeVisible();
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "历史资料搜索" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "历史搜索范围" }).getByRole("button"))
+    .toHaveCount(6);
+  await page.getByRole("group", { name: "历史搜索范围" }).getByRole("button", { name: "图片" }).click();
+  const imageTimeline = page.getByRole("dialog", { name: "图片资料" });
+  await expect(imageTimeline).toBeVisible();
+  await imageTimeline.getByRole("button", { name: "关闭" }).click();
+  await expect(imageTimeline).toBeHidden();
   await expect(page.getByRole("button", { name: /已全部加载|全部加载/ })).toBeVisible();
   await expect(page.locator(".knowledge-source-list-item.active")).toBeVisible();
-  const sourceOcclusionContract = await page.evaluate(() => {
-    const filters = document.querySelector(".knowledge-source-filters");
-    const active = document.querySelector(".knowledge-source-list-item.active");
-    if (!filters || !active) return null;
+  await page.locator(".knowledge-inbox-detail").click({ button: "right", position: { x: 320, y: 260 } });
+  await expect(page.getByRole("menu", { name: "南枫知识库操作菜单" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "复制当前笔记标题" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "搜索当前笔记标题" })).toBeEnabled();
+  await expect(page.getByRole("menuitem", { name: "导出当前笔记" })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  const sourceControlOwnership = await page.evaluate(() => {
+    const panel = document.querySelector(".knowledge-inbox-list");
+    const scroller = document.querySelector(".knowledge-source-list-scroll");
+    const search = document.querySelector(".knowledge-source-search-row");
+    const display = document.querySelector(".knowledge-source-display-toolbar");
+    const states = document.querySelector(".knowledge-source-filter-control-row");
+    const locator = document.querySelector(".source-list-locator");
+    if (!panel || !scroller || !search || !display || !states || !locator) return null;
     return {
-      filterZIndex: Number(getComputedStyle(filters).zIndex),
-      activeZIndex: Number(getComputedStyle(active).zIndex),
+      allControlsOwnedByPanel: [search, display, states, locator]
+        .every((element) => element.parentElement === panel),
+      noControlInsideScroller: [search, display, states, locator]
+        .every((element) => !scroller.contains(element)),
+      controlsEndBeforeList: locator.getBoundingClientRect().bottom
+        <= scroller.getBoundingClientRect().top + 1,
     };
   });
-  expect(sourceOcclusionContract?.filterZIndex).toBeGreaterThan(
-    sourceOcclusionContract?.activeZIndex ?? Number.POSITIVE_INFINITY,
-  );
+  expect(sourceControlOwnership).toEqual({
+    allControlsOwnedByPanel: true,
+    noControlInsideScroller: true,
+    controlsEndBeforeList: true,
+  });
 
   const sourceLocator = page.getByLabel("拖动快速定位来源");
   await expect(sourceLocator).toBeVisible();
@@ -824,7 +1318,7 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
 
   const activeSourceCard = page.locator(".knowledge-source-list-item.active");
   await activeSourceCard.hover();
-  await expect(activeSourceCard.getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+  await expect(activeSourceCard.getByRole("button", { name: /收藏/ })).toBeVisible();
   await expect(activeSourceCard.getByRole("button", { name: "导出完整笔记", exact: true })).toBeVisible();
   await page.waitForTimeout(220);
   await page.screenshot({
@@ -858,7 +1352,7 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     path: resolve(evidenceDirectory, "source-list-action-menu.png"),
     fullPage: false,
   });
-  await page.locator(".source-page-actions-only").click({ position: { x: 4, y: 4 } });
+  await page.locator(".knowledge-detail-heading").click({ position: { x: 12, y: 12 } });
   await expect(sourceMenu).toBeHidden();
 
   await page.getByRole("button", { name: "修改笔记标题", exact: true }).click();
@@ -874,20 +1368,182 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   await page.getByLabel("修改笔记标题").press("Enter");
 
   await expect(page.getByLabel("搜索来源正文")).toBeVisible();
-  await expect(page.getByRole("button", { name: "搜索", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "执行正文搜索", exact: true })).toBeVisible();
   await expect(page.getByText("正文预览", { exact: true })).toHaveCount(0);
-  const sourceHeaderActions = page.locator(".knowledge-header-actions");
-  await expect(sourceHeaderActions.locator(":scope > button")).toHaveCount(1);
-  await expect(sourceHeaderActions.locator(":scope > svg")).toHaveCount(0);
+  const sourceListPanel = page.locator(".knowledge-source-list-scroll");
+  const sourceDetailPanel = page.locator(".knowledge-inbox-detail");
+  const sourcePreview = page.locator(".knowledge-source-preview");
+  const sourceSearchControls = page.locator(".knowledge-source-search-row");
+  await expect.poll(() => sourceListPanel.evaluate((element) => (
+    element.scrollHeight > element.clientHeight
+  ))).toBe(true);
+  await expect.poll(() => sourcePreview.evaluate((element) => (
+    element.scrollHeight > element.clientHeight
+  ))).toBe(true);
+  await sourceListPanel.evaluate((element) => { element.scrollTop = 0; });
+  await sourcePreview.evaluate((element) => { element.scrollTop = 0; });
+
+  const sourceControlLayout = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>(".knowledge-inbox-list");
+    const searchRow = panel?.querySelector<HTMLElement>(".knowledge-source-search-row");
+    const display = panel?.querySelector<HTMLElement>(".knowledge-source-display-toolbar");
+    const states = panel?.querySelector<HTMLElement>(".knowledge-source-filter-control-row");
+    const locator = panel?.querySelector<HTMLElement>(".source-list-locator");
+    const viewport = panel?.querySelector<HTMLElement>(".knowledge-source-list-viewport");
+    const scroller = panel?.querySelector<HTMLElement>(".knowledge-source-list-scroll");
+    if (!panel || !searchRow || !display || !states || !locator || !viewport || !scroller) return null;
+    const panelStyle = getComputedStyle(panel);
+    const viewportStyle = getComputedStyle(viewport);
+    const scrollerStyle = getComputedStyle(scroller);
+    const panelRect = panel.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    const locatorRect = locator.getBoundingClientRect();
+    return {
+      panelDisplay: panelStyle.display,
+      panelRadius: panelStyle.borderRadius,
+      panelOverflow: panelStyle.overflow,
+      viewportFlex: viewportStyle.flexGrow,
+      viewportOverflow: viewportStyle.overflow,
+      viewportRadius: viewportStyle.borderRadius,
+      scrollerOverflowY: scrollerStyle.overflowY,
+      controlsOutsideScroller: [searchRow, display, states, locator]
+        .every((element) => element.parentElement === panel && !scroller.contains(element)),
+      listStartsAfterControls: scrollerRect.top >= locatorRect.bottom - 1,
+      listInsidePanel: scrollerRect.left >= panelRect.left
+        && scrollerRect.right <= panelRect.right + 0.5,
+      searchAfterContent: getComputedStyle(searchRow, "::after").content,
+    };
+  });
+  expect(sourceControlLayout).toEqual({
+    panelDisplay: "flex",
+    panelRadius: "14px",
+    panelOverflow: "hidden",
+    viewportFlex: "1",
+    viewportOverflow: "hidden",
+    viewportRadius: "0px 0px 10px 10px",
+    scrollerOverflowY: "auto",
+    controlsOutsideScroller: true,
+    listStartsAfterControls: true,
+    listInsidePanel: true,
+    searchAfterContent: "none",
+  });
+
+  const listBox = await sourceListPanel.boundingBox();
+  const detailBox = await sourceDetailPanel.boundingBox();
+  const searchControlsTop = await sourceSearchControls.evaluate((element) => (
+    element.getBoundingClientRect().top
+  ));
+  expect(listBox).not.toBeNull();
+  expect(detailBox).not.toBeNull();
+  await page.mouse.move(listBox!.x + listBox!.width / 2, listBox!.y + 120);
+  await page.mouse.wheel(0, 320);
+  await expect.poll(() => sourceListPanel.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => sourceSearchControls.evaluate((element) => (
+    element.getBoundingClientRect().top
+  ))).toBe(searchControlsTop);
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "source-controls-match-favorites-1702x1066.png"),
+    fullPage: false,
+  });
+  const firstListScrollTop = await sourceListPanel.evaluate((element) => element.scrollTop);
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const compactSourcePanel = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>(".knowledge-inbox-list");
+    const scroller = document.querySelector<HTMLElement>(".knowledge-source-list-scroll");
+    const search = document.querySelector<HTMLElement>(".source-search-field");
+    const filter = document.querySelector<HTMLElement>(".knowledge-inbox-list .filter-button");
+    if (!panel || !scroller || !search || !filter) return null;
+    const panelRect = panel.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    const searchRect = search.getBoundingClientRect();
+    const filterRect = filter.getBoundingClientRect();
+    return {
+      noViewportOverflow: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      panelRadius: getComputedStyle(panel).borderRadius,
+      panelOverflow: getComputedStyle(panel).overflow,
+      searchInsidePanel: searchRect.left >= panelRect.left
+        && filterRect.right <= panelRect.right + 0.5,
+      listInsidePanel: scrollerRect.left >= panelRect.left
+        && scrollerRect.right <= panelRect.right + 0.5,
+    };
+  });
+  expect(compactSourcePanel).toEqual({
+    noViewportOverflow: true,
+    panelRadius: "14px",
+    panelOverflow: "hidden",
+    searchInsidePanel: true,
+    listInsidePanel: true,
+  });
+  await page.setViewportSize({ width: 1702, height: 1066 });
+
+  // 不点击，直接移到卡片三标题区；标题区也应把滚轮交给内部正文。
+  await page.mouse.move(detailBox!.x + detailBox!.width / 2, detailBox!.y + 72);
+  await page.mouse.wheel(0, 320);
+  await expect.poll(() => sourcePreview.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+  // 再次不点击切回卡片二，验证滚轮归属会随悬浮立即切回。
+  await page.mouse.move(listBox!.x + listBox!.width / 2, listBox!.y + 120);
+  await page.mouse.wheel(0, 320);
+  await expect.poll(() => sourceListPanel.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(firstListScrollTop);
+  await sourceListPanel.evaluate((element) => { element.scrollTop = 0; });
+  await sourcePreview.evaluate((element) => { element.scrollTop = 0; });
+
+  const sourceMaterial = await page.evaluate(() => {
+    const workspace = document.querySelector(".knowledge-inbox-page");
+    const navigation = document.querySelector(".knowledge-inbox-page .knowledge-inbox-list");
+    const detail = document.querySelector(".knowledge-inbox-page .knowledge-inbox-detail");
+    const controls = document.querySelector(".knowledge-inbox-page .knowledge-source-search-row");
+    const search = document.querySelector(".knowledge-inbox-page .search-field");
+    const filter = document.querySelector(".knowledge-inbox-page .filter-button");
+    if (!workspace || !navigation || !detail || !controls || !search || !filter) return null;
+    return {
+      workspaceBorder: getComputedStyle(workspace).borderTopWidth,
+      workspaceMask: getComputedStyle(workspace).maskImage,
+      workspaceBackground: getComputedStyle(workspace).backgroundImage,
+      workspaceFilter: getComputedStyle(workspace).backdropFilter,
+      navigationFilter: getComputedStyle(navigation).backdropFilter,
+      detailBorderColor: getComputedStyle(detail).borderTopColor,
+      detailFilter: getComputedStyle(detail).backdropFilter,
+      controlsFilter: getComputedStyle(controls).backdropFilter,
+      searchBorderColor: getComputedStyle(search).borderTopColor,
+      searchFilter: getComputedStyle(search).backdropFilter,
+      searchBackground: getComputedStyle(search).backgroundImage,
+      filterBorderRadius: getComputedStyle(filter).borderRadius,
+      filterFontSize: getComputedStyle(filter).fontSize,
+      filterBackground: getComputedStyle(filter).backgroundImage,
+    };
+  });
+  expect(sourceMaterial).toEqual({
+    workspaceBorder: "0px",
+    workspaceMask: "none",
+    workspaceBackground: expect.stringContaining("radial-gradient"),
+    workspaceFilter: expect.stringContaining("blur"),
+    navigationFilter: "none",
+    detailBorderColor: "rgba(0, 0, 0, 0)",
+    detailFilter: "none",
+    controlsFilter: "none",
+    searchBorderColor: "rgba(92, 117, 146, 0.18)",
+    searchFilter: "none",
+    searchBackground: expect.stringContaining("linear-gradient"),
+    filterBorderRadius: "21px",
+    filterFontSize: "12px",
+    filterBackground: expect.stringContaining("linear-gradient"),
+  });
+  const autoOrganizeAction = page.locator(".knowledge-detail-actions .source-auto-organize-action");
+  await expect(autoOrganizeAction).toHaveText("自动整理");
+  await expect(autoOrganizeAction).toHaveCSS("height", "30px");
   await expect(page.getByText("笔记标题已更新", { exact: true })).toBeHidden({ timeout: 5_000 });
   await page.screenshot({
     path: resolve(evidenceDirectory, "desert-lantern-source-archive.png"),
     fullPage: false,
   });
-  await page.getByRole("button", { name: /返回主题来源/ }).click();
+  await page.getByRole("button", { name: /返回上一级/ }).click();
   await expect(page.getByRole("heading", { name: "AI 资本开支", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: /笔记与来源/ })).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".knowledge-final-source-list button.active")).toContainText("GPU 供给与云业务数据");
+  await expect(page.getByRole("tab", { name: /竞争假设/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('.knowledge-final-anchor-button[data-knowledge-source-id="101"]').first())
+    .toBeFocused();
 
   await page.getByRole("button", { name: /主题管理/ }).click();
   await expect(page.getByRole("heading", { name: /AI 资本开支/ })).toBeVisible();
@@ -912,6 +1568,18 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     fullPage: false,
   });
   await expect(page.getByText("建议关联：云服务", { exact: true })).toBeVisible();
+  expect(await page.locator(".topic-final-section").evaluateAll(
+    (elements) => elements.length === 3
+      && elements.every((element) => element.getAttribute("data-card-interaction") === "surface-lift"),
+  )).toBe(true);
+  await expect(page.locator(".topic-final-content"))
+    .not.toHaveAttribute("data-card-interaction", /.+/);
+  await expect(page.locator(".topic-final-suggestions > section"))
+    .not.toHaveAttribute("data-card-interaction", /.+/);
+  expect(await page.locator(".topic-final-suggestions article").evaluateAll(
+    (elements) => elements.length > 0
+      && elements.every((element) => element.getAttribute("data-card-interaction") === "surface-lift"),
+  )).toBe(true);
   await page.getByText("建议关联：云服务", { exact: true }).locator("..")
     .getByRole("button", { name: "应用", exact: true })
     .click();
@@ -1035,6 +1703,8 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   await expect(page.getByText("支撑材料", { exact: true })).toHaveCount(0);
   await expect(page.getByText("对照阅读", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "跨时期知识事件" })).toBeVisible();
+  const evolutionCardMaterial = await readCardMaterial(".knowledge-final-evolution > .knowledge-final-timeline");
+  expect(evolutionCardMaterial.backgroundImage).toContain("253, 254, 255");
   const evolutionSectionOrder = await page.locator(
     ".knowledge-final-evolution [data-reading-section]",
   ).evaluateAll((sections) => sections.map((section) => section.getAttribute("data-reading-section")));
@@ -1076,6 +1746,10 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
 
   await evolutionTab.click();
   await assertDirectModeContent(".knowledge-final-evolution");
+  expect(await page.locator(".knowledge-final-timeline-fragment article").evaluateAll(
+    (elements) => elements.length > 0
+      && elements.every((element) => element.getAttribute("data-card-interaction") === "surface-lift"),
+  )).toBe(true);
   await page.screenshot({
     path: resolve(evidenceDirectory, "knowledge-direct-evolution-1702x1066.png"),
     fullPage: false,
@@ -1085,15 +1759,48 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
   await expect(page.getByText("先读笔记，再回溯原始来源", { exact: true })).toHaveCount(0);
   await expect(page.getByText("阅读主体", { exact: true })).toHaveCount(0);
   await expect(page.locator(".knowledge-final-note-reader")).toBeVisible();
+  await expect(page.locator(".knowledge-final-note-reader"))
+    .toHaveAttribute("data-assets-layout", "topic-integration");
+  await expect(page.locator(".knowledge-final-note-list")).toHaveCount(0);
+  await expect(page.getByText("关联笔记与来源", { exact: false })).toBeVisible();
+  const mainSourceMaterial = await readCardMaterial(".knowledge-final-reading-pane.is-content");
+  const sourceSupportMaterial = await readCardMaterial(".knowledge-final-reading-pane.is-support");
+  expect(mainSourceMaterial.backgroundImage).toBe("none");
+  expect(mainSourceMaterial.backgroundColor).toBe("rgba(255, 255, 255, 0.84)");
+  expect(sourceSupportMaterial.backgroundImage).toContain("252, 254, 255");
   await assertDirectModeContent(".knowledge-final-source-mode");
+
+  await page.locator(".knowledge-final-tree").getByRole("button", { name: /云服务/ }).click();
+  await expect(page.getByRole("heading", { name: "云服务", exact: true })).toBeVisible();
+  const pendingIntegration = page.locator('.knowledge-final-note-reader[data-assets-layout="topic-integration"]');
+  await expect(pendingIntegration).toBeVisible();
+  await expect(pendingIntegration.locator(".knowledge-final-note-list")).toHaveCount(0);
+  await expect(pendingIntegration.locator(".knowledge-final-source-list")).toContainText("GPU 供给与云业务数据");
+  await expect(pendingIntegration.locator(".knowledge-final-note-detail").getByRole(
+    "heading",
+    { name: "云服务 · 待聚合", exact: true },
+  )).toBeVisible();
+  await expect(pendingIntegration.locator(".knowledge-final-note-detail")).toContainText("当前仅 1 条来源");
+  await expect(pendingIntegration.locator(".knowledge-final-note-detail")).toContainText("GPU 供给与云业务数据");
+  await expect(page.getByText("暂无独立笔记", { exact: true })).toHaveCount(0);
   await page.screenshot({
-    path: resolve(evidenceDirectory, "knowledge-direct-sources-1702x1066.png"),
+    path: resolve(evidenceDirectory, "knowledge-single-source-pending-integration-1702x1066.png"),
     fullPage: false,
   });
+  await page.locator(".knowledge-final-tree").getByRole("button", { name: /AI 资本开支/ }).click();
+  await expect(page.getByRole("heading", { name: "AI 资本开支", exact: true })).toBeVisible();
 
   await decisionsTab.click();
   await expect(page.getByText("完整链路", { exact: true })).toHaveCount(0);
   await expect(page.locator(".knowledge-final-decision-version").first()).toBeVisible();
+  expect(await page.locator(".knowledge-final-decision-card").evaluateAll(
+    (elements) => elements.length === 4
+      && elements.every((element) => element.getAttribute("data-card-interaction") === "surface-lift"),
+  )).toBe(true);
+  await expect(page.locator(".knowledge-final-decision-version").first())
+    .not.toHaveAttribute("data-card-interaction", /.+/);
+  const decisionCardMaterial = await readCardMaterial(".knowledge-final-decision-version");
+  expect(decisionCardMaterial.backgroundImage).toContain("253, 254, 255");
   await assertDirectModeContent(".knowledge-final-decisions-mode");
   await page.screenshot({
     path: resolve(evidenceDirectory, "knowledge-direct-decisions-1702x1066.png"),
@@ -1113,25 +1820,115 @@ test("知识视图默认竞争假设，可稳定切换判断演变并保持四�
     await page.reload();
     await openKnowledgeView();
     await expect(page.locator(".app-shell")).toHaveAttribute("data-skin", skin);
+    await assertSearchShadowContinuity(".knowledge-final-search");
     await expect(page.getByRole("tab", { name: /竞争假设/ }))
       .toHaveAttribute("aria-selected", "true");
     await expect(page.locator(".knowledge-final-hypothesis").getByText(
       "规模效应兑现，利润率回升",
       { exact: true },
     )).toBeVisible();
+    const sharedMaterial = await page.evaluate(() => {
+      const workspace = document.querySelector(".knowledge-reading-page");
+      const navigation = document.querySelector(".knowledge-final-tree-card");
+      const reader = document.querySelector(".knowledge-final-reader");
+      if (!workspace || !navigation || !reader) return null;
+      return {
+        skin: document.querySelector(".app-shell")?.getAttribute("data-skin"),
+        workspaceBackground: getComputedStyle(workspace).backgroundImage,
+        workspaceBorder: getComputedStyle(workspace).borderTopWidth,
+        workspaceFilter: getComputedStyle(workspace).backdropFilter,
+        navigationBackground: getComputedStyle(navigation).backgroundImage,
+        navigationBorder: getComputedStyle(navigation).borderTopWidth,
+        readerBackground: getComputedStyle(reader).backgroundImage,
+        readerBorder: getComputedStyle(reader).borderTopWidth,
+      };
+    });
+    expect(sharedMaterial).not.toBeNull();
+    if (skin !== "classic") {
+      expect(sharedMaterial!.workspaceBackground).toContain("linear-gradient");
+      expect(sharedMaterial!.workspaceBorder).toBe("0px");
+      expect(sharedMaterial!.workspaceFilter).toContain("blur");
+      expect(sharedMaterial!.navigationBackground).toContain("linear-gradient");
+      expect(sharedMaterial!.readerBackground).toContain("linear-gradient");
+      expect(sharedMaterial!.navigationBorder).toBe("0px");
+      expect(sharedMaterial!.readerBorder).toBe("0px");
+      const skinBrowserItemMaterial = await readCardMaterial(
+        ".knowledge-final-domain > button:not(.knowledge-final-domain-heading):not(.active)",
+      );
+      const skinNestedMaterial = await readCardMaterial(".knowledge-final-hypothesis-thesis");
+      expect(skinBrowserItemMaterial.backgroundImage).toContain("253, 254, 255");
+      expect(skinNestedMaterial.backgroundImage).toContain("254, 255, 255");
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
       .toBe(true);
     await page.screenshot({
       path: resolve(evidenceDirectory, `${skin}-hypotheses.png`),
       fullPage: false,
     });
+    if (skin === "desert-lantern") {
+      await page.screenshot({
+        path: resolve(evidenceDirectory, "foreground-card-brightness-v87-1702x1066.png"),
+        fullPage: false,
+      });
+    }
   }
 
-  await page.getByRole("button", { name: /来源档案/ }).click();
+  await page.getByRole("button", { name: /全部笔记/ }).click();
   await expect(page.locator(".knowledge-detail-heading").getByRole(
     "heading",
     { name: "GPU 供给与云业务数据", exact: true },
   )).toBeVisible();
+  await page.getByRole("button", { name: /返回上一级/ }).click();
+  await expect(page.getByRole("tab", { name: /竞争假设/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('.knowledge-final-anchor-button[data-knowledge-source-id="101"]').first())
+    .toBeFocused();
+  await page.getByRole("button", { name: /全部笔记/ }).click();
+  await assertSearchShadowContinuity(".source-search-field");
+  await page.keyboard.press("Escape");
+  const repeatedListRendering = await page.locator(".knowledge-source-list-item").first().evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      renderingRole: element.getAttribute("data-card-rendering"),
+      transitionProperty: style.transitionProperty,
+      translate: style.translate,
+      scale: style.scale,
+    };
+  });
+  expect(repeatedListRendering.renderingRole).toBe("repeated-list");
+  expect(repeatedListRendering.transitionProperty).not.toContain("translate");
+  expect(repeatedListRendering.transitionProperty).not.toContain("scale");
+  expect(repeatedListRendering.transitionProperty).not.toContain("box-shadow");
+  expect(repeatedListRendering.translate).toBe("none");
+  expect(repeatedListRendering.scale).toBe("1");
+  const scrollStressResult = await page.locator(".knowledge-source-list-scroll").evaluate(async (scroller) => {
+    const positions = [0, .2, .45, .7, 1, .55, .1, .85, 0];
+    for (const ratio of positions) {
+      scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * ratio;
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())));
+    }
+    const visibleCards = [...scroller.querySelectorAll<HTMLElement>(".knowledge-source-list-item")]
+      .filter((card) => {
+        const cardRect = card.getBoundingClientRect();
+        const scrollRect = scroller.getBoundingClientRect();
+        return cardRect.bottom > scrollRect.top && cardRect.top < scrollRect.bottom;
+      });
+    return {
+      visibleCount: visibleCards.length,
+      everyCardIntact: visibleCards.every((card) => {
+        const style = getComputedStyle(card);
+        const title = card.querySelector<HTMLElement>(".unified-note-copy > strong");
+        const icon = card.querySelector<HTMLElement>(".record-icon");
+        return Boolean(title?.textContent?.trim())
+          && Boolean(icon)
+          && style.display !== "none"
+          && style.visibility !== "hidden"
+          && Number(style.opacity) > .9;
+      }),
+    };
+  });
+  expect(scrollStressResult.visibleCount).toBeGreaterThan(0);
+  expect(scrollStressResult.everyCardIntact).toBe(true);
   const trashTargetCard = page.locator(".knowledge-source-list-item.active");
   await trashTargetCard.hover();
   await trashTargetCard.getByRole("button", { name: "更多", exact: true }).click();

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("知识视图通过 Tauri 读取知识对象且不恢复首屏 CRUD 表单", async ({ page }) => {
+test("主题洞察通过 Tauri 读取知识对象且不恢复首屏 CRUD 表单", async ({ page }) => {
   await page.addInitScript(() => {
     const now = "2026-07-27T10:00:00+08:00";
     const topic = {
@@ -195,12 +195,12 @@ test("知识视图通过 Tauri 读取知识对象且不恢复首屏 CRUD 表单"
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: /知识视图/ }).click();
+  await page.getByRole("button", { name: /主题洞察/ }).click();
   await page.getByRole("button", { name: /VFX 交付/ }).click();
   await expect(page.getByRole("heading", { name: "VFX 交付", exact: true })).toBeVisible();
   await expect(page.getByText("当前采用离线渲染", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("维护与录入", { exact: true })).toBeHidden();
-  await page.getByRole("tab", { name: /笔记与来源/ }).click();
+  await page.getByRole("tab", { name: /主题整合/ }).click();
   await expect(page.getByText("交付复盘视频", { exact: true }).first()).toBeVisible();
 
   const bridgeCalls = await page.evaluate(() => {

@@ -1,19 +1,26 @@
+use std::fs::File;
+use std::io::{BufReader, Read};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::{Connection, OptionalExtension};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::database;
 use crate::error::{AppError, AppResult, CommandError};
 use crate::importer::{ConfirmImportInput, ImportJobSummary, ImportPreview, ImportResult};
 use crate::models::{
-    AppendVersionInput, AttachmentItem, CreateRecordInput, CreateTagInput, DataLocation,
-    DeleteVersionInput, FavoriteUpdate, IntelligenceRecord, PatchRecordInput, PermanentDeleteInput,
-    RecordMutation, RecordQuery, RecordSummary, RecordVersion, RenameTagInput, RestoreVersionInput,
-    StorageStats, TagItem, UpdateJudgmentInput, UpdateRecordInput, UpdateStatusInput,
+    AppendVersionInput, AttachmentItem, AttachmentSearchHit, CreateRecordInput, CreateTagInput,
+    DataLocation, DataMigrationPreview, DataMigrationResult, DataOptimizationPreview,
+    DataOptimizationResult, DeleteVersionInput, FavoriteUpdate, IntelligenceRecord,
+    LegacyAttachmentRecoveryPreview, LegacyAttachmentRecoveryResult, PatchRecordInput,
+    PermanentDeleteInput, RecordMutation, RecordQuery, RecordSummary, RecordVersion,
+    RenameTagInput, RestoreVersionInput, StorageStats, TagItem, UpdateJudgmentInput,
+    UpdateRecordInput, UpdateStatusInput,
 };
 use crate::paths::AppPaths;
 use crate::transfer::{
@@ -51,15 +58,128 @@ fn background_task_error(error: impl std::fmt::Display) -> CommandError {
     CommandError::from(AppError::Conflict(format!("后台文件任务异常结束：{error}")))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeBuildInfo {
+    version: &'static str,
+    build_label: &'static str,
+    executable_size_bytes: u64,
+    executable_sha256: String,
+}
+
+#[tauri::command(async)]
+pub async fn get_runtime_build_info() -> Result<RuntimeBuildInfo, CommandError> {
+    tauri::async_runtime::spawn_blocking(|| -> AppResult<RuntimeBuildInfo> {
+        let executable = std::env::current_exe().map_err(AppError::Io)?;
+        let executable_size_bytes = executable.metadata().map_err(AppError::Io)?.len();
+        let file = File::open(&executable).map_err(AppError::Io)?;
+        let mut reader = BufReader::new(file);
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; 1024 * 1024];
+        loop {
+            let count = reader.read(&mut buffer).map_err(AppError::Io)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        Ok(RuntimeBuildInfo {
+            version: env!("CARGO_PKG_VERSION"),
+            build_label: option_env!("NF_BUILD_LABEL").unwrap_or("development"),
+            executable_size_bytes,
+            executable_sha256: hex::encode_upper(hasher.finalize()),
+        })
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
+}
+
 #[tauri::command(async)]
 pub fn get_data_location(state: State<'_, AppState>) -> DataLocation {
     state.paths.location()
 }
 
 #[tauri::command(async)]
+pub async fn inspect_data_migration(
+    state: State<'_, AppState>,
+    target_root: String,
+) -> Result<DataMigrationPreview, CommandError> {
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || paths.inspect_data_migration(target_root))
+        .await
+        .map_err(background_task_error)?
+        .map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+pub async fn migrate_data_directory(
+    state: State<'_, AppState>,
+    target_root: String,
+    confirmed: bool,
+) -> Result<DataMigrationResult, CommandError> {
+    if !confirmed {
+        return Err(CommandError::from(AppError::Validation(
+            "需要用户确认后才会复制并切换数据目录".to_string(),
+        )));
+    }
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        paths.migrate_data_directory(&connection, target_root)
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+pub fn rollback_data_directory_switch(state: State<'_, AppState>) -> Result<String, CommandError> {
+    command(state.paths.rollback_next_data_root())
+}
+
+#[tauri::command(async)]
 pub fn get_storage_stats(state: State<'_, AppState>) -> Result<StorageStats, CommandError> {
     let connection = command(state.connection())?;
     command(state.paths.storage_stats(&connection))
+}
+
+#[tauri::command(async)]
+pub async fn inspect_data_optimization(
+    state: State<'_, AppState>,
+) -> Result<DataOptimizationPreview, CommandError> {
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::data_optimization::inspect(&connection, &paths)
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+pub async fn optimize_data(
+    state: State<'_, AppState>,
+    confirmed: bool,
+) -> Result<DataOptimizationResult, CommandError> {
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::data_optimization::execute(&connection, &paths, confirmed)
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command(async)]
@@ -231,6 +351,76 @@ pub fn list_knowledge_source_attachments(
         &connection,
         source_item_id,
     ))
+}
+
+#[tauri::command(async)]
+pub async fn recover_knowledge_source_attachment(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+    attachment_id: String,
+    confirmed: bool,
+) -> Result<AttachmentItem, CommandError> {
+    if !confirmed {
+        return Err(CommandError::from(AppError::Validation(
+            "需要用户确认后才会从历史导出包恢复附件".to_string(),
+        )));
+    }
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::attachments::recover_source_attachment(
+            &mut connection,
+            &paths,
+            source_item_id,
+            &attachment_id,
+        )
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
+}
+
+#[tauri::command(async)]
+pub fn search_knowledge_source_attachment_catalog(
+    state: State<'_, AppState>,
+    keyword: Option<String>,
+    category: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::models::SourceAttachmentCatalogHit>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::search_source_attachment_catalog(
+        &connection,
+        keyword,
+        category,
+        limit,
+    ))
+}
+
+#[tauri::command(async)]
+pub async fn hydrate_knowledge_source_attachments(
+    state: State<'_, AppState>,
+    source_item_id: i64,
+    attachment_ids: Vec<String>,
+) -> Result<crate::models::SourceAttachmentHydrationResult, CommandError> {
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        Ok::<_, AppError>(crate::attachments::hydrate_source_attachments(
+            &mut connection,
+            &paths,
+            source_item_id,
+            attachment_ids,
+        ))
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command(async)]
@@ -1186,12 +1376,79 @@ pub fn open_export_directory(state: State<'_, AppState>) -> Result<(), CommandEr
 }
 
 #[tauri::command(async)]
+pub fn reveal_exported_file(
+    state: State<'_, AppState>,
+    file_path: String,
+) -> Result<(), CommandError> {
+    command(crate::transfer::reveal_exported_file(
+        &state.paths,
+        &file_path,
+    ))
+}
+
+#[tauri::command(async)]
 pub fn list_attachments(
     state: State<'_, AppState>,
     record_id: i64,
 ) -> Result<Vec<AttachmentItem>, CommandError> {
     let connection = command(state.connection())?;
     command(crate::attachments::list_attachments(&connection, record_id))
+}
+
+#[tauri::command(async)]
+pub fn search_attachments(
+    state: State<'_, AppState>,
+    keyword: Option<String>,
+    category: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<AttachmentSearchHit>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::search_attachments(
+        &connection,
+        keyword,
+        category,
+        limit,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn inspect_legacy_attachment_recovery(
+    state: State<'_, AppState>,
+    source_directory: Option<String>,
+) -> Result<LegacyAttachmentRecoveryPreview, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::inspect_legacy_attachment_recovery(
+        &connection,
+        source_directory.as_deref(),
+    ))
+}
+
+#[tauri::command(async)]
+pub async fn recover_legacy_attachment_recovery(
+    state: State<'_, AppState>,
+    confirmed: bool,
+    source_directory: Option<String>,
+) -> Result<LegacyAttachmentRecoveryResult, CommandError> {
+    if !confirmed {
+        return Err(CommandError::from(AppError::Validation(
+            "需要用户确认后才会恢复历史附件".to_string(),
+        )));
+    }
+    let connection = Arc::clone(&state.connection);
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = connection.lock().map_err(|_| {
+            AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string())
+        })?;
+        crate::attachments::recover_legacy_attachments(
+            &connection,
+            &paths,
+            source_directory.as_deref(),
+        )
+    })
+    .await
+    .map_err(background_task_error)?
+    .map_err(CommandError::from)
 }
 
 #[tauri::command(async)]
@@ -1242,6 +1499,32 @@ pub async fn add_attachment(
 pub fn open_attachment(state: State<'_, AppState>, attachment_id: i64) -> Result<(), CommandError> {
     let connection = command(state.connection())?;
     command(crate::attachments::open_attachment(
+        &connection,
+        &state.paths,
+        attachment_id,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn reveal_attachment(
+    state: State<'_, AppState>,
+    attachment_id: i64,
+) -> Result<(), CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::reveal_attachment(
+        &connection,
+        &state.paths,
+        attachment_id,
+    ))
+}
+
+#[tauri::command(async)]
+pub fn read_attachment_text(
+    state: State<'_, AppState>,
+    attachment_id: i64,
+) -> Result<String, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::attachments::read_attachment_text(
         &connection,
         &state.paths,
         attachment_id,

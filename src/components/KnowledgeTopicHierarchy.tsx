@@ -22,7 +22,7 @@ type KnowledgeTopicHierarchyProps = {
 };
 
 /**
- * 知识视图与主题管理共同使用的“领域 -> 主题”定位列表。
+ * 主题洞察与主题管理共同使用的“领域 -> 主题”定位列表。
  * 行结构、层级缩进、数量列、选中态和折叠行为只允许在这里维护。
  */
 export function KnowledgeTopicHierarchy({
@@ -48,8 +48,8 @@ export function KnowledgeTopicHierarchy({
   }, [selectedTopicDomainId]);
 
   return (
-    <div className="knowledge-final-tree-card knowledge-card">
-      <div className="knowledge-final-tree" onScroll={onScroll}>
+    <div className="knowledge-final-tree-card knowledge-card" data-hover-wheel-panel="">
+      <div className="knowledge-final-tree" onScroll={onScroll} data-hover-wheel-scroll="">
         {domains.map((domain) => {
           const domainTopics = topics.filter((topic) => topic.domainId === domain.id);
           if (!domainTopics.length && searchActive) return null;
@@ -75,6 +75,7 @@ export function KnowledgeTopicHierarchy({
               {!collapsed ? domainTopics.map((topic) => (
                 <button
                   type="button"
+                  data-card-interaction="lift"
                   aria-current={selectedTopicId === topic.id ? "page" : undefined}
                   className={selectedTopicId === topic.id ? "active" : ""}
                   key={topic.id}

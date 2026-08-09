@@ -50,6 +50,29 @@ const sourceCollectionSchema = z.object({
   originalFileCount: z.number().int().nonnegative(),
 });
 
+const sourceAttachmentCatalogHitSchema = z.object({
+  key: z.string(),
+  sourceItemId: z.number().int(),
+  recordId: z.number().int().nullable(),
+  fileUuid: z.string().nullable(),
+  fileName: z.string(),
+  mimeType: z.string().nullable(),
+  sizeBytes: z.number().int().nullable(),
+  availability: z.enum(["ready", "recoverable", "unavailable"]),
+  attachment: attachmentItemSchema.nullable(),
+  recordTitle: z.string(),
+  recordSummary: z.string(),
+  recordOriginalAt: z.string().nullable(),
+});
+
+const sourceAttachmentHydrationResultSchema = z.object({
+  attachments: z.array(attachmentItemSchema),
+  failures: z.array(z.object({
+    attachmentId: z.string(),
+    message: z.string(),
+  })),
+});
+
 const domainRowSchema = z.object({
   id: z.number().int(),
   publicId: z.string(),
@@ -453,6 +476,8 @@ const topicDetailSchema = z.object({
 export type KnowledgeInboxItem = z.infer<typeof inboxItemSchema>;
 export type KnowledgeSourceTitleUpdate = z.infer<typeof sourceTitleUpdateSchema>;
 export type SourceCollection = z.infer<typeof sourceCollectionSchema>;
+export type SourceAttachmentCatalogHit = z.infer<typeof sourceAttachmentCatalogHitSchema>;
+export type SourceAttachmentHydrationResult = z.infer<typeof sourceAttachmentHydrationResultSchema>;
 export type KnowledgeDomainRow = z.infer<typeof domainRowSchema>;
 export type KnowledgeTopicRow = z.infer<typeof topicRowSchema>;
 export type KnowledgeClassificationSuggestionRow = z.infer<typeof suggestionRowSchema>;
@@ -628,6 +653,50 @@ export class KnowledgeRepository {
         await invoke("list_knowledge_source_attachments", { sourceItemId }),
       )
     ));
+  }
+
+  async recoverSourceAttachment(
+    sourceItemId: number,
+    attachmentId: string,
+  ): Promise<AttachmentItem> {
+    const attachment = attachmentItemSchema.parse(
+      await invoke("recover_knowledge_source_attachment", {
+        sourceItemId,
+        attachmentId,
+        confirmed: true,
+      }),
+    );
+    this.inFlightReads.delete(`source-attachments:${sourceItemId}`);
+    return attachment;
+  }
+
+  async searchSourceAttachmentCatalog(
+    keyword: string,
+    category: "all" | "image" | "video" | "audio" | "file",
+    limit?: number,
+  ): Promise<SourceAttachmentCatalogHit[]> {
+    if (!this.desktopAvailable) return [];
+    return z.array(sourceAttachmentCatalogHitSchema).parse(
+      await invoke("search_knowledge_source_attachment_catalog", {
+        keyword,
+        category,
+        limit: limit ?? null,
+      }),
+    );
+  }
+
+  async hydrateSourceAttachments(
+    sourceItemId: number,
+    attachmentIds: string[],
+  ): Promise<SourceAttachmentHydrationResult> {
+    const result = sourceAttachmentHydrationResultSchema.parse(
+      await invoke("hydrate_knowledge_source_attachments", {
+        sourceItemId,
+        attachmentIds,
+      }),
+    );
+    this.inFlightReads.delete(`source-attachments:${sourceItemId}`);
+    return result;
   }
 
   async listDomains(): Promise<KnowledgeDomainRow[]> {

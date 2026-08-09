@@ -1,5 +1,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::process::Command;
 
 use crate::error::{AppError, AppResult};
 
@@ -25,6 +27,34 @@ fn open_target(target: impl AsRef<OsStr>) -> AppResult<()> {
 
 pub fn open_path(path: &Path) -> AppResult<()> {
     open_target(path.as_os_str())
+}
+
+/// 在系统文件管理器中显示文件，并在 Windows 上直接选中目标。
+/// 调用方必须先完成自己的受控目录与文件存在性校验。
+pub fn reveal_path(path: &Path) -> AppResult<()> {
+    if !path.is_file() {
+        return Err(AppError::NotFound("要定位的文件不存在".to_string()));
+    }
+    allow_external_app_foreground();
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let status = Command::new("explorer.exe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg(format!("/select,{}", path.to_string_lossy()))
+            .status()?;
+        if !status.success() {
+            return Err(AppError::Conflict("资源管理器未能定位文件".to_string()));
+        }
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    open_target(
+        path.parent()
+            .ok_or_else(|| AppError::Validation("文件缺少父目录".to_string()))?
+            .as_os_str(),
+    )
 }
 
 pub fn open_url(url: &str) -> AppResult<()> {

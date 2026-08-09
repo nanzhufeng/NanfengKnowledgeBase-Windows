@@ -15,6 +15,7 @@ import {
   Database,
   FileCheck2,
   FileText,
+  History,
   LayoutGrid,
   RadioTower,
   Settings,
@@ -26,6 +27,54 @@ import {
 import type { RecordStatus } from "../domain/models";
 
 export type UnifiedNoteListSortMode = "default" | "desc" | "asc";
+
+export type HistoricalSearchCategory = "all" | "text" | "image" | "video" | "audio" | "file";
+
+const HISTORICAL_SEARCH_CATEGORIES: Array<{
+  value: HistoricalSearchCategory;
+  label: string;
+}> = [
+  { value: "all", label: "全部" },
+  { value: "text", label: "正文" },
+  { value: "image", label: "图片" },
+  { value: "video", label: "视频" },
+  { value: "audio", label: "音频" },
+  { value: "file", label: "文件" },
+];
+
+export function UnifiedHistoricalSearchScope({
+  value,
+  onChange,
+  onOpenCategory,
+}: {
+  value: HistoricalSearchCategory;
+  onChange: (value: HistoricalSearchCategory) => void;
+  /** 媒体分类可选择进入独立时间线；列表筛选入口不传此回调。 */
+  onOpenCategory?: (value: HistoricalSearchCategory) => void;
+}) {
+  return (
+    <div className="history-search-types" role="group" aria-label="历史搜索范围">
+      <span className="history-search-types-label"><History size={14} />搜索范围</span>
+      <div className="history-search-type-grid">
+        {HISTORICAL_SEARCH_CATEGORIES.map((category) => (
+          <button
+            type="button"
+            key={category.value}
+            className={value === category.value ? "selected" : ""}
+            aria-pressed={value === category.value}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              onChange(category.value);
+              onOpenCategory?.(category.value);
+            }}
+          >
+            {category.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function cycleUnifiedNoteListSortMode(
   mode: UnifiedNoteListSortMode,
@@ -491,6 +540,8 @@ export function UnifiedNoteListCard({
       ref={cardRef}
       data-record-id={recordId}
       data-source-id={sourceId}
+      data-card-interaction="lift"
+      data-card-rendering="repeated-list"
       className={`elevated-card unified-note-card ${className} ${selected ? "selected" : ""} ${menuOpen ? "menu-open" : ""} ${compact ? "compact" : ""} ${status ? "has-status" : ""}`.trim()}
       tabIndex={0}
       onClick={onSelect}

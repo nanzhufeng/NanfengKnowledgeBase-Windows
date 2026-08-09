@@ -24,5 +24,9 @@ describe("attachmentPreviewKind", () => {
     expect(attachmentPreviewKind(item("notes.md", null))).toBe("text");
     expect(attachmentPreviewKind(item("voice.m4a", null))).toBe("audio");
     expect(attachmentPreviewKind(item("clip.mp4", null))).toBe("video");
+    expect(attachmentPreviewKind(item("phone.heic", null))).toBe("image");
+    expect(attachmentPreviewKind(item("recording.mkv", null))).toBe("video");
+    expect(attachmentPreviewKind(item("delivery.zip", null))).toBe("archive");
+    expect(attachmentPreviewKind(item("backup.7z", "application/x-7z-compressed"))).toBe("archive");
   });
 });

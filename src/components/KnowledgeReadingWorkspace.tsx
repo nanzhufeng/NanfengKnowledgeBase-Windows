@@ -47,6 +47,7 @@ import {
 import {
   buildKnowledgeOverview,
   buildKnowledgeSynthesis,
+  buildKnowledgeTopicIntegration,
   type KnowledgeOverviewItem,
   type SynthesizedKnowledgeAnchor,
 } from "../knowledge/knowledgeSynthesis";
@@ -71,10 +72,17 @@ export type KnowledgeReadingTarget = {
   sourceItemId?: number;
 };
 
+export type KnowledgeSourceReturnTarget = {
+  topicId: number;
+  viewMode: ReadingMode;
+  sourceItemId: number;
+};
+
 export type KnowledgeSourceTarget = {
   sourceItemId: number;
   locatorJson: string | null;
   locatorLabel: string | null;
+  returnTarget?: KnowledgeSourceReturnTarget;
 };
 
 type KnowledgeReadingWorkspaceProps = {
@@ -163,7 +171,7 @@ function EvidenceList({
   onOpenSource: (target: KnowledgeSourceTarget) => void;
 }) {
   return (
-    <section className="knowledge-final-evidence-column">
+    <section className="knowledge-final-evidence-column" data-card-interaction="surface-lift">
       <h4>{title}<span>{items.length}</span></h4>
       {items.slice(0, 4).map((item) => (
         <article key={item.id}>
@@ -175,13 +183,14 @@ function EvidenceList({
             />
             <button
               className="knowledge-final-anchor-button"
+              data-knowledge-source-id={item.sourceItemId}
               onClick={() => onOpenSource({
                 sourceItemId: item.sourceItemId,
                 locatorJson: item.locatorJson,
                 locatorLabel: item.locatorLabel,
               })}
             >
-              {item.sourceTitle} · {item.locatorLabel}<ExternalLink size={12} />
+              {item.sourceTitle} · {item.locatorLabel}<ExternalLink size={12} data-card-cue="forward" />
             </button>
           </div>
         </article>
@@ -201,7 +210,7 @@ function AutomaticEvidenceList({
   onOpenSource: (target: KnowledgeSourceTarget) => void;
 }) {
   return (
-    <section className="knowledge-final-evidence-column">
+    <section className="knowledge-final-evidence-column" data-card-interaction="surface-lift">
       <h4>{title}<span>{items.length}</span></h4>
       {items.slice(0, 4).map((item) => (
         <article key={item.id}>
@@ -213,13 +222,14 @@ function AutomaticEvidenceList({
             />
             <button
               className="knowledge-final-anchor-button"
+              data-knowledge-source-id={item.sourceItemId}
               onClick={() => onOpenSource({
                 sourceItemId: item.sourceItemId,
                 locatorJson: JSON.stringify({ kind: "text_quote", value: item.quote, quote: item.quote }),
                 locatorLabel: `正文片段：${item.quote.slice(0, 36)}`,
               })}
             >
-              {item.sourceTitle}<ExternalLink size={12} />
+              {item.sourceTitle}<ExternalLink size={12} data-card-cue="forward" />
             </button>
           </div>
         </article>
@@ -236,20 +246,20 @@ function AutomaticEvidenceList({
 function DecisionChain({
   decision,
 }: {
-  decision: (TopicDecisionRow & { automatic?: boolean }) | null;
+  decision: (TopicDecisionRow & { automatic?: boolean; automaticBasis?: string }) | null;
 }) {
   if (!decision) {
     return <p className="knowledge-final-empty">暂无决策版本</p>;
   }
   const stages = decision.automatic ? [
     {
-      label: "正文判断",
-      body: decision.expectedResult || "待确认目标与约束",
+      label: "形成依据",
+      body: decision.automaticBasis || "尚缺少可独立核对的正文依据",
       meta: formatDate(decision.decidedAt),
       tone: "judgment",
     },
     {
-      label: "决策草案",
+      label: "待确认建议",
       body: decision.decisionMarkdown,
       meta: "等待确认",
       tone: "decision",
@@ -261,9 +271,9 @@ function DecisionChain({
       tone: "action",
     },
     {
-      label: "结果 / 复盘",
-      body: "待回写",
-      meta: "待回写",
+      label: "预期 / 结果",
+      body: `${decision.expectedResult || "预期结果待确认"}\n\n实际结果尚未产生。`,
+      meta: "未执行",
       tone: "result",
     },
   ] : [
@@ -297,7 +307,10 @@ function DecisionChain({
       <div className="knowledge-final-decision-track">
         {stages.map((stage, index) => (
           <div className="knowledge-final-chain-fragment" key={stage.label}>
-            <article className={`knowledge-final-decision-card ${stage.tone}`}>
+            <article
+              className={`knowledge-final-decision-card ${stage.tone}`}
+              data-card-interaction="surface-lift"
+            >
               <header><strong>{stage.label}</strong><small>{stage.meta}</small></header>
               <MarkdownContent
                 value={stage.body}
@@ -321,142 +334,121 @@ function KnowledgeAssets({
   onOpenSource: (target: KnowledgeSourceTarget) => void;
   focusSourceItemId?: number;
 }) {
-  const [selectedNoteId, setSelectedNoteId] = useState<number | null>(
-    detail.notes[0]?.id ?? null,
-  );
-  const [selectedSourceId, setSelectedSourceId] = useState<number | null>(
-    focusSourceItemId ?? detail.sources[0]?.id ?? null,
-  );
-  useEffect(() => {
-    setSelectedNoteId((current) => (
-      detail.notes.some((note) => note.id === current) ? current : detail.notes[0]?.id ?? null
-    ));
-  }, [detail.notes]);
-  useEffect(() => {
-    if (!focusSourceItemId) return;
-    setSelectedSourceId(focusSourceItemId);
-    const note = detail.notes.find((item) => item.sourceItemIds.includes(focusSourceItemId));
-    if (note) setSelectedNoteId(note.id);
-  }, [detail.notes, focusSourceItemId]);
-  const selectedNote = detail.notes.find((note) => note.id === selectedNoteId) ?? detail.notes[0] ?? null;
-  const visibleSources = selectedNote
-    ? detail.sources.filter((source) => selectedNote.sourceItemIds.includes(source.id))
-    : detail.sources;
-  const selectedSource = visibleSources.find((source) => source.id === selectedSourceId)
-    ?? visibleSources[0]
-    ?? null;
+  const integration = buildKnowledgeTopicIntegration(detail);
+  const [localSourceSelection, setLocalSourceSelection] = useState<{
+    topicId: number;
+    sourceItemId: number | null;
+  } | null>(null);
+  const hasLocalSelection = localSourceSelection?.topicId === detail.topic.id;
+  const selectedSourceItemId = hasLocalSelection ? localSourceSelection.sourceItemId : null;
+  const activeSourceItemId = hasLocalSelection ? selectedSourceItemId : focusSourceItemId;
+  const selectedSource = detail.sources.find((source) => source.id === selectedSourceItemId) ?? null;
+
+  if (!integration) {
+    return (
+      <p
+        className="knowledge-final-empty knowledge-final-assets-empty"
+        data-reading-section="notes-and-sources"
+      >
+        当前主题尚未形成整合内容
+      </p>
+    );
+  }
 
   return (
     <section
       className="knowledge-final-assets"
       data-reading-section="notes-and-sources"
-      aria-label="主题笔记与可回溯来源"
+      aria-label="主题整合与可回溯来源"
     >
-      <div className="knowledge-final-note-reader">
-        <nav
-          className={`knowledge-final-note-list knowledge-final-reading-pane is-index ${
-            detail.notes.length ? "" : "is-empty"
-          }`}
-          aria-label="当前主题笔记"
-        >
-          <h4>主题笔记 <span>{detail.notes.length}</span></h4>
-          {detail.notes.map((note) => (
-            <button
-              type="button"
-              className={note.id === selectedNote?.id ? "active" : ""}
-              key={note.id}
-              onClick={() => setSelectedNoteId(note.id)}
-            >
-              <StickyNote size={14} />
-              <span>
-                <strong>{note.title}</strong>
-                <small>{formatDate(note.updatedAt)} · {note.sourceItemIds.length} 个来源</small>
-              </span>
-              <ArrowRight size={13} />
-            </button>
-          ))}
-          {!detail.notes.length ? <p className="knowledge-final-empty compact">暂无独立笔记</p> : null}
-        </nav>
+      <div
+        className={`knowledge-final-note-reader is-topic-integration ${detail.sources.length ? "" : "is-integration-only"}`}
+        data-assets-layout={detail.sources.length ? "topic-integration" : "integration-only"}
+      >
         <article className="knowledge-final-note-detail knowledge-final-reading-pane is-content">
-          {selectedNote ? (
-            <>
-              <header>
-                <div>
-                  <span>{selectedNote.noteType} · {formatDate(selectedNote.updatedAt)}</span>
-                  <h3>{selectedNote.title}</h3>
-                </div>
-              </header>
-              {selectedNote.summary ? <p className="knowledge-final-note-summary">{selectedNote.summary}</p> : null}
-              <div className="knowledge-final-note-body">
-                <MarkdownContent
-                  value={selectedNote.bodyMarkdown || "暂无正文"}
-                  className="right-reading-copy right-reading-copy-13"
-                />
-              </div>
-            </>
-          ) : (
-            selectedSource ? (
-              <>
-                <header>
-                  <div>
-                    <span>{selectedSource.sourceType} · {formatDate(selectedSource.originalAt || selectedSource.importedAt)}</span>
-                    <h3>{selectedSource.title}</h3>
-                  </div>
-                  <button
-                    className="knowledge-final-open-source"
-                    onClick={() => onOpenSource({
-                      sourceItemId: selectedSource.id,
-                      locatorJson: null,
-                      locatorLabel: null,
-                    })}
-                  >
-                    查看完整来源<ExternalLink size={13} />
-                  </button>
-                </header>
-                <div className="knowledge-final-note-body">
-                  <MarkdownContent
-                    value={selectedSource.contentText || "暂无正文"}
-                    className="right-reading-copy right-reading-copy-13"
-                  />
-                </div>
-              </>
-            ) : <p className="knowledge-final-empty">暂无可读内容</p>
-          )}
+          <header>
+            <div>
+              <span>
+                {selectedSource
+                  ? `来源笔记 · ${selectedSource.sourceType} · ${formatDate(selectedSource.originalAt || selectedSource.importedAt)}`
+                  : integration.statusLabel}
+              </span>
+              <h3>{selectedSource?.title ?? integration.title}</h3>
+            </div>
+            {selectedSource ? (
+              <button
+                type="button"
+                className="knowledge-final-back-to-integration"
+                onClick={() => setLocalSourceSelection({
+                  topicId: detail.topic.id,
+                  sourceItemId: null,
+                })}
+              >
+                <BookOpenText size={14} aria-hidden="true" />
+                返回主题整合
+              </button>
+            ) : null}
+          </header>
+          {!selectedSource && integration.summary ? (
+            <p className={`knowledge-final-note-summary is-${integration.mode}`}>
+              {integration.summary}
+            </p>
+          ) : null}
+          <div className="knowledge-final-note-body">
+            <MarkdownContent
+              value={selectedSource?.contentText?.trim() || (selectedSource
+                ? "当前来源没有可显示正文。"
+                : integration.bodyMarkdown)}
+              className="right-reading-copy right-reading-copy-13"
+            />
+          </div>
         </article>
-        <section className="knowledge-final-source-list knowledge-final-reading-pane is-support">
-          <h4>{selectedNote ? "笔记来源" : "主题来源"} <span>{visibleSources.length}</span></h4>
-          {visibleSources.map((source) => (
-            <button
-              type="button"
-              key={source.id}
-              className={source.id === selectedSource?.id ? "active" : ""}
-              onClick={() => {
-                if (selectedNote) {
-                  onOpenSource({
+        {detail.sources.length ? (
+          <section className="knowledge-final-source-list knowledge-final-reading-pane is-support">
+            <h4>关联笔记与来源 <span>{detail.sources.length}</span></h4>
+            {detail.sources.map((source) => (
+              <div
+                key={source.id}
+                className={`knowledge-final-source-item ${source.id === activeSourceItemId ? "active" : ""}`}
+                data-card-interaction="lift"
+              >
+                <button
+                  type="button"
+                  className="knowledge-final-source-switch"
+                  aria-pressed={source.id === selectedSourceItemId}
+                  aria-label={`在当前主题内阅读 ${source.title}`}
+                  onClick={() => setLocalSourceSelection({
+                    topicId: detail.topic.id,
+                    sourceItemId: source.id,
+                  })}
+                >
+                  <FileText size={15} aria-hidden="true" />
+                  <span>
+                    <strong>{source.title}</strong>
+                    <small>
+                      {source.sourceType} · {formatDate(source.originalAt || source.importedAt)}
+                      {source.confidence === null ? "" : ` · ${Math.round(source.confidence)}%`}
+                    </small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="knowledge-final-source-open"
+                  data-knowledge-source-id={source.id}
+                  aria-label={`在全部笔记中打开 ${source.title}`}
+                  title="进入全部笔记"
+                  onClick={() => onOpenSource({
                     sourceItemId: source.id,
                     locatorJson: null,
                     locatorLabel: null,
-                  });
-                } else {
-                  setSelectedSourceId(source.id);
-                }
-              }}
-            >
-              <FileText size={15} />
-              <span>
-                <strong>{source.title}</strong>
-                <small>
-                  {source.sourceType} · {formatDate(source.originalAt || source.importedAt)}
-                  {source.confidence === null ? "" : ` · ${Math.round(source.confidence)}%`}
-                </small>
-              </span>
-              {selectedNote ? <ExternalLink size={13} /> : <ArrowRight size={13} />}
-            </button>
-          ))}
-          {!visibleSources.length ? (
-            <p className="knowledge-final-empty compact">暂无来源</p>
-          ) : null}
-        </section>
+                  })}
+                >
+                  <ExternalLink size={13} aria-hidden="true" data-card-cue="forward" />
+                </button>
+              </div>
+            ))}
+          </section>
+        ) : null}
       </div>
     </section>
   );
@@ -468,6 +460,7 @@ function DecisionHistory({
 }: {
   decisions: Array<TopicDecisionRow & {
     automatic?: boolean;
+    automaticBasis?: string;
     sourceItemId?: number;
     sourceTitle?: string;
   }>;
@@ -482,7 +475,7 @@ function DecisionHistory({
         <article className="knowledge-final-decision-version" key={decision.id}>
           <header>
             <div>
-              <span>{decision.automatic ? "自动草案" : `决策版本 ${decisions.length - index}`}</span>
+              <span>{decision.automatic ? "自动决策草案" : `决策版本 ${decisions.length - index}`}</span>
               <h3>{decision.title}</h3>
             </div>
             <div>
@@ -491,6 +484,7 @@ function DecisionHistory({
               {decision.automatic && decision.sourceItemId ? (
                 <button
                   className="knowledge-final-decision-source"
+                  data-knowledge-source-id={decision.sourceItemId}
                   onClick={() => onOpenSource({
                     sourceItemId: decision.sourceItemId!,
                     locatorJson: null,
@@ -555,7 +549,10 @@ function KnowledgeTimeline({
         <div className="knowledge-final-timeline-track">
           {events.map((event, index) => (
             <div className="knowledge-final-timeline-fragment" key={`${event.topicId}-${event.id}`}>
-              <article className={event.topicId === topicId ? "current" : "related"}>
+              <article
+                className={event.topicId === topicId ? "current" : "related"}
+                data-card-interaction="surface-lift"
+              >
                 <header>
                   <strong>{eventKindLabel(event.kind)}</strong>
                   <small>{formatDate(event.occurredAt)}</small>
@@ -566,12 +563,14 @@ function KnowledgeTimeline({
                   className="right-reading-copy right-reading-copy-10"
                 />
                 {event.sourceItemId ? (
-                  <button onClick={() => onOpenSource({
+                  <button
+                    data-knowledge-source-id={event.sourceItemId}
+                    onClick={() => onOpenSource({
                     sourceItemId: event.sourceItemId!,
                     locatorJson: event.locatorJson,
                     locatorLabel: event.locatorLabel,
                   })}>
-                    查看来源<ExternalLink size={12} />
+                    查看来源<ExternalLink size={12} data-card-cue="forward" />
                   </button>
                 ) : null}
               </article>
@@ -601,7 +600,7 @@ function KnowledgeOverviewCard({
   onOpen: (trigger: HTMLButtonElement) => void;
 }) {
   return (
-    <article className={`knowledge-overview-card ${tone}`}>
+    <article className={`knowledge-overview-card ${tone}`} data-card-interaction="lift">
       <header>
         <span><Icon size={15} /></span>
         <strong>{title}</strong>
@@ -618,7 +617,7 @@ function KnowledgeOverviewCard({
       {!items.length ? <p>暂无内容</p> : null}
       {items.length ? (
         <button type="button" onClick={(event) => onOpen(event.currentTarget)}>
-          {actionLabel}<ArrowRight size={12} />
+          {actionLabel}<ArrowRight size={12} data-card-cue="forward" />
         </button>
       ) : null}
     </article>
@@ -640,6 +639,7 @@ export function KnowledgeReadingWorkspace({
   const [eventFilter, setEventFilter] =
     useState<"all" | "sources" | "evidence" | "judgments" | "decisions">("all");
   const [overviewDialog, setOverviewDialog] = useState<KnowledgeOverviewDialogState | null>(null);
+  const [readerHasScrolled, setReaderHasScrolled] = useState(false);
   const [connector, setConnector] = useState<{
     top: number;
     left: number;
@@ -744,6 +744,65 @@ export function KnowledgeReadingWorkspace({
     switchMode(navigationTarget.viewMode);
   }, [navigationTarget?.requestId]);
 
+  const openSourceFromCurrentPanel = (target: KnowledgeSourceTarget) => {
+    onOpenSource({
+      ...target,
+      returnTarget: selectedTopicId === null
+        ? undefined
+        : {
+            topicId: selectedTopicId,
+            viewMode: mode,
+            sourceItemId: target.sourceItemId,
+          },
+    });
+  };
+
+  useEffect(() => {
+    if (
+      !navigationTarget?.sourceItemId
+      || !navigationTarget.viewMode
+      || navigationTarget.viewMode !== mode
+      || topicDetail?.topic.id !== selectedTopicId
+    ) {
+      return undefined;
+    }
+    const frame = requestAnimationFrame(() => {
+      const container = readerScrollRef.current;
+      const target = container?.querySelector<HTMLElement>(
+        `[data-knowledge-source-id="${navigationTarget.sourceItemId}"]`,
+      );
+      if (!container) return;
+      if (!target) {
+        container.scrollTo({ top: 0, behavior: "auto" });
+        return;
+      }
+      target.focus({ preventScroll: true });
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      if (targetRect.top < containerRect.top + 18 || targetRect.bottom > containerRect.bottom - 18) {
+        container.scrollTo({
+          top: Math.max(0, container.scrollTop + targetRect.top - containerRect.top - 24),
+          behavior: "smooth",
+        });
+      }
+      const horizontalScroller = target.closest<HTMLElement>(".knowledge-final-timeline-scroll");
+      if (horizontalScroller) {
+        const scrollerRect = horizontalScroller.getBoundingClientRect();
+        horizontalScroller.scrollTo({
+          left: Math.max(
+            0,
+            horizontalScroller.scrollLeft
+              + targetRect.left
+              - scrollerRect.left
+              - (scrollerRect.width - targetRect.width) / 2,
+          ),
+          behavior: "smooth",
+        });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [mode, navigationTarget, selectedTopicId, topicDetail?.topic.id]);
+
   const displayDetail = topicDetail;
   const synthesis = useMemo(
     () => displayDetail ? buildKnowledgeSynthesis(displayDetail) : null,
@@ -834,6 +893,7 @@ export function KnowledgeReadingWorkspace({
       propositionId: null,
       judgmentSnapshotId: null,
       title: decision.title,
+      automaticBasis: decision.basis,
       decisionMarkdown: decision.decision,
       decidedAt: decision.decidedAt,
       status: "active" as const,
@@ -950,7 +1010,11 @@ export function KnowledgeReadingWorkspace({
         <span className="knowledge-final-connector" aria-hidden="true"><i /><b /></span>
       ) : null}
 
-      <article className="knowledge-final-reader knowledge-card association-link-target" ref={readerRef}>
+      <article
+        className="knowledge-final-reader knowledge-card association-link-target"
+        ref={readerRef}
+        data-hover-wheel-panel=""
+      >
         {topicDetail ? (
           <>
             <header className="knowledge-final-heading">
@@ -963,7 +1027,7 @@ export function KnowledgeReadingWorkspace({
 
             {overview ? (
               <section className="knowledge-overview" aria-label="自动知识摘要">
-                <article className="knowledge-overview-judgment">
+                <article className="knowledge-overview-judgment" data-card-interaction="surface-lift">
                   <header>
                     <span><Sparkles size={16} /></span>
                     <strong>当前判断</strong>
@@ -1042,7 +1106,11 @@ export function KnowledgeReadingWorkspace({
               </section>
             ) : null}
 
-            <nav className="knowledge-final-tabs" aria-label="知识视图模块">
+            <nav
+              aria-label="主题洞察模块"
+              className="knowledge-final-tabs"
+              data-scroll-edge={readerHasScrolled ? "visible" : "hidden"}
+            >
               <button
                 aria-selected={mode === "hypotheses"}
                 className={mode === "hypotheses" ? "active" : ""}
@@ -1065,7 +1133,7 @@ export function KnowledgeReadingWorkspace({
                 onClick={() => switchMode("sources")}
                 role="tab"
               >
-                <FileText size={17} />笔记与来源 <span>{(displayDetail?.notes.length ?? 0) + (displayDetail?.sources.length ?? 0)}</span>
+                <FileText size={17} />主题整合 <span>{displayDetail?.sources.length ?? 0}</span>
               </button>
               <button
                 aria-selected={mode === "decisions"}
@@ -1077,7 +1145,12 @@ export function KnowledgeReadingWorkspace({
               </button>
             </nav>
 
-            <div className="knowledge-final-scroll" ref={readerScrollRef}>
+            <div
+              className="knowledge-final-scroll"
+              onScroll={(event) => setReaderHasScrolled(event.currentTarget.scrollTop > 4)}
+              ref={readerScrollRef}
+              data-hover-wheel-scroll=""
+            >
               {mode === "hypotheses" ? (
                 <div className="knowledge-final-content-grid">
                   <main>
@@ -1104,7 +1177,10 @@ export function KnowledgeReadingWorkspace({
                               </div>
                               <em>{Math.round(hypothesis.confidence)}%</em>
                             </header>
-                            <section className="knowledge-final-hypothesis-thesis">
+                            <section
+                              className="knowledge-final-hypothesis-thesis"
+                              data-card-interaction="surface-lift"
+                            >
                               <span>核心解释</span>
                               <MarkdownContent
                                 value={hypothesis.statementMarkdown}
@@ -1112,7 +1188,10 @@ export function KnowledgeReadingWorkspace({
                               />
                             </section>
                             {hypothesis.automatic && hypothesis.automaticRationale ? (
-                              <section className="knowledge-final-auto-rationale">
+                              <section
+                                className="knowledge-final-auto-rationale"
+                                data-card-interaction="surface-lift"
+                              >
                                 <span>提取依据</span>
                                 <p>{hypothesis.automaticRationale}</p>
                               </section>
@@ -1123,12 +1202,12 @@ export function KnowledgeReadingWorkspace({
                                   <AutomaticEvidenceList
                                     title="支持证据"
                                     items={automaticAnchors.filter((item) => item.stance === "support")}
-                                    onOpenSource={onOpenSource}
+                                    onOpenSource={openSourceFromCurrentPanel}
                                   />
                                   <AutomaticEvidenceList
                                     title="反对证据"
                                     items={automaticAnchors.filter((item) => item.stance === "oppose")}
-                                    onOpenSource={onOpenSource}
+                                    onOpenSource={openSourceFromCurrentPanel}
                                   />
                                 </>
                               ) : (
@@ -1136,12 +1215,12 @@ export function KnowledgeReadingWorkspace({
                                   <EvidenceList
                                     title="支持证据"
                                     items={related.filter((item) => item.stance === "support")}
-                                    onOpenSource={onOpenSource}
+                                    onOpenSource={openSourceFromCurrentPanel}
                                   />
                                   <EvidenceList
                                     title="反对证据"
                                     items={related.filter((item) => item.stance === "oppose")}
-                                    onOpenSource={onOpenSource}
+                                    onOpenSource={openSourceFromCurrentPanel}
                                   />
                                 </>
                               )}
@@ -1169,7 +1248,8 @@ export function KnowledgeReadingWorkspace({
                                 <button
                                   type="button"
                                   key={source.id}
-                                  onClick={() => onOpenSource({
+                                  data-knowledge-source-id={source.id}
+                                  onClick={() => openSourceFromCurrentPanel({
                                     sourceItemId: source.id,
                                     locatorJson: null,
                                     locatorLabel: null,
@@ -1186,7 +1266,10 @@ export function KnowledgeReadingWorkspace({
                   </main>
 
                   <aside className="knowledge-final-insights">
-                    <section>
+                    <section
+                      className="knowledge-final-insight-card"
+                      data-card-interaction="surface-lift"
+                    >
                       <h3>待验证问题 <span>{pendingQuestions.length + synthesizedQuestions.length}</span></h3>
                       <ol>
                         {[...pendingQuestions, ...synthesizedQuestions].slice(0, 4).map((item) => (
@@ -1197,12 +1280,16 @@ export function KnowledgeReadingWorkspace({
                         ? <small>暂无</small>
                         : null}
                     </section>
-                    <section className="expiring">
+                    <section
+                      className="knowledge-final-insight-card expiring"
+                      data-card-interaction="surface-lift"
+                    >
                       <h3>知识有效期 <span>{expiryIssues.length}</span></h3>
                       {expiryIssues.slice(0, 4).map((item) => (
                         <button
                           key={item.id}
-                          onClick={() => item.sourceItemId && onOpenSource({
+                          data-knowledge-source-id={item.sourceItemId ?? undefined}
+                          onClick={() => item.sourceItemId && openSourceFromCurrentPanel({
                             sourceItemId: item.sourceItemId,
                             locatorJson: item.locatorJson,
                             locatorLabel: item.locatorLabel,
@@ -1223,7 +1310,7 @@ export function KnowledgeReadingWorkspace({
                     events={visibleTimeline}
                     eventFilter={eventFilter}
                     onFilterChange={setEventFilter}
-                    onOpenSource={onOpenSource}
+                    onOpenSource={openSourceFromCurrentPanel}
                   />
 
                   <section
@@ -1259,9 +1346,9 @@ export function KnowledgeReadingWorkspace({
               ) : mode === "sources" ? (
                 displayDetail ? (
                   <div className="knowledge-final-source-mode">
-                    <KnowledgeAssets
-                      detail={displayDetail}
-                      onOpenSource={onOpenSource}
+                      <KnowledgeAssets
+                        detail={displayDetail}
+                        onOpenSource={openSourceFromCurrentPanel}
                       focusSourceItemId={navigationTarget?.sourceItemId}
                     />
                   </div>
@@ -1272,7 +1359,7 @@ export function KnowledgeReadingWorkspace({
                   data-reading-section="decision-chain"
                   aria-label="判断、决策、行动与复盘"
                 >
-                  <DecisionHistory decisions={decisions} onOpenSource={onOpenSource} />
+                  <DecisionHistory decisions={decisions} onOpenSource={openSourceFromCurrentPanel} />
                 </div>
               )}
 

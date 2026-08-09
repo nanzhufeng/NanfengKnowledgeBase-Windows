@@ -38,6 +38,14 @@ export const attachmentItemSchema = z.object({
 });
 export type AttachmentItem = z.infer<typeof attachmentItemSchema>;
 
+export const attachmentSearchHitSchema = z.object({
+  attachment: attachmentItemSchema,
+  recordTitle: z.string(),
+  recordSummary: z.string(),
+  recordOriginalAt: z.string().nullable(),
+});
+export type AttachmentSearchHit = z.infer<typeof attachmentSearchHitSchema>;
+
 export const intelligenceRecordSchema = z.object({
   id: z.number().int(),
   title: z.string(),
@@ -126,6 +134,35 @@ export const dataLocationSchema = z.object({
 });
 export type DataLocation = z.infer<typeof dataLocationSchema>;
 
+export const runtimeBuildInfoSchema = z.object({
+  version: z.string(),
+  buildLabel: z.string(),
+  executableSizeBytes: z.number().int().nonnegative(),
+  executableSha256: z.string(),
+});
+export type RuntimeBuildInfo = z.infer<typeof runtimeBuildInfoSchema>;
+
+export const dataMigrationPreviewSchema = z.object({
+  sourceRoot: z.string(),
+  targetRoot: z.string(),
+  fileCount: z.number().int(),
+  totalBytes: z.number(),
+  requiredBytes: z.number(),
+  availableBytes: z.number(),
+  targetIsEmpty: z.boolean(),
+});
+export type DataMigrationPreview = z.infer<typeof dataMigrationPreviewSchema>;
+
+export const dataMigrationResultSchema = z.object({
+  sourceRoot: z.string(),
+  targetRoot: z.string(),
+  copiedFileCount: z.number().int(),
+  copiedBytes: z.number(),
+  integrityCheck: z.string(),
+  restartRequired: z.boolean(),
+});
+export type DataMigrationResult = z.infer<typeof dataMigrationResultSchema>;
+
 export const storageStatsSchema = z.object({
   recordCount: z.number().int(),
   databaseBytes: z.number(),
@@ -138,6 +175,44 @@ export const storageStatsSchema = z.object({
   lastBackupAt: z.string().nullable(),
 });
 export type StorageStats = z.infer<typeof storageStatsSchema>;
+
+export const dataOptimizationPreviewSchema = z.object({
+  databaseReclaimableBytes: z.number(),
+  duplicateBackupCount: z.number().int(),
+  duplicateBackupBytes: z.number(),
+  incompleteBackupCount: z.number().int(),
+  incompleteBackupBytes: z.number(),
+  estimatedReclaimableBytes: z.number(),
+  protectedBusinessRecordCount: z.number().int(),
+});
+export type DataOptimizationPreview = z.infer<typeof dataOptimizationPreviewSchema>;
+
+export const dataOptimizationResultSchema = z.object({
+  safetyBackup: z.string(),
+  removedDuplicateBackupCount: z.number().int(),
+  removedIncompleteBackupCount: z.number().int(),
+  reclaimedBytes: z.number(),
+  databaseBytesBefore: z.number(),
+  databaseBytesAfter: z.number(),
+  integrityCheck: z.string(),
+});
+export type DataOptimizationResult = z.infer<typeof dataOptimizationResultSchema>;
+
+export const legacyAttachmentRecoveryPreviewSchema = z.object({
+  archiveCount: z.number().int(),
+  recordCount: z.number().int(),
+  recoverableAttachmentCount: z.number().int(),
+  unresolvedAttachmentCount: z.number().int(),
+});
+export type LegacyAttachmentRecoveryPreview = z.infer<typeof legacyAttachmentRecoveryPreviewSchema>;
+
+export const legacyAttachmentRecoveryResultSchema = z.object({
+  archiveCount: z.number().int(),
+  recoveredAttachmentCount: z.number().int(),
+  unresolvedAttachmentCount: z.number().int(),
+  failedAttachmentCount: z.number().int(),
+});
+export type LegacyAttachmentRecoveryResult = z.infer<typeof legacyAttachmentRecoveryResultSchema>;
 
 export const portableBackupResultSchema = z.object({
   folderPath: z.string(),
