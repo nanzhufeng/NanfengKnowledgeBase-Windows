@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::blocking::Client;
@@ -14,13 +15,23 @@ use crate::error::{AppError, AppResult};
 const OPENROUTER_API: &str = "https://openrouter.ai/api/v1";
 const DEEPSEEK_API: &str = "https://api.deepseek.com";
 const MAX_MODELS_PER_AUTHOR: usize = 3;
+static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 
-fn http_client() -> AppResult<Client> {
-    Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(90))
-        .build()
-        .map_err(|error| AppError::Conflict(format!("AI 网络客户端初始化失败：{error}")))
+fn http_client() -> AppResult<&'static Client> {
+    match HTTP_CLIENT.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(150))
+            .tcp_keepalive(Duration::from_secs(30))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build()
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(client) => Ok(client),
+        Err(error) => Err(AppError::Conflict(format!(
+            "AI 网络客户端初始化失败：{error}"
+        ))),
+    }
 }
 
 fn checked_json(response: reqwest::blocking::Response) -> AppResult<Value> {
@@ -294,7 +305,7 @@ fn topic_insight_schema() -> Value {
 }
 
 fn system_prompt() -> &'static str {
-    "你是南枫知识库的主题整理助手。只依据输入材料整理，不补造事实。输出简体中文 JSON。总结要指出核心判断、证据边界、矛盾和待验证项。主题管理建议只提出建议，不执行重命名、合并、删除或覆盖人工结论。"
+    "你是南枫知识库的主题整理助手。只依据输入材料整理，不补造事实。输出简体中文 JSON。输入中的“来源正文”是主要分析材料；只有该区完全不存在时，才可以说明缺少正文。summaryMarkdown 只写 3 至 5 句连续的主题总览，不使用标题或列表，不单列来源边界、证据边界、来源 ID 或来源清单，也不复述 keyInsights、evidence、openQuestions 或 topicManagementSuggestions 的条目；来源回溯只写入 keyInsights.sourceItemIds 和 evidence.sourceItemId。keyInsights 最多 3 条，openQuestions 最多 3 条，topicManagementSuggestions 最多 3 条，每条保持简短。主题管理建议只提出建议，不执行重命名、合并、删除或覆盖人工结论。"
 }
 
 fn user_prompt(context: &str) -> String {
@@ -474,5 +485,23 @@ mod tests {
             },
         };
         assert_eq!(estimate_cost(&model, 1_000, 500, 0), Some(0.002));
+    }
+
+    #[test]
+    fn topic_insight_prompt_keeps_sections_short_and_non_repetitive() {
+        let prompt = system_prompt();
+        assert!(prompt.contains("summaryMarkdown 只写 3 至 5 句"));
+        assert!(prompt.contains("“来源正文”是主要分析材料"));
+        assert!(prompt.contains("不单列来源边界、证据边界"));
+        assert!(prompt.contains("来源回溯只写入 keyInsights.sourceItemIds"));
+        assert!(prompt.contains("不复述 keyInsights"));
+        assert!(prompt.contains("topicManagementSuggestions 最多 3 条"));
+    }
+
+    #[test]
+    fn reuses_one_http_client_for_batch_connections() {
+        let first = http_client().expect("first client");
+        let second = http_client().expect("second client");
+        assert!(std::ptr::eq(first, second));
     }
 }

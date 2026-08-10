@@ -10,6 +10,11 @@ use uuid::Uuid;
 use crate::error::{AppError, AppResult};
 use crate::knowledge::{personal_catalog, readable_text, source_identity};
 
+const TOPIC_CONTEXT_MAX_CHARS: usize = 72_000;
+const TOPIC_CONTEXT_MAX_SOURCE_BODIES: usize = 20;
+const TOPIC_CONTEXT_MAX_SOURCE_BODY_CHARS: usize = 4_000;
+const TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS: usize = 60_000;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeInboxItem {
@@ -4130,6 +4135,72 @@ pub fn add_topic_question(
         .ok_or_else(|| AppError::NotFound("问题写入后无法读取".to_string()))?)
 }
 
+fn bounded_source_excerpt(value: &str, limit: usize) -> String {
+    const TRUNCATION_MARKER: &str = "\n\n[正文已按长度截断]";
+
+    let value = value.trim();
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+
+    let marker_chars = TRUNCATION_MARKER.chars().count();
+    if limit <= marker_chars {
+        return value.chars().take(limit).collect();
+    }
+
+    let excerpt_limit = limit - marker_chars;
+    let excerpt = value.chars().take(excerpt_limit).collect::<String>();
+    format!("{}{TRUNCATION_MARKER}", excerpt.trim_end())
+}
+
+fn compile_topic_source_bodies(sources: &[TopicSourceRow], max_chars: usize) -> Option<String> {
+    let total_source_count = sources.len();
+    let sources = sources
+        .iter()
+        .filter(|source| !source.content_text.trim().is_empty())
+        .take(TOPIC_CONTEXT_MAX_SOURCE_BODIES)
+        .collect::<Vec<_>>();
+    if sources.is_empty() || max_chars == 0 {
+        return None;
+    }
+
+    let heading = format!(
+        "## 来源正文\n\n已纳入 {} / {} 条来源的可读正文；每段均保留来源 ID。\n\n",
+        sources.len(),
+        total_source_count
+    );
+    let entry_headings = sources
+        .iter()
+        .map(|source| format!("### `{}` {}\n\n", source.public_id, source.title))
+        .collect::<Vec<_>>();
+    let fixed_chars = heading.chars().count()
+        + entry_headings
+            .iter()
+            .map(|entry| entry.chars().count() + 2)
+            .sum::<usize>();
+    let per_source_budget = max_chars
+        .saturating_sub(fixed_chars)
+        .checked_div(sources.len())?
+        .min(TOPIC_CONTEXT_MAX_SOURCE_BODY_CHARS);
+    if per_source_budget == 0 {
+        return None;
+    }
+
+    let entries = sources
+        .iter()
+        .zip(entry_headings)
+        .map(|(source, entry_heading)| {
+            format!(
+                "{}{}",
+                entry_heading,
+                bounded_source_excerpt(&source.content_text, per_source_budget)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(format!("{heading}{entries}"))
+}
+
 pub fn compile_topic_context(connection: &Connection, topic_id: i64) -> AppResult<String> {
     let detail = get_topic_detail(connection, topic_id)?;
     let mut sections = vec![
@@ -4259,6 +4330,16 @@ pub fn compile_topic_context(connection: &Connection, topic_id: i64) -> AppResul
                 .collect::<Vec<_>>()
                 .join("\n")
         ));
+    }
+    let existing_chars = sections
+        .iter()
+        .map(|section| section.chars().count() + 2)
+        .sum::<usize>();
+    let source_section_budget = TOPIC_CONTEXT_MAX_CHARS
+        .saturating_sub(existing_chars)
+        .min(TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS);
+    if let Some(source_bodies) = compile_topic_source_bodies(&detail.sources, source_section_budget) {
+        sections.push(source_bodies);
     }
     sections.retain(|section| !section.trim().is_empty());
     Ok(sections.join("\n\n"))
@@ -6292,7 +6373,9 @@ mod tests {
                 open_questions: Vec::new(),
                 next_actions: Vec::new(),
                 notes: String::new(),
-                source_text: "GPU 与本地知识库".to_string(),
+                source_text:
+                    "GPU 与本地知识库。仅来源正文可见标记：算力电费占比持续上升。"
+                        .to_string(),
                 sources: Vec::new(),
                 is_favorite: false,
             },
@@ -6413,11 +6496,47 @@ mod tests {
         assert!(context.contains("原始来源中的证据"));
         assert!(context.contains("仍需确认什么"));
         assert!(context.contains("来源边界"));
+        assert!(context.contains("## 来源正文"));
+        assert!(context.contains("仅来源正文可见标记：算力电费占比持续上升"));
         undo_classification(&mut connection, result.operation_id).expect("undo");
         assert_eq!(
             list_inbox(&connection, 20).expect("inbox")[0].legacy_record_id,
             Some(record.id)
         );
+    }
+
+    #[test]
+    fn topic_source_bodies_are_bounded_and_keep_source_ids() {
+        let sources = (1..=25)
+            .map(|index| TopicSourceRow {
+                id: index,
+                public_id: format!("source-{index}"),
+                legacy_record_id: None,
+                title: format!("来源 {index}"),
+                source_type: "markdown".to_string(),
+                original_at: None,
+                imported_at: "2026-08-10".to_string(),
+                confidence: None,
+                content_text: format!(
+                    "唯一正文标记[{index}] {}",
+                    "用于验证长度边界的正文。".repeat(1_000)
+                ),
+            })
+            .collect::<Vec<_>>();
+
+        let section = compile_topic_source_bodies(
+            &sources,
+            TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS,
+        )
+        .expect("source bodies");
+
+        assert!(section.contains("已纳入 20 / 25 条来源"));
+        assert!(section.contains("`source-1`"));
+        assert!(section.contains("唯一正文标记[1]"));
+        assert!(section.contains("唯一正文标记[20]"));
+        assert!(!section.contains("唯一正文标记[21]"));
+        assert!(section.contains("[正文已按长度截断]"));
+        assert!(section.chars().count() <= TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS);
     }
 
     #[test]

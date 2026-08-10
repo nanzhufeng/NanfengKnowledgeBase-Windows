@@ -104,6 +104,14 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持四�
         importedAt: `2026-07-${String(9 + index).padStart(2, "0")}T10:00:00+08:00`,
       })),
     ];
+    const aiTestWindow = window as typeof window & {
+      __aiRunTopicIds?: number[];
+      __aiFailTopicId?: number | null;
+      __aiDelayMs?: number;
+    };
+    aiTestWindow.__aiRunTopicIds = [];
+    aiTestWindow.__aiFailTopicId = null;
+    aiTestWindow.__aiDelayMs = 120;
     const trashedRecordIds = new Set<number>();
     const recordSummary = {
       id: 901,
@@ -449,6 +457,38 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持四�
         invoke: async (command: string, args?: Record<string, unknown>) => {
           if (command === "plugin:event|listen") return 1;
           if (command === "plugin:event|unlisten") return null;
+          if (command === "get_ai_topic_insight") return null;
+          if (command === "run_ai_topic_insight") {
+            aiTestWindow.__aiRunTopicIds?.push(Number(args?.topicId));
+            await new Promise((resolveDelay) => window.setTimeout(
+              resolveDelay,
+              aiTestWindow.__aiDelayMs ?? 0,
+            ));
+            if (aiTestWindow.__aiFailTopicId === Number(args?.topicId)) {
+              throw new Error("HTTP 429：请求过多，请稍后重试");
+            }
+            return {
+              topicId: Number(args?.topicId),
+              taskPublicId: "ai-task-layout",
+              providerChannel: "openrouter",
+              modelId: "deepseek/deepseek-v4-pro",
+              payload: {
+                summaryMarkdown: "主题围绕 AI 基础设施投资、供给约束与商业回报展开。现有资料支持需求增长，但回报周期和现金流压力仍需持续核对。短期判断应保留条件，不直接替代人工结论。\n\n## 证据边界\n基于 2 条研究记录：\n- legacy-record-101：AI 基础设施投资\n- legacy-record-102：云厂商资本开支",
+                keyInsights: [
+                  { title: "需求仍在增长", detail: "云厂商投入与推理调用量继续上升。", sourceItemIds: [101] },
+                  { title: "回报存在滞后", detail: "资本开支先于收入兑现，现金流承压。", sourceItemIds: [102] },
+                  { title: "供给仍受约束", detail: "GPU、电力与数据中心交付共同限制扩张。", sourceItemIds: [103] },
+                ],
+                evidence: [],
+                openQuestions: ["实际回报周期有多长？"],
+                topicManagementSuggestions: [
+                  { action: "relate", title: "关联云计算主题", reason: "多份来源同时涉及云厂商资本开支。", targetTopicName: "云服务" },
+                  { action: "boundary", title: "保持主题边界", reason: "当前资料不足以拆分独立子主题。", targetTopicName: null },
+                ],
+              },
+              generatedAt: now,
+            };
+          }
           if (["get_knowledge_source_original_text", "get_knowledge_topic_detail"].includes(command)) {
             const delayMs = (window as typeof window & { __knowledgeSourceActionDataDelayMs?: number })
               .__knowledgeSourceActionDataDelayMs ?? 0;
@@ -1720,12 +1760,13 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持四�
   const assertDirectModeContent = async (selector: string) => {
     const geometry = await page.evaluate((contentSelector) => {
       const scroll = document.querySelector<HTMLElement>(".knowledge-final-scroll");
+      const tabs = document.querySelector<HTMLElement>(".knowledge-final-tabs");
       const content = document.querySelector<HTMLElement>(contentSelector);
-      if (!scroll || !content) return null;
-      const scrollBox = scroll.getBoundingClientRect();
+      if (!scroll || !tabs || !content) return null;
+      const tabsBox = tabs.getBoundingClientRect();
       const contentBox = content.getBoundingClientRect();
       return {
-        topGap: Math.round(contentBox.top - scrollBox.top),
+        topGap: Math.round(contentBox.top - tabsBox.bottom),
         noHorizontalOverflow: scroll.scrollWidth <= scroll.clientWidth,
       };
     }, selector);
@@ -1872,6 +1913,121 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持四�
       });
     }
   }
+
+  await page.getByRole("button", { name: "用 AI 整理", exact: true }).click();
+  await expect(page.getByRole("region", { name: "AI 主题洞察" })).toBeVisible();
+  await expect(page.getByText("来源范围 2 条", { exact: true })).toBeVisible();
+  await expect(page.getByText(/legacy-record-101/)).toBeHidden();
+  await page.getByText("来源范围 2 条", { exact: true }).click();
+  await expect(page.getByText(/legacy-record-101/)).toBeVisible();
+  await page.getByText("来源范围 2 条", { exact: true }).click();
+  await page.getByText("来源范围 2 条", { exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "ai-insight-boundary-collapsed-v98-1702x1066.png"),
+    fullPage: false,
+  });
+  await expect(page.locator(".knowledge-local-overview")).toHaveJSProperty("open", false);
+  await page.getByText("本地分析", { exact: true }).click();
+  await page.getByText("关键洞察 3 条", { exact: true }).click();
+  await expect(page.locator(".knowledge-local-overview")).toHaveJSProperty("open", true);
+  const aiScrollContract = await page.locator(".knowledge-final-scroll").evaluate(async (scroller) => {
+    scroller.scrollTop = scroller.scrollHeight;
+    await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+    const tabs = scroller.querySelector<HTMLElement>(".knowledge-final-tabs");
+    const modeContent = scroller.querySelector<HTMLElement>(".knowledge-final-mode-content");
+    const scrollerBox = scroller.getBoundingClientRect();
+    const tabsBox = tabs?.getBoundingClientRect();
+    const contentBox = modeContent?.getBoundingClientRect();
+    return {
+      maxScrollTop: scroller.scrollHeight - scroller.clientHeight,
+      scrollTop: scroller.scrollTop,
+      scrollerClientHeight: scroller.clientHeight,
+      stickyTabOffset: tabsBox ? Math.round(tabsBox.top - scrollerBox.top) : null,
+      contentBottomVisible: contentBox ? contentBox.bottom <= scrollerBox.bottom + 1 : false,
+    };
+  });
+  expect(aiScrollContract.maxScrollTop).toBeGreaterThan(0);
+  expect(aiScrollContract.scrollTop).toBeGreaterThan(0);
+  expect(aiScrollContract.stickyTabOffset).not.toBeNull();
+  expect(aiScrollContract.stickyTabOffset!).toBeGreaterThanOrEqual(0);
+  expect(aiScrollContract.stickyTabOffset!).toBeLessThan(aiScrollContract.scrollerClientHeight);
+  expect(aiScrollContract.contentBottomVisible).toBe(true);
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "ai-insight-unified-scroll-v98-1702x1066.png"),
+    fullPage: false,
+  });
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & { __aiRunTopicIds?: number[] };
+    if (testWindow.__aiRunTopicIds) testWindow.__aiRunTopicIds.length = 0;
+  });
+  await page.getByRole("button", { name: "AI 整理全部主题", exact: true }).click();
+  const progressDialog = page.getByRole("dialog", { name: "AI 正在整理全部主题" });
+  await expect(progressDialog).toBeVisible();
+  await expect(progressDialog.getByText(/正在处理 1\/2/)).toBeVisible();
+  await expect(progressDialog.locator(".ai-batch-progress-list strong")
+    .filter({ hasText: "AI 资本开支" })).toBeVisible();
+  await expect(progressDialog.locator(".ai-batch-progress-list strong")
+    .filter({ hasText: "云服务" })).toBeVisible();
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "ai-batch-live-progress-v101-1702x1066.png"),
+    fullPage: false,
+  });
+  await expect.poll(() => page.evaluate(() => (
+    (window as typeof window & { __aiRunTopicIds?: number[] }).__aiRunTopicIds ?? []
+  ))).toEqual([3, 4]);
+  const successDialog = page.getByRole("alertdialog", { name: "全部主题整理成功" });
+  await expect(successDialog).toBeVisible();
+  await page.waitForTimeout(4500);
+  await expect(successDialog).toBeVisible();
+  await successDialog.getByRole("button", { name: "确认", exact: true }).click();
+  await expect(successDialog).toBeHidden();
+
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __aiRunTopicIds?: number[];
+      __aiFailTopicId?: number | null;
+    };
+    if (testWindow.__aiRunTopicIds) testWindow.__aiRunTopicIds.length = 0;
+    testWindow.__aiFailTopicId = 4;
+  });
+  await page.getByRole("button", { name: "AI 整理全部主题", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "AI 正在整理全部主题" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (
+    (window as typeof window & { __aiRunTopicIds?: number[] }).__aiRunTopicIds ?? []
+  ))).toEqual([3, 4]);
+  await expect(page.getByRole("dialog", { name: "AI 正在整理全部主题" })
+    .getByText("请求失败，正在重试（第 1/2 次）", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "AI 正在整理全部主题" })
+    .getByText("HTTP 429：请求过多，请稍后重试", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (
+    (window as typeof window & { __aiRunTopicIds?: number[] }).__aiRunTopicIds ?? []
+  ))).toEqual([3, 4, 4]);
+  const failureDialog = page.getByRole("alertdialog", { name: "部分主题整理失败" });
+  await expect(failureDialog).toBeVisible();
+  await expect(failureDialog.getByText("云服务", { exact: true })).toBeVisible();
+  await expect(failureDialog.getByText("HTTP 429：请求过多，请稍后重试", { exact: true })).toBeVisible();
+  await page.waitForTimeout(4500);
+  await expect(failureDialog).toBeVisible();
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "ai-batch-failure-result-v100-1702x1066.png"),
+    fullPage: false,
+  });
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __aiRunTopicIds?: number[];
+      __aiFailTopicId?: number | null;
+    };
+    if (testWindow.__aiRunTopicIds) testWindow.__aiRunTopicIds.length = 0;
+    testWindow.__aiFailTopicId = null;
+  });
+  await failureDialog.getByRole("button", { name: "重试失败主题", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (
+    (window as typeof window & { __aiRunTopicIds?: number[] }).__aiRunTopicIds ?? []
+  ))).toEqual([4]);
+  const retrySuccessDialog = page.getByRole("alertdialog", { name: "全部主题整理成功" });
+  await expect(retrySuccessDialog).toBeVisible();
+  await retrySuccessDialog.getByRole("button", { name: "确认", exact: true }).click();
 
   await page.getByRole("button", { name: /全部笔记/ }).click();
   await expect(page.locator(".knowledge-detail-heading").getByRole(

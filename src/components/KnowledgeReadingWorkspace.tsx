@@ -53,6 +53,8 @@ import {
 } from "../knowledge/knowledgeSynthesis";
 import MarkdownContent from "./MarkdownContent";
 import type { AiTopicInsight } from "../services/aiRepository";
+import { splitAiSummaryMarkdown } from "../aiInsightPresentation";
+import type { AiTopicBatchProgress, AiTopicBatchResult } from "../aiTopicBatch";
 
 export type ReadingMode = "hypotheses" | "evolution" | "sources" | "decisions";
 
@@ -97,7 +99,12 @@ type KnowledgeReadingWorkspaceProps = {
   navigationTarget: KnowledgeReadingTarget | null;
   aiInsight: AiTopicInsight | null;
   aiRunning: boolean;
+  aiBatchProgress: AiTopicBatchProgress | null;
+  aiBatchResult: AiTopicBatchResult | null;
   onRunAiInsight: () => void;
+  onRunAllAiInsights: () => void;
+  onRetryFailedAiInsights: () => void;
+  onCloseAiBatchResult: () => void;
 };
 
 function formatDate(value: string | null | undefined): string {
@@ -639,7 +646,12 @@ export function KnowledgeReadingWorkspace({
   navigationTarget,
   aiInsight,
   aiRunning,
+  aiBatchProgress,
+  aiBatchResult,
   onRunAiInsight,
+  onRunAllAiInsights,
+  onRetryFailedAiInsights,
+  onCloseAiBatchResult,
 }: KnowledgeReadingWorkspaceProps) {
   const [mode, setMode] = useState<ReadingMode>("hypotheses");
   const [search, setSearch] = useState("");
@@ -657,6 +669,8 @@ export function KnowledgeReadingWorkspace({
   const readerRef = useRef<HTMLElement>(null);
   const readerScrollRef = useRef<HTMLDivElement>(null);
   const overviewDialogCloseRef = useRef<HTMLButtonElement>(null);
+  const aiBatchConfirmRef = useRef<HTMLButtonElement>(null);
+  const aiBatchCurrentRef = useRef<HTMLLIElement>(null);
   const overviewDialogReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const scrollPositions = useRef<Record<ReadingMode, number>>({
     hypotheses: 0,
@@ -734,6 +748,29 @@ export function KnowledgeReadingWorkspace({
     overviewDialogReturnFocusRef.current?.focus();
     overviewDialogReturnFocusRef.current = null;
   }, [overviewDialog]);
+
+  useEffect(() => {
+    if (!aiBatchResult) return undefined;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    aiBatchConfirmRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [aiBatchResult]);
+
+  useEffect(() => {
+    if (!aiBatchProgress) return undefined;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [aiBatchProgress]);
+
+  useEffect(() => {
+    aiBatchCurrentRef.current?.scrollIntoView({ block: "nearest" });
+  }, [aiBatchProgress?.topicId, aiBatchProgress?.items]);
 
   const switchMode = (nextMode: ReadingMode) => {
     if (nextMode === mode) return;
@@ -818,6 +855,10 @@ export function KnowledgeReadingWorkspace({
   const overview = useMemo(
     () => displayDetail && synthesis ? buildKnowledgeOverview(displayDetail, synthesis) : null,
     [displayDetail, synthesis],
+  );
+  const aiSummary = useMemo(
+    () => splitAiSummaryMarkdown(aiInsight?.payload.summaryMarkdown ?? ""),
+    [aiInsight?.payload.summaryMarkdown],
   );
   const readingModel = useMemo(() => {
     const automaticJudgmentsFromContent = [...(synthesis?.judgments ?? [])]
@@ -1031,11 +1072,28 @@ export function KnowledgeReadingWorkspace({
                 {topicDetail.topic.description ? <p>{topicDetail.topic.description}</p> : null}
               </div>
               <div className="knowledge-final-heading-actions">
-                <button type="button" disabled={aiRunning} onClick={onRunAiInsight}>
+                <button type="button" disabled={aiRunning || Boolean(aiBatchProgress)} onClick={onRunAiInsight}>
                   <Sparkles size={15} />{aiRunning ? "AI 整理中…" : aiInsight ? "AI 重新整理" : "用 AI 整理"}
+                </button>
+                <button
+                  type="button"
+                  disabled={aiRunning || Boolean(aiBatchProgress) || topics.every((topic) => topic.status === "merged")}
+                  onClick={onRunAllAiInsights}
+                >
+                  <ListTodo size={15} />
+                  {aiBatchProgress
+                    ? `全部整理中 ${aiBatchProgress.current}/${aiBatchProgress.total}`
+                    : "AI 整理全部主题"}
                 </button>
               </div>
             </header>
+
+            <div
+              className="knowledge-final-scroll"
+              onScroll={(event) => setReaderHasScrolled(event.currentTarget.scrollTop > 4)}
+              ref={readerScrollRef}
+              data-hover-wheel-scroll=""
+            >
 
             {aiInsight ? (
               <section className="knowledge-ai-insight" aria-label="AI 主题洞察">
@@ -1045,19 +1103,22 @@ export function KnowledgeReadingWorkspace({
                   <small>{aiInsight.modelId}</small>
                   <time>{formatDate(aiInsight.generatedAt)}</time>
                 </header>
-                <MarkdownContent value={aiInsight.payload.summaryMarkdown} />
+                <MarkdownContent value={aiSummary.overviewMarkdown} />
                 {aiInsight.payload.keyInsights.length ? (
-                  <div className="knowledge-ai-insight-grid">
-                    {aiInsight.payload.keyInsights.slice(0, 4).map((item) => (
-                      <article key={`${item.title}-${item.detail}`}>
-                        <strong>{item.title}</strong>
-                        <p>{item.detail}</p>
-                      </article>
-                    ))}
-                  </div>
+                  <details className="knowledge-ai-insight-details">
+                    <summary>关键洞察 {aiInsight.payload.keyInsights.length} 条</summary>
+                    <div className="knowledge-ai-insight-grid">
+                      {aiInsight.payload.keyInsights.slice(0, 3).map((item) => (
+                        <article key={`${item.title}-${item.detail}`}>
+                          <strong>{item.title}</strong>
+                          <p>{item.detail}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
                 ) : null}
                 {aiInsight.payload.topicManagementSuggestions.length ? (
-                  <details>
+                  <details className="knowledge-ai-insight-details">
                     <summary>主题管理建议 {aiInsight.payload.topicManagementSuggestions.length} 条</summary>
                     <ul>
                       {aiInsight.payload.topicManagementSuggestions.map((item) => (
@@ -1068,11 +1129,26 @@ export function KnowledgeReadingWorkspace({
                     </ul>
                   </details>
                 ) : null}
+                {aiSummary.boundaryMarkdown ? (
+                  <details className="knowledge-ai-insight-details knowledge-ai-boundary-details">
+                    <summary>
+                      来源范围{aiSummary.sourceCount ? ` ${aiSummary.sourceCount} 条` : ""}
+                    </summary>
+                    <div className="knowledge-ai-boundary-content">
+                      <MarkdownContent value={aiSummary.boundaryMarkdown} />
+                    </div>
+                  </details>
+                ) : null}
               </section>
             ) : null}
 
             {overview ? (
-              <section className="knowledge-overview" aria-label="自动知识摘要">
+              <details className="knowledge-local-overview" open={!aiInsight}>
+                <summary hidden={!aiInsight}>
+                  <strong>本地分析</strong>
+                  <span>离线规则结果，可展开核对</span>
+                </summary>
+                <section className="knowledge-overview" aria-label="自动知识摘要">
                 <article className="knowledge-overview-judgment" data-card-interaction="surface-lift">
                   <header>
                     <span><Sparkles size={16} /></span>
@@ -1149,7 +1225,8 @@ export function KnowledgeReadingWorkspace({
                     }, trigger)}
                   />
                 </div>
-              </section>
+                </section>
+              </details>
             ) : null}
 
             <nav
@@ -1191,12 +1268,7 @@ export function KnowledgeReadingWorkspace({
               </button>
             </nav>
 
-            <div
-              className="knowledge-final-scroll"
-              onScroll={(event) => setReaderHasScrolled(event.currentTarget.scrollTop > 4)}
-              ref={readerScrollRef}
-              data-hover-wheel-scroll=""
-            >
+            <div className="knowledge-final-mode-content">
               {mode === "hypotheses" ? (
                 <div className="knowledge-final-content-grid">
                   <main>
@@ -1410,6 +1482,7 @@ export function KnowledgeReadingWorkspace({
               )}
 
             </div>
+            </div>
           </>
         ) : (
           <div className="knowledge-final-no-topic">
@@ -1465,6 +1538,127 @@ export function KnowledgeReadingWorkspace({
           </div>
         );
       })(), document.body) : null}
+      {aiBatchProgress ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-batch-progress-backdrop">
+          <section
+            aria-labelledby="ai-batch-progress-title"
+            aria-modal="true"
+            className="knowledge-overview-dialog ai-batch-progress-dialog"
+            role="dialog"
+          >
+            <header>
+              <span><Sparkles size={18} /></span>
+              <h2 id="ai-batch-progress-title">AI 正在整理全部主题</h2>
+              <em>{aiBatchProgress.completed}/{aiBatchProgress.total}</em>
+            </header>
+            <div className="ai-batch-progress-body" aria-live="polite">
+              <div className="ai-batch-progress-summary">
+                <div>
+                  <strong>正在处理 {aiBatchProgress.current}/{aiBatchProgress.total}</strong>
+                  <span>{aiBatchProgress.topicName}</span>
+                </div>
+                <small>成功 {aiBatchProgress.succeeded} · 失败 {aiBatchProgress.failed}</small>
+                <progress max={Math.max(aiBatchProgress.total, 1)} value={aiBatchProgress.completed} />
+              </div>
+              <ol className="knowledge-overview-dialog-list ai-batch-progress-list">
+                {aiBatchProgress.items.map((item, index) => {
+                  const active = item.id === aiBatchProgress.topicId
+                    && (item.status === "running" || item.status === "retrying");
+                  return (
+                    <li
+                      aria-current={active ? "step" : undefined}
+                      className={item.status}
+                      key={item.id}
+                      ref={active ? aiBatchCurrentRef : undefined}
+                    >
+                      <span>{String(index + 1).padStart(2, "0")}</span>
+                      <div>
+                        <strong>{item.name}</strong>
+                        <p>
+                          {item.status === "pending" ? "等待整理" : null}
+                          {item.status === "running" ? `正在请求（第 ${item.attempt}/${item.maxAttempts} 次）` : null}
+                          {item.status === "retrying" ? `请求失败，正在重试（第 ${item.attempt}/${item.maxAttempts} 次）` : null}
+                          {item.status === "succeeded" ? "整理成功" : null}
+                          {item.status === "failed" ? "整理失败" : null}
+                        </p>
+                        {item.error ? <small title={item.error}>{item.error}</small> : null}
+                      </div>
+                      <i aria-hidden="true">
+                        {item.status === "succeeded" ? <ShieldCheck size={16} /> : null}
+                        {item.status === "failed" ? <CircleAlert size={16} /> : null}
+                        {item.status === "pending" ? <CircleDot size={16} /> : null}
+                        {item.status === "running" || item.status === "retrying"
+                          ? <span className="save-spinner" />
+                          : null}
+                      </i>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+            <footer className="ai-batch-progress-footer">
+              <span>整理过程中请保持软件开启；瞬时网络错误会自动重试一次。</span>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+      {aiBatchResult ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-batch-result-backdrop">
+          <section
+            aria-labelledby="ai-batch-result-title"
+            aria-modal="true"
+            className={`knowledge-overview-dialog ai-batch-result-dialog ${aiBatchResult.failed ? "failed" : "success"}`}
+            role="alertdialog"
+          >
+            <header>
+              <span>{aiBatchResult.failed ? <CircleAlert size={18} /> : <ShieldCheck size={18} />}</span>
+              <h2 id="ai-batch-result-title">
+                {aiBatchResult.failed ? "部分主题整理失败" : "全部主题整理成功"}
+              </h2>
+              <em>{aiBatchResult.failed ? `${aiBatchResult.failed} 失败` : `${aiBatchResult.succeeded} 成功`}</em>
+            </header>
+            <div className="ai-batch-result-body">
+              <p className="ai-batch-result-summary">
+                本次处理 {aiBatchResult.total} 个主题：成功 {aiBatchResult.succeeded} 个，失败 {aiBatchResult.failed} 个
+                {aiBatchResult.skipped ? `，跳过已合并主题 ${aiBatchResult.skipped} 个` : ""}。
+              </p>
+              {aiBatchResult.failedTopics.length ? (
+                <ol className="knowledge-overview-dialog-list ai-batch-failure-list">
+                  {aiBatchResult.failedTopics.map((topic, index) => (
+                    <li key={topic.id}>
+                      <span>{String(index + 1).padStart(2, "0")}</span>
+                      <div>
+                        <strong>{topic.name}</strong>
+                        <p>{topic.error}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <div className="ai-batch-success-state">
+                  <ShieldCheck size={22} />
+                  <p>所有可整理主题均已生成 AI 主题洞察。</p>
+                </div>
+              )}
+            </div>
+            <footer>
+              {aiBatchResult.failedTopics.length ? (
+                <button type="button" onClick={onRetryFailedAiInsights}>重试失败主题</button>
+              ) : null}
+              <button
+                className="primary"
+                onClick={onCloseAiBatchResult}
+                ref={aiBatchConfirmRef}
+                type="button"
+              >
+                确认
+              </button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
     </section>
   );
 }

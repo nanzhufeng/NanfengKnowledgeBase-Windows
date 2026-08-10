@@ -79,6 +79,11 @@ import {
 } from "../services/knowledgeWorkspaceData";
 import { classifySourceAsync } from "../services/classificationWorker";
 import { AiRepository, type AiTopicInsight } from "../services/aiRepository";
+import {
+  runAiTopicBatch,
+  type AiTopicBatchProgress,
+  type AiTopicBatchResult,
+} from "../aiTopicBatch";
 import MarkdownContent, { ReadableMessageContent } from "./MarkdownContent";
 import { AttachmentTimelineMediaCard } from "./AttachmentTimelineMediaCard";
 import { SourceAttachmentAsset } from "./SourceAttachmentAsset";
@@ -790,10 +795,14 @@ function KnowledgeWorkspaceView({
   const [editTopicDescription, setEditTopicDescription] = useState("");
   const [autoSuggestingSourceId, setAutoSuggestingSourceId] = useState<number | null>(null);
   const [browserTopicId, setBrowserTopicId] = useState<number | null>(null);
+  const browserTopicIdRef = useRef<number | null>(browserTopicId);
+  browserTopicIdRef.current = browserTopicId;
   const [topicDetail, setTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [relatedTopicDetails, setRelatedTopicDetails] = useState<KnowledgeTopicDetail[]>([]);
   const [aiInsight, setAiInsight] = useState<AiTopicInsight | null>(null);
   const [aiRunning, setAiRunning] = useState(false);
+  const [aiBatchProgress, setAiBatchProgress] = useState<AiTopicBatchProgress | null>(null);
+  const [aiBatchResult, setAiBatchResult] = useState<AiTopicBatchResult | null>(null);
   const [sourceTopicDetail, setSourceTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [topicMaintenanceOpen, setTopicMaintenanceOpen] = useState(false);
   const [topicStructureEditorOpen, setTopicStructureEditorOpen] = useState(false);
@@ -2004,7 +2013,7 @@ function KnowledgeWorkspaceView({
   }, [aiRepository, browserTopicId, mode, onNotify]);
 
   const runAiInsight = async () => {
-    if (!browserTopicId || aiRunning) return;
+    if (!browserTopicId || aiRunning || aiBatchProgress) return;
     setAiRunning(true);
     try {
       const insight = await aiRepository.runTopicInsight(browserTopicId);
@@ -2015,6 +2024,59 @@ function KnowledgeWorkspaceView({
     } finally {
       setAiRunning(false);
     }
+  };
+
+  const executeAiTopicBatch = async (batchTopics: KnowledgeTopicRow[]) => {
+    if (aiRunning || aiBatchProgress) return;
+    const candidates = batchTopics.filter((topic) => topic.status !== "merged");
+    if (!candidates.length) {
+      onNotify("当前没有可整理的主题");
+      return;
+    }
+
+    setAiBatchResult(null);
+    try {
+      const result = await runAiTopicBatch(
+        batchTopics,
+        async (topic) => {
+          const insight = await aiRepository.runTopicInsight(topic.id);
+          if (browserTopicIdRef.current === topic.id) setAiInsight(insight);
+        },
+        setAiBatchProgress,
+        {
+          maxAttempts: 2,
+          retryDelayMs: 1_500,
+          betweenTopicsDelayMs: 650,
+        },
+      );
+      setAiBatchResult(result);
+    } catch (error) {
+      setAiBatchResult({
+        total: candidates.length,
+        succeeded: 0,
+        failed: candidates.length,
+        skipped: batchTopics.length - candidates.length,
+        failedTopics: candidates.map((topic) => ({
+          id: topic.id,
+          name: topic.name,
+          error: error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : "批量整理流程异常中断",
+        })),
+      });
+    } finally {
+      setAiBatchProgress(null);
+    }
+  };
+
+  const runAllAiInsights = async () => {
+    await executeAiTopicBatch(topics);
+  };
+
+  const retryFailedAiInsights = async () => {
+    if (!aiBatchResult?.failedTopics.length) return;
+    const failedTopicIds = new Set(aiBatchResult.failedTopics.map((topic) => topic.id));
+    await executeAiTopicBatch(topics.filter((topic) => failedTopicIds.has(topic.id)));
   };
 
   useEffect(() => {
@@ -2735,7 +2797,12 @@ function KnowledgeWorkspaceView({
           navigationTarget={knowledgeNavigationTarget}
           aiInsight={aiInsight}
           aiRunning={aiRunning}
+          aiBatchProgress={aiBatchProgress}
+          aiBatchResult={aiBatchResult}
           onRunAiInsight={() => void runAiInsight()}
+          onRunAllAiInsights={() => void runAllAiInsights()}
+          onRetryFailedAiInsights={() => void retryFailedAiInsights()}
+          onCloseAiBatchResult={() => setAiBatchResult(null)}
           onSelectTopic={(topicId) => {
             setBrowserTopicId(topicId);
             resetNoteEditor();

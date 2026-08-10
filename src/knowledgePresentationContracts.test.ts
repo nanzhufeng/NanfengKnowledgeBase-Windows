@@ -73,6 +73,49 @@ describe("全局反馈与知识阅读层级合同", () => {
     );
   });
 
+  it("AI洞察、本地分析和深读内容共用右侧唯一纵向滚动区", () => {
+    const scrollStart = reader.indexOf('className="knowledge-final-scroll"');
+    const aiInsight = reader.indexOf('aria-label="AI 主题洞察"');
+    const localOverview = reader.indexOf('className="knowledge-local-overview"');
+    const tabs = reader.indexOf('className="knowledge-final-tabs"');
+    const modeContent = reader.indexOf('className="knowledge-final-mode-content"');
+
+    expect(scrollStart).toBeGreaterThan(-1);
+    expect(aiInsight).toBeGreaterThan(scrollStart);
+    expect(localOverview).toBeGreaterThan(aiInsight);
+    expect(tabs).toBeGreaterThan(localOverview);
+    expect(modeContent).toBeGreaterThan(tabs);
+    expect(reader).toContain('className="knowledge-local-overview" open={!aiInsight}');
+    expect(reader).toContain("离线规则结果，可展开核对");
+    expect(reader).toContain('className="knowledge-ai-insight-details"');
+    expect(reader).toContain('className="knowledge-ai-insight-details knowledge-ai-boundary-details"');
+    expect(reader).toContain("splitAiSummaryMarkdown");
+    expect(reader).toContain("来源范围{aiSummary.sourceCount");
+    expect(styles).toMatch(/\.knowledge-ai-boundary-details\s*\{[\s\S]*?font-size:\s*11px;/);
+    expect(styles).toMatch(
+      /\.knowledge-final-scroll\s*\{[\s\S]*?overflow-y:\s*auto;/,
+    );
+    expect(styles).toMatch(
+      /\.knowledge-final-tabs\s*\{[\s\S]*?position:\s*sticky;[\s\S]*?top:\s*0;/,
+    );
+    expect(reader).toContain("AI 整理全部主题");
+    expect(reader).toContain("全部整理中 ${aiBatchProgress.current}/${aiBatchProgress.total}");
+    expect(workspace).toContain("runAiTopicBatch");
+    expect(workspace).toContain("setAiBatchResult(result)");
+    expect(reader).toContain('role="alertdialog"');
+    expect(reader).toContain("部分主题整理失败");
+    expect(reader).toContain("全部主题整理成功");
+    expect(reader).toContain("topic.error");
+    expect(reader).toContain("重试失败主题");
+    expect(reader).toContain("onCloseAiBatchResult");
+    expect(reader).toContain("AI 正在整理全部主题");
+    expect(reader).toContain("aiBatchProgress.items.map");
+    expect(reader).toContain("请求失败，正在重试");
+    expect(reader).toContain("整理过程中请保持软件开启");
+    expect(styles).toMatch(/\.ai-batch-failure-list\s*\{[\s\S]*?padding-top:\s*6px;/);
+    expect(styles).toMatch(/\.ai-batch-progress-dialog\s*\{[\s\S]*?width:\s*min\(760px/);
+  });
+
   it("四张知识摘要卡统一通过弹窗完整阅读且保留后续深读入口", () => {
     expect(reader).toContain('type KnowledgeOverviewDialogState = {');
     expect(reader).toContain('className="knowledge-overview-dialog-backdrop"');

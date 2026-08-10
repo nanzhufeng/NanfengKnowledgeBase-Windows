@@ -42,6 +42,11 @@
 - 批量导入导出页返回动作统一称为`返回上一级`，并直接回到已打开的`设置 → 数据与存储`弹窗，不得只回设置首页。数据与存储弹窗在1702×1066标准视口默认约1040×760，使用独立尺寸身份并支持右下角人工调节；数据交换为较小的次级操作区，备份创建/恢复在独立大区内成对排列，备份范围使用单行说明，高级维护继续默认折叠。问题参考为`data-exchange-return-parent-reference.png`（SHA-256=`16427445A2AA7B7E7917EA8CD6C40B204EC539B88B1A7248644FF8DAEEF4A1B5`）与`settings-data-storage-small-crowded-reference.png`（SHA-256=`539216D0D3394DD4A3420E64A51EE0BCFE4278B571B1D1F9BF6EC26D34BB23A9`）；它们锁定B页面功能布局和C交互问题，不锁定旧尺寸、拥挤排版或示例容量数据。
 - 2026-08-01后续反馈替代上一条中“数据交换较小、备份区较大、备份范围单行说明”的局部布局：`数据交换 / 备份与恢复`固定为等宽等高双卡，每张卡只保留一个标题、一句提示和贴底操作区；不得再显示`批量导入与导出 / 完整备份适合换机与灾难恢复 / 备份范围`等重复说明。存储统计由App唯一刷新入口持有，窗口重新获得焦点时自动扫描，主界面容量区与设置概览共用刷新图标并同步结果；外部删除文件后不得继续依赖启动时旧缓存。
 - 2026-08-10设置页主卡片统一使用同一900px内容列和左右起点；外观与皮肤、当前程序、AI自动整理、数据与存储、快捷键不得各自扩展成不同宽度。已保存API Key持续显示掩码，切换通道后仍保持；输入框右侧提供显示/隐藏按钮，只有用户明确点击显示时读取该通道凭据。保存成功与模型目录更新失败必须分开表达，不能把更新失败误报为保存失败。
+- 2026-08-10主题洞察加入AI后，右侧只保留一条纵向滚动链路：AI总览、本地分析、状态标签与四个深读正文必须都能连续滚动到底，不能把AI和本地摘要同时固定在正文上方挤占阅读高度。AI结果存在时，AI总览为首要摘要；本地确定性摘要默认收起为`本地分析`供离线和来源核对，四个深读状态、正式对象与来源证据继续保留。AI关键洞察与主题管理建议默认按需展开，后续模型输出总览保持3–5句且不重复其他结构化字段。该规则只替代AI加入后形成的重复展开与滚动分叉，不替代三入口、四状态、正式数据和四套皮肤合同。
+- 2026-08-10 AI总览的信息层级进一步收口：`来源边界 / 证据边界`是追溯元信息，不是主题结论，不得在总览正文中逐条铺开来源ID和标题。现有结果中的边界区由唯一展示策略自动分离，放在AI卡片所有主题内容之后，默认只显示一行`来源范围 N 条`；用户主动展开时才显示完整清单。新模型提示禁止在`summaryMarkdown`中输出边界清单，来源回溯继续由结构化来源ID字段持有。该规则锁定B/C，不改变来源数据、AI结果持久化、右侧唯一滚动、卡片材质和四套皮肤。
+- 2026-08-10 主题洞察标题动作区同时保留当前主题的`用 AI 整理 / AI 重新整理`和全局`AI 整理全部主题`。全局动作一次点击后按主题顺序串行调用同一单主题任务入口，按钮原位显示`当前/总数`进度；单项失败继续后续主题。每个主题仍生成独立Token/费用任务记录；已合并主题不重复整理。不得增加模型批量设置、二次确认流程或并发轰炸请求，也不得让批量结果覆盖人工对象。
+- 2026-08-10 批量整理结果必须由用户确认后关闭，不使用自动消失提示、遮罩点击或Escape键静默关闭。只有全部可整理主题均成功时才显示`全部主题整理成功`；任一失败必须显示`部分主题整理失败`，逐项列出失败主题名称和后端返回的真实错误，并提供`重试失败主题`，重试不得再次请求已成功主题。
+- 2026-08-10 点击`AI 整理全部主题`后必须立即打开过程弹窗，逐项展示全部主题的`等待整理 / 正在请求 / 正在重试 / 整理成功 / 整理失败`状态、当前主题、总进度和成功/失败计数；不能只改变按钮文字。过程弹窗在任务结束前不自动关闭，并自动保持当前项可见。批量请求保持串行，主题之间留出短间隔；超时、连接中断、响应解析失败和空总结只自动重试一次，401/403等明确配置错误不得盲目重试。
 
 ## 1. 确认对象分类
 
@@ -63,6 +68,12 @@
 | NF-CORE-KNOWLEDGE-HYP-01 | `screenshots/final-core-workspace/knowledge-view-competing-hypotheses.png` | `DD4232FB80D8261B62241ECB46C1D423FA11C2CC1C57696E0D08B949BC77F04E` | 主题洞察默认“竞争假设”状态；文件名保留历史旧称 |
 | NF-CORE-KNOWLEDGE-EVO-01 | `screenshots/final-core-workspace/knowledge-view-judgment-evolution.png` | `906B6F6AACEB2668B3F6B87690AFEC31078E399CB09ED9824BBCB8379771E594` | 主题洞察“判断演变”状态；文件名保留历史旧称 |
 | NF-CORE-KNOWLEDGE-OVERVIEW-02 | `screenshots/final-core-workspace/knowledge-auto-overview-above-fold-reference.png` | `2866E3D809995724C3B5C464E95783CB23E1E4F348936D6C51DA190D7AB555D1` | A/B/C/F：正式对象为空时仍自动生成当前判断、事实与线索、关键证据、待验证问题和建议下一步；首屏改为紧凑摘要，不照搬参考图的大卡高度，不锁定示例内容或编辑按钮 |
+| NF-AI-INSIGHT-SCROLL-23 | `screenshots/final-core-workspace/ai-insight-scroll-overflow-reference-20260810.png` | `DD5AB422C63F5D48720586818EC13FB2C9BAB58610DD3DA8511099E408EF9B90` | B/C/F失败证据：AI总览与本地摘要同时占据固定区，导致四状态正文只露出一小截且无法连续查看。锁定右侧唯一纵向滚动、AI优先和本地分析默认折叠；不锁定截图中的具体AI文案、模型、主题或旧滚动位置 |
+| NF-AI-BOUNDARY-LEVEL-24A | `screenshots/final-core-workspace/ai-evidence-boundary-overweight-4-sources-reference-20260810.png` | `E35F834C86B3562BD92772CA73DC5AB32A9453BA7F3FFB9DD5007C62747F4F49` | B/C/F失败证据：即使只有4条来源，来源ID与标题逐条铺开也会把追溯元信息提升为主内容；不锁定截图主题、文案或皮肤 |
+| NF-AI-BOUNDARY-LEVEL-24B | `screenshots/final-core-workspace/ai-evidence-boundary-overweight-20-sources-reference-20260810.png` | `71073DAE3033EDA8031EBB01AD06722C995348722F50B20C28053E50E707C549` | B/C/F失败证据：20条来源清单形成大面积正文，明显挤压主题判断。锁定默认折叠、最低内容位置与`来源范围 N 条`紧凑入口；完整清单仍可主动展开，不删除追溯能力 |
+| NF-AI-ALL-TOPICS-25 | `screenshots/qa/ai-organize-all-topics-v99-1702x1066.png` | `13C86CF7083287E019C51102869D5931A90533743DCE0E70007EF26B4F7A6179` | B/C/F当前源码证据：主题标题区同时保留单主题重新整理和一键全部主题整理；锁定动作位置、简短命名与现有页面层级，不锁定示例主题、模型或数量 |
+| NF-AI-BATCH-RESULT-26 | `screenshots/qa/ai-batch-failure-result-v100-1702x1066.png` | `9E2DD29FA2CD32E305AEEA75C3F4E3DE6A152973918DCFDAB63D14F64862B9B9` | B/C/F当前源码证据：批量失败结果固定显示失败主题、真实错误和仅重试失败主题动作，必须由用户确认或主动重试后离开；不锁定示例主题名或HTTP错误内容 |
+| NF-AI-BATCH-PROGRESS-27 | `screenshots/qa/ai-batch-live-progress-v101-1702x1066.png` | `EDDB75E1FB692BD2BBC3C09F04DEF1330D2717D9EF1C31A2CF63E553593B9526` | B/C/F当前源码证据：点击后立即显示持久过程弹窗、当前主题、完整队列、逐项状态与成功/失败统计；锁定过程反馈职责，不锁定示例主题或数量 |
 | NF-KNOWLEDGE-DIRECT-HYP-03A | `screenshots/final-core-workspace/knowledge-four-mode-redundant-hypothesis-heading-reference.png` | `CBACF895B5370B0C3F5D217E217F52BB36066883165F2B5EA76102C69E13767F` | B/F失败证据：`竞争假设`Tab下不得再重复“命题选择 / 从笔记正文提炼的竞争解释”说明条，直接进入假设卡 |
 | NF-KNOWLEDGE-DIRECT-EVO-03B | `screenshots/final-core-workspace/knowledge-four-mode-redundant-evolution-heading-reference.png` | `56AC782C86B9E890A4FB861EF331086BE95B027AFBC5BF530847086E44CFC55A` | B/F失败证据：`判断演变`不保留编号步骤卡或“支撑材料”方法说明，直接进入跨时期事件与版本差异 |
 | NF-KNOWLEDGE-DIRECT-SRC-03C | `screenshots/final-core-workspace/knowledge-four-mode-redundant-sources-heading-reference.png` | `5CC418617CAF2DFF69BBE5CC3B15B0716992325C3F00028B0DBD407856FD0350` | B/F失败证据：`笔记与来源`不重复状态标题、阅读方法和“阅读主体”步骤卡，直接进入笔记索引、正文和来源三栏 |
