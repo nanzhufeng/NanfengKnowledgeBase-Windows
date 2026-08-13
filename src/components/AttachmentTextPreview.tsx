@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useState } from "react";
 import type { AttachmentItem } from "../domain/models";
+import { LOADING_LABEL } from "../ui/loadingLabel";
 import MarkdownContent from "./MarkdownContent";
 
 export function isMarkdownAttachment(fileName: string): boolean {
@@ -36,7 +37,7 @@ export function AttachmentTextPreview({
   return (
     <div className={`attachment-text-reader ${embedded ? "is-embedded" : "is-dialog"}`}>
       {error ? <p className="attachment-text-state is-error">{error}</p> : null}
-      {!error && content === null ? <p className="attachment-text-state">正在读取文档…</p> : null}
+      {!error && content === null ? <p className="attachment-text-state">{LOADING_LABEL}</p> : null}
       {!error && content !== null && markdown ? <MarkdownContent value={content} /> : null}
       {!error && content !== null && !markdown ? <pre>{content}</pre> : null}
     </div>

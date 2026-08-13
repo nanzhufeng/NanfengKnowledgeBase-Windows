@@ -12,10 +12,8 @@ function createRepository() {
     listSourceCollections: vi.fn().mockResolvedValue([{ id: 2 }]),
     listDomains: vi.fn().mockResolvedValue([{ id: 3 }]),
     listTopics: vi.fn().mockResolvedValue([{ id: 4 }]),
-    getPersonalCatalogProposal: vi.fn().mockResolvedValue({ version: "v1" }),
     listTopicAliases: vi.fn().mockResolvedValue([{ id: 5 }]),
     listEntities: vi.fn().mockResolvedValue([{ id: 6 }]),
-    listClassificationRules: vi.fn().mockResolvedValue([{ id: 7 }]),
   };
 }
 
@@ -30,10 +28,8 @@ describe("knowledge workspace entry data ownership", () => {
     expect(repository.listSourceArchive).toHaveBeenCalledWith(120);
     expect(repository.listDomains).not.toHaveBeenCalled();
     expect(repository.listTopics).not.toHaveBeenCalled();
-    expect(repository.getPersonalCatalogProposal).not.toHaveBeenCalled();
     expect(repository.listTopicAliases).not.toHaveBeenCalled();
     expect(repository.listEntities).not.toHaveBeenCalled();
-    expect(repository.listClassificationRules).not.toHaveBeenCalled();
   });
 
   it("loads source filters separately from the first paint", async () => {
@@ -44,7 +40,6 @@ describe("knowledge workspace entry data ownership", () => {
     expect(repository.listDomains).toHaveBeenCalledTimes(1);
     expect(repository.listTopics).toHaveBeenCalledTimes(1);
     expect(repository.listSourceCollections).toHaveBeenCalledTimes(1);
-    expect(repository.getPersonalCatalogProposal).not.toHaveBeenCalled();
   });
 
   it("keeps knowledge reading light and topic maintenance complete", async () => {
@@ -56,9 +51,7 @@ describe("knowledge workspace entry data ownership", () => {
 
     const maintenanceRepository = createRepository();
     await loadTopicMaintenanceData(maintenanceRepository as never);
-    expect(maintenanceRepository.getPersonalCatalogProposal).toHaveBeenCalledTimes(1);
     expect(maintenanceRepository.listTopicAliases).toHaveBeenCalledTimes(1);
     expect(maintenanceRepository.listEntities).toHaveBeenCalledTimes(1);
-    expect(maintenanceRepository.listClassificationRules).toHaveBeenCalledTimes(1);
   });
 });

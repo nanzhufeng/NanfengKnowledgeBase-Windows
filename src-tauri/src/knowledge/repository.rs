@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::collections::HashSet;
+#[cfg(test)]
 use std::path::Path;
 
 use chrono::Utc;
@@ -8,7 +11,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::knowledge::{personal_catalog, readable_text, source_identity};
+#[cfg(test)]
+use crate::knowledge::personal_catalog;
+use crate::knowledge::{readable_text, source_identity};
 
 const TOPIC_CONTEXT_MAX_CHARS: usize = 72_000;
 const TOPIC_CONTEXT_MAX_SOURCE_BODIES: usize = 20;
@@ -107,6 +112,7 @@ pub struct KnowledgeTopicRow {
     pub source_count: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeClassificationSuggestionRow {
@@ -123,6 +129,7 @@ pub struct KnowledgeClassificationSuggestionRow {
     pub created_at: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationSourceContext {
@@ -140,6 +147,7 @@ pub struct ClassificationSourceContext {
     pub batch_id: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationTopicContext {
@@ -155,6 +163,7 @@ pub struct ClassificationTopicContext {
     pub updated_at: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationRuleContext {
@@ -170,6 +179,7 @@ pub struct ClassificationRuleContext {
     pub enabled: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationHistoryContext {
@@ -178,6 +188,7 @@ pub struct ClassificationHistoryContext {
     pub batch_topic_ids: HashMap<String, Vec<String>>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationSearchSignal {
@@ -186,6 +197,7 @@ pub struct ClassificationSearchSignal {
     pub reason: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeClassificationContext {
@@ -196,12 +208,14 @@ pub struct KnowledgeClassificationContext {
     pub search_signals: Vec<ClassificationSearchSignal>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPersonalCatalogInput {
     pub version: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyPersonalCatalogResult {
@@ -277,6 +291,7 @@ pub struct UpdateEntityDictionaryInput {
     pub description: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassificationRuleRow {
@@ -294,6 +309,7 @@ pub struct ClassificationRuleRow {
     pub updated_at: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateClassificationRuleInput {
@@ -308,6 +324,7 @@ pub struct CreateClassificationRuleInput {
     pub config_json: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateClassificationRuleInput {
@@ -330,6 +347,7 @@ pub struct KnowledgeDeleteResult {
     pub deleted: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeSuggestionInput {
@@ -342,6 +360,7 @@ pub struct KnowledgeSuggestionInput {
     pub signal_scores_json: String,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveKnowledgeSuggestionsInput {
@@ -955,7 +974,8 @@ pub fn backfill_legacy_records(connection: &mut Connection) -> AppResult<usize> 
                ORDER BY first_source.id
                LIMIT 1
              )
-             WHERE NOT EXISTS (
+             WHERE r.is_deleted = 0
+               AND NOT EXISTS (
                SELECT 1 FROM source_items source_item
                WHERE source_item.legacy_record_id = r.id
              )
@@ -1062,7 +1082,7 @@ pub(crate) fn backfill_source_identity_and_collections(
                        ORDER BY origin.id LIMIT 1),
                       source.platform
                     )
-             FROM source_items source
+             FROM visible_source_items source
              WHERE source.source_collection_id IS NULL OR source.identity_sha256 IS NULL
                 OR length(trim(source.title)) = 0
                 OR trim(source.title) = '---'
@@ -1125,7 +1145,7 @@ pub(crate) fn refresh_source_identity(
                        ORDER BY origin.id LIMIT 1),
                       source.platform
                     )
-             FROM source_items source WHERE source.id = ?1",
+             FROM visible_source_items source WHERE source.id = ?1",
             [source_item_id],
             |row| {
                 Ok(SourceIdentityBackfillRow {
@@ -1308,11 +1328,9 @@ pub(crate) fn find_exact_source_match(
                       ) THEN '来源身份相同'
                       ELSE '可见正文相同'
                     END
-             FROM source_items source
+             FROM visible_source_items source
              LEFT JOIN source_collections collection ON collection.id = source.source_collection_id
-             LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
-             WHERE source.status = 'active'
-               AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+             WHERE 1 = 1
                AND (
                  (?1 IS NOT NULL AND collection.canonical_key = ?2 AND (
                    EXISTS(
@@ -1381,13 +1399,13 @@ pub fn list_source_collections(connection: &Connection) -> AppResult<Vec<SourceC
     let mut statement = connection.prepare(
         "SELECT collection.id, collection.canonical_key, collection.display_name,
                 collection.collection_kind, collection.user_renamed,
-                COUNT(DISTINCT CASE WHEN source.status = 'active' THEN source.id END),
+                COUNT(DISTINCT source.id),
                 COUNT(DISTINCT origin.id)
          FROM source_collections collection
-         LEFT JOIN source_items source ON source.source_collection_id = collection.id
+         LEFT JOIN visible_source_items source ON source.source_collection_id = collection.id
          LEFT JOIN source_import_origins origin ON origin.source_item_id = source.id
          GROUP BY collection.id
-         HAVING COUNT(DISTINCT CASE WHEN source.status = 'active' THEN source.id END) > 0
+         HAVING COUNT(DISTINCT source.id) > 0
          ORDER BY collection.display_name COLLATE NOCASE, collection.id",
     )?;
     let rows = statement.query_map([], map_source_collection_row)?;
@@ -1450,7 +1468,7 @@ pub fn rename_source_collection(
              WHERE first_source.record_id = source.legacy_record_id
              ORDER BY first_source.id LIMIT 1
            )
-           FROM source_items source
+           FROM visible_source_items source
            WHERE source.source_collection_id = ?2
              AND source.legacy_record_id IS NOT NULL
          )",
@@ -1468,10 +1486,10 @@ fn get_source_collection(
         .query_row(
             "SELECT collection.id, collection.canonical_key, collection.display_name,
                     collection.collection_kind, collection.user_renamed,
-                    COUNT(DISTINCT CASE WHEN source.status = 'active' THEN source.id END),
+                    COUNT(DISTINCT source.id),
                     COUNT(DISTINCT origin.id)
              FROM source_collections collection
-             LEFT JOIN source_items source ON source.source_collection_id = collection.id
+             LEFT JOIN visible_source_items source ON source.source_collection_id = collection.id
              LEFT JOIN source_import_origins origin ON origin.source_item_id = source.id
              WHERE collection.id = ?1
              GROUP BY collection.id",
@@ -1542,15 +1560,13 @@ pub fn list_inbox(connection: &Connection, limit: usize) -> AppResult<Vec<Knowle
                   ELSE ''
                 END,
                 source.source_collection_id
-         FROM source_items source
+         FROM visible_source_items source
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
          LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
          LEFT JOIN topics topic ON topic.id = source_topic.topic_id
          LEFT JOIN note_sources note_source ON note_source.source_item_id = source.id
-         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
-         WHERE source.organization_state = 'inbox' AND source.status = 'active'
-           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+         WHERE source.organization_state = 'inbox'
            AND length(trim(source.original_text)) > 0
            AND (
              CASE
@@ -1632,15 +1648,13 @@ pub fn list_source_archive(
                   ELSE ''
                 END,
                 source.source_collection_id
-         FROM source_items source
+         FROM visible_source_items source
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
          LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
          LEFT JOIN topics topic ON topic.id = source_topic.topic_id
          LEFT JOIN note_sources note_source ON note_source.source_item_id = source.id
-         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
-         WHERE source.status = 'active'
-           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+         WHERE 1 = 1
            AND length(trim(source.original_text)) > 0
            AND (
              CASE
@@ -1695,10 +1709,8 @@ fn map_source_archive_row(row: &Row<'_>) -> rusqlite::Result<KnowledgeInboxItem>
 pub fn count_source_archive(connection: &Connection) -> AppResult<i64> {
     Ok(connection.query_row(
         "SELECT COUNT(*)
-         FROM source_items source
-         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
-         WHERE source.status = 'active'
-           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+         FROM visible_source_items source
+         WHERE 1 = 1
            AND length(trim(source.original_text)) > 0
            AND (
              CASE
@@ -1766,15 +1778,13 @@ pub fn search_source_archive(
                   ELSE ''
                 END,
                 source.source_collection_id
-         FROM source_items source
+         FROM visible_source_items source
          LEFT JOIN classification_suggestions suggestion
            ON suggestion.source_item_id = source.id AND suggestion.status = 'pending'
          LEFT JOIN source_topics source_topic ON source_topic.source_item_id = source.id
          LEFT JOIN topics topic ON topic.id = source_topic.topic_id
          LEFT JOIN note_sources note_source ON note_source.source_item_id = source.id
-         LEFT JOIN records legacy_record ON legacy_record.id = source.legacy_record_id
-         WHERE source.status = 'active'
-           AND (source.legacy_record_id IS NULL OR COALESCE(legacy_record.is_deleted, 0) = 0)
+         WHERE 1 = 1
            AND length(trim(source.original_text)) > 0
            AND (
              CASE
@@ -1831,7 +1841,7 @@ pub fn update_source_title(
     }
     let legacy_record_id = connection
         .query_row(
-            "SELECT legacy_record_id FROM source_items WHERE id = ?1 AND status = 'active'",
+            "SELECT legacy_record_id FROM visible_source_items WHERE id = ?1",
             [input.source_item_id],
             |row| row.get::<_, Option<i64>>(0),
         )
@@ -1862,8 +1872,8 @@ pub fn get_source_original_text(connection: &Connection, source_item_id: i64) ->
     connection
         .query_row(
             "SELECT original_text
-             FROM source_items
-             WHERE id = ?1 AND status = 'active'",
+             FROM visible_source_items source
+             WHERE source.id = ?1",
             [source_item_id],
             |row| row.get(0),
         )
@@ -1892,9 +1902,14 @@ pub fn list_topics(connection: &Connection) -> AppResult<Vec<KnowledgeTopicRow>>
     let mut statement = connection.prepare(
         "SELECT topic.id, topic.public_id, topic.domain_id, topic.parent_topic_id,
                 topic.name, topic.description, topic.topic_kind, topic.status,
-                topic.depth, topic.sort_order, COUNT(source_topic.source_item_id)
+                topic.depth, topic.sort_order,
+                COUNT(CASE
+                  WHEN source.id IS NOT NULL
+                  THEN source_topic.source_item_id
+                END)
          FROM topics topic
          LEFT JOIN source_topics source_topic ON source_topic.topic_id = topic.id
+         LEFT JOIN visible_source_items source ON source.id = source_topic.source_item_id
          GROUP BY topic.id
          ORDER BY topic.domain_id, topic.depth, topic.sort_order, topic.name",
     )?;
@@ -1916,6 +1931,7 @@ pub fn list_topics(connection: &Connection) -> AppResult<Vec<KnowledgeTopicRow>>
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+#[cfg(test)]
 pub fn prepare_classification_context(
     connection: &Connection,
     source_item_id: i64,
@@ -1932,10 +1948,10 @@ pub fn prepare_classification_context(
         legacy_record_id,
     ) = connection
         .query_row(
-            "SELECT public_id, title, original_text, source_type, platform, local_path,
+            "SELECT source.public_id, source.title, source.original_text, source.source_type, source.platform, source.local_path,
                     metadata_json, imported_at, legacy_record_id
-             FROM source_items
-             WHERE id = ?1 AND status = 'active'",
+             FROM visible_source_items source
+             WHERE source.id = ?1",
             [source_item_id],
             |row| {
                 Ok((
@@ -2079,10 +2095,12 @@ pub fn prepare_classification_context(
     })
 }
 
+#[cfg(test)]
 pub fn get_personal_catalog_proposal() -> personal_catalog::PersonalCatalogProposal {
     personal_catalog::personal_catalog_proposal()
 }
 
+#[cfg(test)]
 pub fn apply_personal_catalog(
     connection: &mut Connection,
     input: &ApplyPersonalCatalogInput,
@@ -2486,17 +2504,7 @@ pub fn delete_entity_dictionary_entry(
     })
 }
 
-pub fn list_classification_rules(connection: &Connection) -> AppResult<Vec<ClassificationRuleRow>> {
-    let mut statement = connection.prepare(
-        "SELECT id, public_id, rule_type, pattern, target_domain_id, target_topic_id,
-                weight, priority, enabled, config_json, created_at, updated_at
-         FROM classification_rules
-         ORDER BY enabled DESC, priority DESC, id",
-    )?;
-    let rows = statement.query_map([], classification_rule_from_row)?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
+#[cfg(test)]
 pub fn create_classification_rule(
     connection: &Connection,
     input: &CreateClassificationRuleInput,
@@ -2533,6 +2541,7 @@ pub fn create_classification_rule(
     get_classification_rule(connection, connection.last_insert_rowid())
 }
 
+#[cfg(test)]
 pub fn update_classification_rule(
     connection: &Connection,
     input: &UpdateClassificationRuleInput,
@@ -2571,6 +2580,7 @@ pub fn update_classification_rule(
     get_classification_rule(connection, input.id)
 }
 
+#[cfg(test)]
 pub fn delete_classification_rule(
     connection: &Connection,
     id: i64,
@@ -3158,7 +3168,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
                     source.title, source.source_type, source.original_at,
                     source.imported_at, source_topic.confidence, source.original_text
              FROM source_topics source_topic
-             JOIN source_items source ON source.id = source_topic.source_item_id
+             JOIN visible_source_items source ON source.id = source_topic.source_item_id
              WHERE source_topic.topic_id = ?1
              ORDER BY COALESCE(source.original_at, source.imported_at) DESC, source.id DESC",
         )?;
@@ -3213,7 +3223,7 @@ pub fn get_topic_detail(connection: &Connection, topic_id: i64) -> AppResult<Kno
                     evidence.confirmed_at, evidence.valid_from, evidence.valid_until,
                     evidence.review_at, evidence.created_at
              FROM evidence
-             JOIN source_items source ON source.id = evidence.source_item_id
+             JOIN visible_source_items source ON source.id = evidence.source_item_id
              WHERE evidence.topic_id = ?1
              ORDER BY evidence.created_at DESC, evidence.id DESC",
         )?;
@@ -3815,7 +3825,7 @@ pub fn preview_topic_split(connection: &Connection, topic_id: i64) -> AppResult<
     let mut statement = connection.prepare(
         "SELECT source.source_type, source.id, source.title
          FROM source_topics link
-         JOIN source_items source ON source.id = link.source_item_id
+         JOIN visible_source_items source ON source.id = link.source_item_id
          WHERE link.topic_id = ?1
          ORDER BY source.source_type, source.title",
     )?;
@@ -4055,7 +4065,7 @@ pub fn add_topic_evidence(
         .query_row(
             "SELECT source.source_type
              FROM source_topics link
-             JOIN source_items source ON source.id = link.source_item_id
+             JOIN visible_source_items source ON source.id = link.source_item_id
              WHERE link.source_item_id = ?1 AND link.topic_id = ?2",
             params![input.source_item_id, input.topic_id],
             |row| row.get::<_, String>(0),
@@ -4338,13 +4348,15 @@ pub fn compile_topic_context(connection: &Connection, topic_id: i64) -> AppResul
     let source_section_budget = TOPIC_CONTEXT_MAX_CHARS
         .saturating_sub(existing_chars)
         .min(TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS);
-    if let Some(source_bodies) = compile_topic_source_bodies(&detail.sources, source_section_budget) {
+    if let Some(source_bodies) = compile_topic_source_bodies(&detail.sources, source_section_budget)
+    {
         sections.push(source_bodies);
     }
     sections.retain(|section| !section.trim().is_empty());
     Ok(sections.join("\n\n"))
 }
 
+#[cfg(test)]
 pub fn save_classification_suggestions(
     connection: &mut Connection,
     input: &SaveKnowledgeSuggestionsInput,
@@ -4354,7 +4366,7 @@ pub fn save_classification_suggestions(
     }
     let transaction = connection.transaction()?;
     let source_exists = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM source_items WHERE id = ?1 AND organization_state = 'inbox')",
+        "SELECT EXISTS(SELECT 1 FROM visible_source_items WHERE id = ?1 AND organization_state = 'inbox')",
         [input.source_item_id],
         |row| row.get::<_, i64>(0),
     )? != 0;
@@ -4405,6 +4417,7 @@ pub fn save_classification_suggestions(
     list_classification_suggestions(connection, input.source_item_id)
 }
 
+#[cfg(test)]
 pub fn list_classification_suggestions(
     connection: &Connection,
     source_item_id: i64,
@@ -4435,25 +4448,6 @@ pub fn list_classification_suggestions(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-pub fn list_classification_run_source_ids(
-    connection: &Connection,
-    classifier_version: &str,
-) -> AppResult<Vec<i64>> {
-    if classifier_version.trim().is_empty() {
-        return Err(AppError::Validation("分类器版本不能为空".to_string()));
-    }
-    let mut statement = connection.prepare(
-        "SELECT DISTINCT source_item_id
-         FROM classification_suggestions
-         WHERE source_item_id IS NOT NULL
-           AND classifier_version = ?1
-           AND status = 'pending'
-         ORDER BY source_item_id",
-    )?;
-    let rows = statement.query_map([classifier_version], |row| row.get::<_, i64>(0))?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
 pub fn confirm_classification(
     connection: &mut Connection,
     input: &ConfirmKnowledgeClassificationInput,
@@ -4466,7 +4460,7 @@ pub fn confirm_classification(
     let transaction = connection.transaction()?;
     let source_state = transaction
         .query_row(
-            "SELECT organization_state FROM source_items WHERE id = ?1",
+            "SELECT organization_state FROM visible_source_items WHERE id = ?1",
             [input.source_item_id],
             |row| row.get::<_, String>(0),
         )
@@ -4940,6 +4934,7 @@ fn topic_path(connection: &Connection, topic_id: i64) -> AppResult<Vec<String>> 
     Ok(path)
 }
 
+#[cfg(test)]
 fn read_persisted_classification_rules(
     connection: &Connection,
 ) -> AppResult<Vec<ClassificationRuleContext>> {
@@ -4992,6 +4987,7 @@ fn read_persisted_classification_rules(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+#[cfg(test)]
 fn read_entity_dictionary(connection: &Connection) -> AppResult<Vec<(String, Vec<String>)>> {
     let mut statement = connection
         .prepare("SELECT canonical_name, aliases_json FROM entity_dictionary ORDER BY id")?;
@@ -5005,6 +5001,7 @@ fn read_entity_dictionary(connection: &Connection) -> AppResult<Vec<(String, Vec
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+#[cfg(test)]
 fn expand_entities(entities: &mut Vec<String>, dictionary: &[(String, Vec<String>)]) {
     let seeds = entities
         .iter()
@@ -5022,6 +5019,7 @@ fn expand_entities(entities: &mut Vec<String>, dictionary: &[(String, Vec<String
     }
 }
 
+#[cfg(test)]
 fn read_classification_history(
     connection: &Connection,
     batch_id: Option<&str>,
@@ -5057,7 +5055,7 @@ fn read_classification_history(
     if let Some(batch_id) = batch_id {
         let mut batch_statement = connection.prepare(
             "SELECT DISTINCT link.topic_id
-             FROM source_items source
+             FROM visible_source_items source
              JOIN source_topics link ON link.source_item_id = source.id
              WHERE json_extract(source.metadata_json, '$.batchId') = ?1
                AND link.role = 'primary'
@@ -5077,6 +5075,7 @@ fn read_classification_history(
     })
 }
 
+#[cfg(test)]
 fn normalized_bm25_signals(
     connection: &Connection,
     source_item_id: i64,
@@ -5163,6 +5162,7 @@ fn normalized_bm25_signals(
         .collect())
 }
 
+#[cfg(test)]
 fn split_search_terms(value: &str) -> Vec<String> {
     value
         .split(|character: char| {
@@ -5302,6 +5302,7 @@ fn validate_entity_dictionary_input(
     Ok(aliases)
 }
 
+#[cfg(test)]
 fn classification_rule_from_row(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<ClassificationRuleRow> {
@@ -5321,6 +5322,7 @@ fn classification_rule_from_row(
     })
 }
 
+#[cfg(test)]
 fn get_classification_rule(connection: &Connection, id: i64) -> AppResult<ClassificationRuleRow> {
     connection
         .query_row(
@@ -5334,6 +5336,7 @@ fn get_classification_rule(connection: &Connection, id: i64) -> AppResult<Classi
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn validate_classification_rule(
     connection: &Connection,
     rule_type: &str,
@@ -5416,6 +5419,7 @@ fn validate_classification_rule(
     Ok(())
 }
 
+#[cfg(test)]
 fn normalized_json_object(value: &str) -> AppResult<String> {
     if value.trim().is_empty() {
         return Ok("{}".to_string());
@@ -5429,6 +5433,7 @@ fn normalized_json_object(value: &str) -> AppResult<String> {
     Ok(value.to_string())
 }
 
+#[cfg(test)]
 fn infer_entity_type(value: &str) -> &'static str {
     match value {
         "Claude" | "ChatGPT" | "Gemini" => "model",
@@ -5795,7 +5800,7 @@ fn validate_note_input(
     for source_item_id in &source_item_ids {
         connection
             .query_row(
-                "SELECT 1 FROM source_items WHERE id = ?1 AND status = 'active'",
+                "SELECT 1 FROM visible_source_items WHERE id = ?1",
                 [source_item_id],
                 |_| Ok(()),
             )
@@ -6373,9 +6378,8 @@ mod tests {
                 open_questions: Vec::new(),
                 next_actions: Vec::new(),
                 notes: String::new(),
-                source_text:
-                    "GPU 与本地知识库。仅来源正文可见标记：算力电费占比持续上升。"
-                        .to_string(),
+                source_text: "GPU 与本地知识库。仅来源正文可见标记：算力电费占比持续上升。"
+                    .to_string(),
                 sources: Vec::new(),
                 is_favorite: false,
             },
@@ -6439,6 +6443,25 @@ mod tests {
                 .expect("source archive after trash")
                 .is_empty(),
             "legacy record moved to trash must disappear from source archive"
+        );
+        assert!(
+            get_source_original_text(&connection, source_id).is_err(),
+            "trashed record source must not remain readable through the source detail API"
+        );
+        let trashed_detail = get_topic_detail(&connection, topic.id).expect("topic after trash");
+        assert!(
+            trashed_detail.sources.is_empty(),
+            "trashed source must not remain in topic detail"
+        );
+        assert_eq!(
+            list_topics(&connection)
+                .expect("topics after trash")
+                .iter()
+                .find(|item| item.id == topic.id)
+                .expect("current topic")
+                .source_count,
+            0,
+            "topic counts must exclude sources whose linked record is in trash"
         );
         database::restore_record(&connection, record.id).expect("restore record");
         assert_eq!(
@@ -6524,11 +6547,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let section = compile_topic_source_bodies(
-            &sources,
-            TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS,
-        )
-        .expect("source bodies");
+        let section = compile_topic_source_bodies(&sources, TOPIC_CONTEXT_MAX_SOURCE_SECTION_CHARS)
+            .expect("source bodies");
 
         assert!(section.contains("已纳入 20 / 25 条来源"));
         assert!(section.contains("`source-1`"));

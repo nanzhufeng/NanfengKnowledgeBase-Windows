@@ -8,9 +8,10 @@ import {
 } from "../domain/models";
 import {
   sourceKindSchema,
-  topicStatusSchema,
-  type ClassificationContext,
 } from "../knowledge/domain";
+
+const SOURCE_TEXT_CACHE_MAX_ENTRIES = 32;
+const SOURCE_TEXT_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
 const inboxItemSchema = z.object({
   id: z.number().int(),
@@ -95,118 +96,6 @@ const topicRowSchema = z.object({
   sourceCount: z.number().int(),
 });
 
-const suggestionRowSchema = z.object({
-  id: z.number().int(),
-  publicId: z.string(),
-  sourceItemId: z.number().int(),
-  suggestedTopicId: z.number().int().nullable(),
-  score: z.number(),
-  decision: z.string(),
-  reasons: z.array(z.string()),
-  signalScoresJson: z.string(),
-  classifierVersion: z.string(),
-  status: z.string(),
-  createdAt: z.string(),
-});
-
-const nullableOptionalStringSchema = z.string().nullable().transform((value) => value ?? undefined);
-
-const classificationContextSchema = z.object({
-  source: z.object({
-    id: z.string(),
-    title: z.string(),
-    text: z.string(),
-    kind: sourceKindSchema,
-    platform: nullableOptionalStringSchema,
-    fileName: nullableOptionalStringSchema,
-    filePath: nullableOptionalStringSchema,
-    folderPath: nullableOptionalStringSchema,
-    tags: z.array(z.string()),
-    jsonFields: z.record(z.string(), z.string()),
-    importedAt: z.string(),
-    batchId: nullableOptionalStringSchema,
-  }),
-  topics: z.array(z.object({
-    id: z.string(),
-    primaryDomainId: z.string(),
-    path: z.array(z.string()),
-    name: z.string(),
-    aliases: z.array(z.string()),
-    entities: z.array(z.string()),
-    keywords: z.array(z.string()),
-    searchDocument: z.string(),
-    status: topicStatusSchema,
-    updatedAt: z.string(),
-  })),
-  rules: z.array(z.object({
-    id: z.string(),
-    topicId: z.string(),
-    field: z.enum([
-      "title",
-      "text",
-      "platform",
-      "source_kind",
-      "file_name",
-      "file_path",
-      "folder_path",
-      "tag",
-      "json_field",
-    ]),
-    operator: z.enum(["contains", "equals"]),
-    effect: z.enum(["include", "exclude"]),
-    value: z.string(),
-    jsonField: nullableOptionalStringSchema,
-    strength: z.number().min(0).max(1),
-    reason: z.string(),
-    enabled: z.boolean(),
-  })),
-  history: z.object({
-    confirmedTopicCounts: z.record(z.string(), z.number().int().nonnegative()),
-    recentTopicIds: z.array(z.string()),
-    batchTopicIds: z.record(z.string(), z.array(z.string())),
-  }),
-  searchSignals: z.array(z.object({
-    topicId: z.string(),
-    normalizedScore: z.number().min(0).max(1),
-    reason: z.string(),
-  })),
-});
-
-const personalCatalogProposalSchema = z.object({
-  version: z.string(),
-  status: z.literal("proposal"),
-  title: z.string(),
-  note: z.string(),
-  domains: z.array(z.object({
-    key: z.string(),
-    name: z.string(),
-    description: z.string(),
-  })),
-  topics: z.array(z.object({
-    key: z.string(),
-    domainKey: z.string(),
-    parentKey: z.string().nullable(),
-    name: z.string(),
-    description: z.string(),
-    topicKind: z.string(),
-    aliases: z.array(z.string()),
-    entities: z.array(z.string()),
-    keywords: z.array(z.string()),
-  })),
-});
-
-const personalCatalogApplyResultSchema = z.object({
-  version: z.string(),
-  createdDomains: z.number().int().nonnegative(),
-  existingDomains: z.number().int().nonnegative(),
-  createdTopics: z.number().int().nonnegative(),
-  existingTopics: z.number().int().nonnegative(),
-  createdAliases: z.number().int().nonnegative(),
-  createdEntities: z.number().int().nonnegative(),
-  createdRules: z.number().int().nonnegative(),
-  deletedRules: z.number().int().nonnegative(),
-});
-
 const topicAliasRowSchema = z.object({
   id: z.number().int(),
   topicId: z.number().int(),
@@ -231,31 +120,6 @@ const entityDictionaryRowSchema = z.object({
   ]),
   aliases: z.array(z.string()),
   description: z.string(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-const classificationRuleRowSchema = z.object({
-  id: z.number().int(),
-  publicId: z.string(),
-  ruleType: z.enum([
-    "keyword",
-    "exact_alias",
-    "negative_keyword",
-    "file_path",
-    "entity",
-    "source",
-    "legacy_tag",
-    "stopword",
-    "domain_hint",
-  ]),
-  pattern: z.string(),
-  targetDomainId: z.number().int().nullable(),
-  targetTopicId: z.number().int().nullable(),
-  weight: z.number().min(0).max(1),
-  priority: z.number().int(),
-  enabled: z.boolean(),
-  configJson: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -480,7 +344,6 @@ export type SourceAttachmentCatalogHit = z.infer<typeof sourceAttachmentCatalogH
 export type SourceAttachmentHydrationResult = z.infer<typeof sourceAttachmentHydrationResultSchema>;
 export type KnowledgeDomainRow = z.infer<typeof domainRowSchema>;
 export type KnowledgeTopicRow = z.infer<typeof topicRowSchema>;
-export type KnowledgeClassificationSuggestionRow = z.infer<typeof suggestionRowSchema>;
 export type KnowledgeOperationResult = z.infer<typeof operationResultSchema>;
 export type KnowledgeTopicDetail = z.infer<typeof topicDetailSchema>;
 export type KnowledgeNoteRow = z.infer<typeof knowledgeNoteRowSchema>;
@@ -492,11 +355,8 @@ export type TopicMergeResult = z.infer<typeof topicMergeResultSchema>;
 export type TopicSplitPreview = z.infer<typeof topicSplitPreviewSchema>;
 export type TopicRelationSuggestion = z.infer<typeof topicRelationSuggestionSchema>;
 export type TopicRelationRow = z.infer<typeof topicRelationRowSchema>;
-export type PersonalCatalogProposal = z.infer<typeof personalCatalogProposalSchema>;
-export type PersonalCatalogApplyResult = z.infer<typeof personalCatalogApplyResultSchema>;
 export type KnowledgeTopicAliasRow = z.infer<typeof topicAliasRowSchema>;
 export type KnowledgeEntityRow = z.infer<typeof entityDictionaryRowSchema>;
-export type KnowledgeClassificationRuleRow = z.infer<typeof classificationRuleRowSchema>;
 
 export type EvidenceLocator = {
   kind:
@@ -514,32 +374,14 @@ export type EvidenceLocator = {
   quote?: string;
 };
 
-export type ClassificationRuleMutationInput = {
-  ruleType: KnowledgeClassificationRuleRow["ruleType"];
-  pattern: string;
-  targetDomainId: number | null;
-  targetTopicId: number | null;
-  weight: number;
-  priority: number;
-  enabled: boolean;
-  configJson?: string;
-};
-
-export type SaveKnowledgeSuggestionsInput = {
-  sourceItemId: number;
-  classifierVersion: string;
-  suggestions: Array<{
-    topicId: number | null;
-    score: number;
-    decision: string;
-    reasons: string[];
-    signalScoresJson: string;
-  }>;
-};
-
 export class KnowledgeRepository {
   private readonly inFlightReads = new Map<string, Promise<unknown>>();
-  private readonly sourceTextCache = new Map<number, string>();
+  /**
+   * 只缓存近期阅读过的正文。Map 的迭代顺序就是 LRU 顺序，避免频繁切换时
+   * 重复穿透 Tauri IPC，同时用字节上限保护长聊天记录不会常驻占满页面内存。
+   */
+  private readonly sourceTextCache = new Map<number, { text: string; bytes: number }>();
+  private sourceTextCacheBytes = 0;
 
   private get desktopAvailable() {
     return "__TAURI_INTERNALS__" in window;
@@ -553,6 +395,44 @@ export class KnowledgeRepository {
     });
     this.inFlightReads.set(key, pending);
     return pending;
+  }
+
+  private cacheSourceText(sourceItemId: number, text: string): void {
+    const bytes = text.length * 2;
+    if (bytes > SOURCE_TEXT_CACHE_MAX_BYTES) return;
+
+    const existing = this.sourceTextCache.get(sourceItemId);
+    if (existing) this.sourceTextCacheBytes -= existing.bytes;
+    this.sourceTextCache.delete(sourceItemId);
+    this.sourceTextCache.set(sourceItemId, { text, bytes });
+    this.sourceTextCacheBytes += bytes;
+
+    while (
+      this.sourceTextCache.size > SOURCE_TEXT_CACHE_MAX_ENTRIES
+      || this.sourceTextCacheBytes > SOURCE_TEXT_CACHE_MAX_BYTES
+    ) {
+      const oldest = this.sourceTextCache.entries().next().value;
+      if (!oldest) break;
+      const [oldestId, oldestEntry] = oldest;
+      this.sourceTextCache.delete(oldestId);
+      this.sourceTextCacheBytes -= oldestEntry.bytes;
+    }
+  }
+
+  private removeCachedSourceText(sourceItemId: number): void {
+    const existing = this.sourceTextCache.get(sourceItemId);
+    if (!existing) return;
+    this.sourceTextCache.delete(sourceItemId);
+    this.sourceTextCacheBytes -= existing.bytes;
+  }
+
+  /** 同步返回近期正文，让切换已读笔记时不出现空白过渡。 */
+  peekSourceOriginalText(sourceItemId: number): string | null {
+    const cached = this.sourceTextCache.get(sourceItemId);
+    if (!cached) return null;
+    this.sourceTextCache.delete(sourceItemId);
+    this.sourceTextCache.set(sourceItemId, cached);
+    return cached.text;
   }
 
   async listInbox(limit = 120): Promise<KnowledgeInboxItem[]> {
@@ -600,7 +480,7 @@ export class KnowledgeRepository {
         input: { sourceItemId, title },
       }),
     );
-    this.sourceTextCache.delete(sourceItemId);
+    this.removeCachedSourceText(sourceItemId);
     return result;
   }
 
@@ -630,18 +510,13 @@ export class KnowledgeRepository {
 
   async getSourceOriginalText(sourceItemId: number): Promise<string> {
     if (!this.desktopAvailable) return "";
-    const cached = this.sourceTextCache.get(sourceItemId);
-    if (cached !== undefined) return cached;
+    const cached = this.peekSourceOriginalText(sourceItemId);
+    if (cached !== null) return cached;
     return this.coalesceRead(`source-text:${sourceItemId}`, async () => {
       const text = z.string().parse(
         await invoke("get_knowledge_source_original_text", { sourceItemId }),
       );
-      this.sourceTextCache.set(sourceItemId, text);
-      while (this.sourceTextCache.size > 8) {
-        const oldest = this.sourceTextCache.keys().next().value;
-        if (oldest === undefined) break;
-        this.sourceTextCache.delete(oldest);
-      }
+      this.cacheSourceText(sourceItemId, text);
       return text;
     });
   }
@@ -729,25 +604,6 @@ export class KnowledgeRepository {
     }));
   }
 
-  async prepareClassificationContext(sourceItemId: number): Promise<ClassificationContext> {
-    return classificationContextSchema.parse(
-      await invoke("prepare_knowledge_classification_context", { sourceItemId }),
-    );
-  }
-
-  async getPersonalCatalogProposal(): Promise<PersonalCatalogProposal | null> {
-    if (!this.desktopAvailable) return null;
-    return personalCatalogProposalSchema.parse(
-      await invoke("get_personal_topic_catalog_proposal"),
-    );
-  }
-
-  async applyPersonalCatalog(version: string): Promise<PersonalCatalogApplyResult> {
-    return personalCatalogApplyResultSchema.parse(
-      await invoke("apply_personal_topic_catalog", { input: { version } }),
-    );
-  }
-
   async listTopicAliases(topicId: number | null = null): Promise<KnowledgeTopicAliasRow[]> {
     if (!this.desktopAvailable) return [];
     return z.array(topicAliasRowSchema).parse(
@@ -815,39 +671,6 @@ export class KnowledgeRepository {
     return deleteResultSchema.parse(await invoke("delete_knowledge_entity", { id }));
   }
 
-  async listClassificationRules(): Promise<KnowledgeClassificationRuleRow[]> {
-    if (!this.desktopAvailable) return [];
-    return z.array(classificationRuleRowSchema).parse(
-      await invoke("list_knowledge_classification_rules"),
-    );
-  }
-
-  async createClassificationRule(
-    input: ClassificationRuleMutationInput,
-  ): Promise<KnowledgeClassificationRuleRow> {
-    return classificationRuleRowSchema.parse(
-      await invoke("create_knowledge_classification_rule", {
-        input: { ...input, configJson: input.configJson ?? "{}" },
-      }),
-    );
-  }
-
-  async updateClassificationRule(
-    input: ClassificationRuleMutationInput & { id: number },
-  ): Promise<KnowledgeClassificationRuleRow> {
-    return classificationRuleRowSchema.parse(
-      await invoke("update_knowledge_classification_rule", {
-        input: { ...input, configJson: input.configJson ?? "{}" },
-      }),
-    );
-  }
-
-  async deleteClassificationRule(id: number) {
-    return deleteResultSchema.parse(
-      await invoke("delete_knowledge_classification_rule", { id }),
-    );
-  }
-
   async createTopic(input: {
     domainId: number;
     parentTopicId: number | null;
@@ -872,28 +695,6 @@ export class KnowledgeRepository {
     return topicRowSchema.parse(await invoke("update_knowledge_topic", {
       input: { ...input, description: input.description ?? "" },
     }));
-  }
-
-  async saveSuggestions(
-    input: SaveKnowledgeSuggestionsInput,
-  ): Promise<KnowledgeClassificationSuggestionRow[]> {
-    return z.array(suggestionRowSchema).parse(
-      await invoke("save_knowledge_classification_suggestions", { input }),
-    );
-  }
-
-  async listSuggestions(sourceItemId: number): Promise<KnowledgeClassificationSuggestionRow[]> {
-    if (!this.desktopAvailable) return [];
-    return z.array(suggestionRowSchema).parse(
-      await invoke("list_knowledge_classification_suggestions", { sourceItemId }),
-    );
-  }
-
-  async listClassificationRunSourceIds(classifierVersion: string): Promise<number[]> {
-    if (!this.desktopAvailable) return [];
-    return z.array(z.number().int().positive()).parse(
-      await invoke("list_knowledge_classification_run_source_ids", { classifierVersion }),
-    );
   }
 
   async confirmClassification(input: {

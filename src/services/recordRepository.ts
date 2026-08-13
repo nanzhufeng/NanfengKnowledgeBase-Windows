@@ -98,7 +98,7 @@ export interface RecordRepository {
   rollbackDataDirectorySwitch(): Promise<string>;
   getStorageStats(): Promise<StorageStats>;
   inspectDataOptimization(): Promise<DataOptimizationPreview>;
-  optimizeData(): Promise<DataOptimizationResult>;
+  optimizeData(confirmationToken: string): Promise<DataOptimizationResult>;
   inspectLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryPreview>;
   recoverLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryResult>;
   openDataDirectory(): Promise<void>;
@@ -285,8 +285,8 @@ class TauriRecordRepository implements RecordRepository {
     return dataOptimizationPreviewSchema.parse(await invoke("inspect_data_optimization"));
   }
 
-  async optimizeData(): Promise<DataOptimizationResult> {
-    return dataOptimizationResultSchema.parse(await invoke("optimize_data", { confirmed: true }));
+  async optimizeData(confirmationToken: string): Promise<DataOptimizationResult> {
+    return dataOptimizationResultSchema.parse(await invoke("optimize_data", { confirmationToken }));
   }
 
   async inspectLegacyAttachmentRecovery(sourceDirectory?: string): Promise<LegacyAttachmentRecoveryPreview> {
@@ -795,17 +795,25 @@ export class BrowserRecordRepository implements RecordRepository {
 
   async inspectDataOptimization(): Promise<DataOptimizationPreview> {
     return {
+      confirmationToken: null,
       databaseReclaimableBytes: 0,
+      databaseWalBytes: 0,
+      willVacuum: false,
       duplicateBackupCount: 0,
       duplicateBackupBytes: 0,
       incompleteBackupCount: 0,
       incompleteBackupBytes: 0,
+      unreferencedAttachmentCount: 0,
+      unreferencedAttachmentBytes: 0,
+      referencedAttachmentBytes: 0,
+      protectedBackupBytes: 0,
+      protectedImportBytes: 0,
       estimatedReclaimableBytes: 0,
       protectedBusinessRecordCount: this.state.records.length,
     };
   }
 
-  async optimizeData(): Promise<DataOptimizationResult> {
+  async optimizeData(_confirmationToken: string): Promise<DataOptimizationResult> {
     throw new RepositoryError("unsupported", "浏览器演示模式不会清理本机数据");
   }
 
@@ -1058,7 +1066,7 @@ class SafeTauriRepository implements RecordRepository {
   rollbackDataDirectorySwitch = () => this.run(() => this.inner.rollbackDataDirectorySwitch());
   getStorageStats = () => this.run(() => this.inner.getStorageStats());
   inspectDataOptimization = () => this.run(() => this.inner.inspectDataOptimization());
-  optimizeData = () => this.run(() => this.inner.optimizeData());
+  optimizeData = (confirmationToken: string) => this.run(() => this.inner.optimizeData(confirmationToken));
   inspectLegacyAttachmentRecovery = (sourceDirectory?: string) =>
     this.run(() => this.inner.inspectLegacyAttachmentRecovery(sourceDirectory));
   recoverLegacyAttachmentRecovery = (sourceDirectory?: string) =>

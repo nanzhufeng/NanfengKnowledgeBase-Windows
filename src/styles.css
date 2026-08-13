@@ -32,6 +32,7 @@
   --search-control-elevation: 0 10px 22px -16px rgba(20, 46, 78, .5);
   --search-control-inner-highlight: inset 0 1px rgba(255, 255, 255, .96);
   --search-control-focus-ring: 0 0 0 2px rgba(77, 138, 198, .16);
+  --settings-item-surface: #ffffff;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --core-navigation-width: clamp(210px, 13.77vw, 266px);
@@ -2092,7 +2093,7 @@ textarea:focus-visible,
   width: min(780px, calc(100vw - 64px));
   min-height: 0;
   height: auto;
-  resize: none;
+  resize: both;
 }
 
 .settings-preview-dialog .setting-preview {
@@ -2928,8 +2929,71 @@ textarea:focus-visible,
 .settings-action-section.attachment-recovery {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: color-mix(in srgb, var(--glass-card-border, #cad8e6) 82%, rgba(77, 118, 171, .28));
-  background: color-mix(in srgb, var(--glass-card, rgba(248, 250, 253, .78)) 88%, rgba(234, 243, 253, .74));
+  /* 这是设置页承托卡内的直接操作卡：固定实体白面，不从场景玻璃变量取透明度。 */
+  border-color: #dce3ec;
+  background: #f8fafd;
+}
+
+.settings-action-section.ai-automation-entry {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  /* 页面一级入口不能继承双列操作卡的满高；它应与设置条目同为紧凑单行卡。 */
+  box-sizing: border-box;
+  height: auto;
+  min-height: 88px;
+  margin: 0 auto 16px;
+  border-color: #dce3ec;
+  background: var(--settings-item-surface);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.settings-action-section > .ai-automation-entry-copy {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.ai-automation-entry-copy > .settings-icon {
+  flex: none;
+}
+
+.ai-automation-entry-text {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ai-automation-entry-text > strong {
+  color: #173e6c;
+  font-size: 13px;
+}
+
+.ai-automation-entry-text > span {
+  margin: 0;
+  color: #728198;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+/* 整卡是唯一入口；箭头只提示前进方向，不再伪装成第二个独立按钮。 */
+.ai-automation-entry-cue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: #41689b;
+}
+
+.prototype-dialog.ai-automation-dialog {
+  width: min(1366px, calc(100vw - 64px));
+  height: min(872px, calc(100vh - 96px));
+  min-width: min(860px, calc(100vw - 40px));
+  min-height: 540px;
 }
 
 .settings-optimize-button {
@@ -3189,7 +3253,7 @@ textarea:focus-visible,
   .page-title,
   .skin-settings-panel,
   .runtime-build-card,
-  .ai-settings-panel,
+  .ai-automation-entry,
   .settings-list
 ) {
   width: 100%;
@@ -3422,27 +3486,80 @@ textarea:focus-visible,
   }
 }
 
-/*
- * 原版浅色独立材质层级：不使用场景皮肤的实时模糊，只通过冷白实体表面、
- * 极轻高光和方向性阴影把承托层、内容层与嵌套层分开。
- */
-:root[data-knowledge-skin="classic"] {
-  --classic-workspace-surface: linear-gradient(145deg, #eef2f7 0%, #e7edf4 58%, #e4eaf2 100%);
-  --classic-navigation-surface: linear-gradient(145deg, #f3f6fa 0%, #e9eef5 100%);
-  --classic-content-surface: linear-gradient(145deg, #ffffff 0%, #fbfcfe 62%, #f7f9fc 100%);
-  --classic-nested-surface: linear-gradient(145deg, #fbfcfe 0%, #f3f6fa 100%);
+/* 三套实体工作台只换承托色，不使用背景图、透明玻璃或实时模糊。 */
+:root[data-knowledge-skin="entity-mist"] {
+  --entity-sidebar: #173a61;
+  --entity-canvas: #e9f0f6;
+  --entity-workspace-start: #edf3f8;
+  --entity-workspace-end: #e5edf4;
+  --entity-navigation-start: #f1f5f8;
+  --entity-navigation-end: #e8eff5;
+  --entity-edge: rgba(79, 111, 145, .17);
+}
+
+:root[data-knowledge-skin="entity-sage"] {
+  --entity-sidebar: #304b43;
+  --entity-canvas: #ebf0ec;
+  --entity-workspace-start: #f0f3ef;
+  --entity-workspace-end: #e7ede8;
+  --entity-navigation-start: #f4f6f3;
+  --entity-navigation-end: #eaf0eb;
+  --entity-edge: rgba(80, 111, 98, .18);
+}
+
+:root[data-knowledge-skin="entity-terracotta"] {
+  --entity-sidebar: #493830;
+  --entity-canvas: #f0e9e4;
+  --entity-workspace-start: #f4efeb;
+  --entity-workspace-end: #ece4df;
+  --entity-navigation-start: #f7f3f0;
+  --entity-navigation-end: #eee7e2;
+  --entity-edge: rgba(126, 93, 76, .17);
+}
+
+:root[data-knowledge-skin-material="entity"] {
+  --classic-workspace-surface: linear-gradient(145deg, var(--entity-workspace-start) 0%, var(--entity-workspace-end) 100%);
+  --classic-navigation-surface: linear-gradient(145deg, var(--entity-navigation-start) 0%, var(--entity-navigation-end) 100%);
+  --classic-content-surface: #ffffff;
+  --classic-nested-surface: #ffffff;
   --classic-control-surface: linear-gradient(180deg, #ffffff 0%, #f2f6fb 100%);
   --classic-panel-shadow: 0 22px 48px -34px rgba(26, 49, 80, .42), inset 0 1px rgba(255, 255, 255, .86);
   --classic-content-shadow: 0 16px 34px -27px rgba(24, 46, 76, .36), inset 0 1px rgba(255, 255, 255, .9);
   --classic-nested-shadow: 0 9px 20px -18px rgba(26, 47, 76, .24), inset 0 1px rgba(255, 255, 255, .72);
-  --classic-edge: rgba(92, 114, 145, .16);
+  --classic-edge: var(--entity-edge);
 }
 
-.app-shell[data-skin="classic"] .main-region {
+.app-shell[data-skin-material="entity"] .sidebar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .025), rgba(0, 0, 0, .16)), var(--entity-sidebar);
+}
+
+/* 实体侧栏统一使用中性白字，不继承旧雾蓝皮肤的固定蓝灰文字。 */
+.app-shell[data-skin-material="entity"] .sidebar .storage {
+  color: rgba(255, 255, 255, .82);
+  border-top-color: rgba(255, 255, 255, .16);
+}
+
+.app-shell[data-skin-material="entity"] .sidebar .storage strong {
+  color: #ffffff;
+}
+
+.app-shell[data-skin-material="entity"] .sidebar .storage-refresh-button {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, .2);
+  background: rgba(255, 255, 255, .06);
+}
+
+.app-shell[data-skin-material="entity"] .main-region {
   background: var(--classic-workspace-surface);
 }
 
-.app-shell[data-skin="classic"] :is(
+/* 实体皮肤的承托底从应用画布贯穿主区域，所有页面都不再形成一张悬浮的大背景卡。 */
+.app-shell[data-skin-material="entity"],
+.app-shell[data-skin-material="entity"] .main-region {
+  background: var(--entity-canvas);
+}
+
+.app-shell[data-skin-material="entity"] :is(
   .records-workspace,
   .knowledge-page,
   .settings-page,
@@ -3453,11 +3570,10 @@ textarea:focus-visible,
   background: transparent;
 }
 
-.app-shell[data-skin="classic"] :is(
+.app-shell[data-skin-material="entity"] :is(
   .record-pane,
   .knowledge-inbox-list,
   .knowledge-final-tree-card,
-  .settings-list,
   .skin-settings-panel,
   .settings-storage-overview
 ) {
@@ -3466,7 +3582,7 @@ textarea:focus-visible,
   box-shadow: var(--classic-panel-shadow);
 }
 
-.app-shell[data-skin="classic"] :is(
+.app-shell[data-skin-material="entity"] :is(
   .detail-panel,
   .knowledge-inbox-detail,
   .topic-final-reader,
@@ -3480,8 +3596,9 @@ textarea:focus-visible,
   box-shadow: var(--classic-content-shadow);
 }
 
-.app-shell[data-skin="classic"] :is(
+.app-shell[data-skin-material="entity"] :is(
   .elevated-card,
+  .settings-page > .ai-automation-entry,
   .record-card,
   .trash-card,
   .settings-row,
@@ -3499,11 +3616,10 @@ textarea:focus-visible,
   box-shadow: var(--classic-nested-shadow);
 }
 
-.app-shell[data-skin="classic"] :is(
+.app-shell[data-skin-material="entity"] :is(
   .search-field,
   .knowledge-final-search,
   .data-exchange-tabs,
-  .settings-row > button,
   .skin-option
 ) {
   border-color: rgba(84, 108, 140, .17);
@@ -3511,11 +3627,11 @@ textarea:focus-visible,
   box-shadow: inset 0 1px rgba(255, 255, 255, .94), 0 8px 17px -15px rgba(21, 46, 78, .42);
 }
 
-.app-shell[data-skin="classic"] .skin-settings-panel {
+.app-shell[data-skin-material="entity"] .skin-settings-panel {
   background: linear-gradient(145deg, #f8fafc 0%, #eef3f8 100%);
 }
 
-.app-shell[data-skin="classic"] .skin-option.selected {
+.app-shell[data-skin-material="entity"] .skin-option.selected {
   border-color: rgba(244, 109, 53, .72);
   background: linear-gradient(145deg, #fffaf6 0%, #fff0e7 100%);
   box-shadow: 0 15px 28px -20px rgba(192, 82, 36, .36), inset 0 1px rgba(255, 255, 255, .9);
@@ -3560,6 +3676,406 @@ textarea:focus-visible,
   .source-message.compact {
     contain-intrinsic-size: auto 180px;
   }
+}
+
+/*
+ * 暗色皮肤只替换颜色与材质令牌：五套皮肤继续共用既有双栏、双卡和组件几何。
+ * 场景皮肤保留背景照片与外层玻璃，前景内容卡改为不透明的深色实体面，
+ * 以保证阅读稳定性；侧栏文字单独提高亮度，避免深玻璃上出现低对比度导航。
+ */
+:root[data-knowledge-color-mode="dark"] {
+  color-scheme: dark;
+  --text: #eef4f0;
+  --muted: #c2d0c9;
+  --muted-light: #9dafaa;
+  --surface: #1a2a31;
+  --surface-cool: #14232b;
+  --line: rgba(226, 239, 231, 0.16);
+  --settings-item-surface: #1d2e35;
+  --search-control-elevation: 0 14px 30px rgba(0, 0, 0, 0.26);
+  --search-control-inner-highlight: inset 0 1px rgba(255, 255, 255, 0.1);
+  --search-control-focus-ring: 0 0 0 3px rgba(255, 164, 98, 0.25);
+  --micro-card-border: rgba(225, 240, 230, 0.13);
+  --micro-card-shadow-local: 0 9px 20px rgba(0, 0, 0, 0.18);
+  --micro-card-hover-shadow-local: 0 16px 30px rgba(0, 0, 0, 0.28);
+  /* 每套皮肤先派生暗色材质，再由下方所有共享组件消费。默认是花房。 */
+  --dark-skin-panel: #1b302c;
+  --dark-skin-raised: #203832;
+  --dark-skin-input: #263c36;
+  --dark-skin-input-focus: #2d463e;
+  --dark-skin-subtle: #1a2b2c;
+  --dark-skin-selected: #294239;
+  --dark-skin-border: rgba(224, 240, 228, 0.2);
+  --dark-skin-border-strong: rgba(255, 181, 120, 0.72);
+  --dark-skin-accent: #ffb47d;
+  /* 暗色可操作表面：领域折叠、AI 动作、Tab 和数量徽标统一消费。 */
+  --dark-control-surface: var(--dark-skin-raised);
+  --dark-control-emphasis-surface: var(--dark-skin-input);
+  --dark-control-hover-surface: var(--dark-skin-input-focus);
+  --dark-control-border: var(--dark-skin-accent);
+  --dark-control-text: var(--dark-text-primary);
+  --dark-control-emphasis-text: var(--dark-text-primary);
+  --dark-control-muted-text: var(--dark-text-tertiary);
+  --dark-control-badge-surface: var(--dark-skin-input);
+  --dark-control-badge-active-surface: color-mix(in srgb, var(--dark-skin-accent) 31%, var(--dark-skin-raised));
+  /* 暗色统一笔记列表：记录、来源、收藏和持续跟踪共用同一前景文字与选中面。 */
+  --dark-note-list-surface: var(--dark-skin-panel);
+  --dark-note-list-hover-surface: var(--dark-skin-input-focus);
+  --dark-note-list-selected-surface: var(--dark-skin-selected);
+  --dark-note-list-border: var(--dark-skin-border);
+  --dark-note-list-selected-border: var(--dark-skin-accent);
+  --dark-note-list-title: var(--dark-text-primary);
+  --dark-note-list-meta: var(--dark-text-secondary);
+  --dark-note-list-date: var(--dark-text-secondary);
+  --dark-note-list-action-surface: var(--dark-skin-input);
+  --dark-note-list-action-border: var(--dark-skin-border);
+  /* 页面、输入、正文消息、设置页共用的暗色材质，不让浅色模块各自遗留。 */
+  --dark-surface-panel: var(--dark-skin-panel);
+  --dark-surface-raised: var(--dark-skin-raised);
+  --dark-surface-input: var(--dark-skin-input);
+  --dark-surface-input-focus: var(--dark-skin-input-focus);
+  --dark-surface-subtle: var(--dark-skin-subtle);
+  --dark-surface-selected: var(--dark-skin-selected);
+  --dark-border: var(--dark-skin-border);
+  --dark-border-strong: var(--dark-skin-border-strong);
+  --dark-text-primary: #f3f8f4;
+  --dark-text-secondary: #d2ded6;
+  --dark-text-tertiary: #b2c2b8;
+  --dark-text: var(--dark-text-primary);
+  --dark-muted: var(--dark-text-secondary);
+  --dark-faint: var(--dark-text-tertiary);
+  --dark-accent: var(--dark-skin-accent);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-mist"] {
+  --dark-skin-panel: #1a2d3a;
+  --dark-skin-raised: #213a49;
+  --dark-skin-input: #294655;
+  --dark-skin-input-focus: #315366;
+  --dark-skin-subtle: #162833;
+  --dark-skin-selected: #2a4a5c;
+  --dark-skin-border: rgba(215, 235, 247, 0.2);
+  --dark-skin-border-strong: rgba(133, 203, 255, 0.72);
+  --dark-skin-accent: #95d0ff;
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-sage"] {
+  --dark-skin-panel: #1b332b;
+  --dark-skin-raised: #243f35;
+  --dark-skin-input: #2d4b3f;
+  --dark-skin-input-focus: #385a4b;
+  --dark-skin-subtle: #162820;
+  --dark-skin-selected: #2e4d40;
+  --dark-skin-border: rgba(221, 240, 226, 0.2);
+  --dark-skin-border-strong: rgba(168, 220, 155, 0.72);
+  --dark-skin-accent: #b4e4a5;
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-terracotta"] {
+  --dark-skin-panel: #352521;
+  --dark-skin-raised: #472f28;
+  --dark-skin-input: #5a3a30;
+  --dark-skin-input-focus: #694438;
+  --dark-skin-subtle: #2b1d1b;
+  --dark-skin-selected: #593a30;
+  --dark-skin-border: rgba(247, 221, 204, 0.2);
+  --dark-skin-border-strong: rgba(255, 191, 144, 0.76);
+  --dark-skin-accent: #ffc092;
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="florist-studio"] {
+  --dark-skin-panel: #1b302c;
+  --dark-skin-raised: #203832;
+  --dark-skin-input: #284038;
+  --dark-skin-input-focus: #293f38;
+  --dark-skin-subtle: #1a2b2c;
+  --dark-skin-selected: #294239;
+  --dark-skin-border: rgba(224, 240, 228, 0.2);
+  --dark-skin-border-strong: rgba(255, 181, 120, 0.72);
+  --dark-skin-accent: #ffb47d;
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="golden-horses"] {
+  --dark-skin-panel: #382d22;
+  --dark-skin-raised: #493a29;
+  --dark-skin-input: #5b482f;
+  --dark-skin-input-focus: #6c5737;
+  --dark-skin-subtle: #2d241b;
+  --dark-skin-selected: #59432d;
+  --dark-skin-border: rgba(249, 226, 183, 0.22);
+  --dark-skin-border-strong: rgba(255, 208, 138, 0.78);
+  --dark-skin-accent: #ffd08a;
+}
+
+:root[data-knowledge-color-mode="dark"] body {
+  /* 根背景也消费当前皮肤，不能在红棕/金棕皮肤背后遗留默认蓝灰。 */
+  background: var(--dark-skin-subtle);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-mist"] {
+  --entity-sidebar: #102e4a;
+  --entity-canvas: #101d26;
+  --entity-workspace-start: #182a35;
+  --entity-workspace-end: #13242d;
+  --entity-navigation-start: #1b303d;
+  --entity-navigation-end: #152631;
+  --entity-edge: rgba(203, 225, 233, 0.14);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-sage"] {
+  --entity-sidebar: #183f38;
+  --entity-canvas: #12231f;
+  --entity-workspace-start: #1d312b;
+  --entity-workspace-end: #142720;
+  --entity-navigation-start: #243c34;
+  --entity-navigation-end: #192d27;
+  --entity-edge: rgba(216, 236, 223, 0.14);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-terracotta"] {
+  --entity-sidebar: #482d29;
+  --entity-canvas: #291c1b;
+  --entity-workspace-start: #382521;
+  --entity-workspace-end: #2b1d1b;
+  --entity-navigation-start: #432d27;
+  --entity-navigation-end: #301f1c;
+  --entity-edge: rgba(244, 218, 202, 0.15);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="entity"] {
+  --classic-workspace-surface: linear-gradient(140deg, var(--entity-workspace-start), var(--entity-workspace-end));
+  --classic-navigation-surface: linear-gradient(160deg, var(--entity-navigation-start), var(--entity-navigation-end));
+  --classic-content-surface: var(--dark-skin-panel);
+  --classic-nested-surface: var(--dark-skin-raised);
+  --classic-control-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-panel));
+  --classic-panel-shadow: 0 18px 38px rgba(0, 0, 0, 0.27);
+  --classic-content-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+  --classic-edge: var(--entity-edge);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="scene"] {
+  --knowledge-material-edge-vignette: radial-gradient(circle at center, transparent 48%, rgba(3, 11, 9, 0.27) 100%);
+  --knowledge-material-sidebar-surface:
+    linear-gradient(145deg, color-mix(in srgb, var(--dark-skin-panel) 94%, transparent), color-mix(in srgb, var(--dark-skin-subtle) 90%, transparent)),
+    radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--dark-skin-accent) 12%, transparent), transparent 38%);
+  --knowledge-material-navigation-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 94%, transparent), color-mix(in srgb, var(--dark-skin-panel) 90%, transparent));
+  --knowledge-material-workspace-surface: linear-gradient(135deg, color-mix(in srgb, var(--dark-skin-panel) 82%, transparent), color-mix(in srgb, var(--dark-skin-subtle) 76%, transparent));
+  --knowledge-material-content-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 95%, transparent), color-mix(in srgb, var(--dark-skin-panel) 95%, transparent));
+  --knowledge-material-foreground-surface: var(--dark-skin-panel);
+  --knowledge-material-foreground-muted-surface: var(--dark-skin-raised);
+  --knowledge-material-browser-group-surface: var(--dark-skin-subtle);
+  --knowledge-material-browser-active-surface: linear-gradient(135deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-reading-surface: var(--dark-skin-subtle);
+  --knowledge-material-positive-surface: linear-gradient(145deg, color-mix(in srgb, #1a6b51 56%, var(--dark-skin-panel)), var(--dark-skin-panel));
+  --knowledge-material-negative-surface: linear-gradient(145deg, #3b292a, #302224);
+  --knowledge-material-action-surface: linear-gradient(145deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-result-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-panel));
+  --knowledge-material-state-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-raised));
+  --knowledge-material-control-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-panel));
+  --knowledge-material-control-muted-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-subtle));
+  --knowledge-material-scroll-track: rgba(226, 241, 228, 0.1);
+  --knowledge-material-scroll-thumb: rgba(235, 246, 234, 0.36);
+  --knowledge-material-scroll-thumb-hover: var(--dark-skin-accent);
+  --knowledge-material-popover-surface: color-mix(in srgb, var(--dark-skin-raised) 97%, transparent);
+  --knowledge-material-control-filter: saturate(110%) blur(14px);
+  --knowledge-material-modal-surface: color-mix(in srgb, var(--dark-skin-panel) 97%, transparent);
+}
+
+.app-shell[data-color-mode="dark"] {
+  color: var(--text);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .page-title h1,
+  .page-title p,
+  .settings-page h2,
+  .settings-page h3,
+  .settings-page p,
+  .knowledge-final-reader h1,
+  .knowledge-final-reader h2,
+  .knowledge-final-reader h3,
+  .knowledge-final-reader h4,
+  .knowledge-final-reader p,
+  .knowledge-final-reader li,
+  .knowledge-final-reader td,
+  .knowledge-final-reader th,
+  .knowledge-final-browser button,
+  .knowledge-final-browser strong,
+  .knowledge-final-browser small,
+  .record-pane h1,
+  .record-pane h2,
+  .record-pane h3,
+  .record-pane p,
+  .record-pane label,
+  .detail-panel h1,
+  .detail-panel h2,
+  .detail-panel h3,
+  .detail-panel p,
+  .detail-panel li,
+  .detail-panel label
+) {
+  color: var(--text);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .knowledge-final-reader,
+  .knowledge-final-browser,
+  .detail-panel,
+  .settings-page .elevated-card,
+  .settings-page .settings-card,
+  .record-pane,
+  .search-panel,
+  .modal-card,
+  .sheet-card
+) {
+  border-color: var(--line);
+  box-shadow: var(--classic-content-shadow, 0 12px 28px rgba(0, 0, 0, 0.2));
+}
+
+.app-shell[data-color-mode="dark"] :is(input, textarea, select) {
+  color: var(--text);
+  background-color: rgba(16, 31, 30, 0.76);
+  border-color: rgba(224, 240, 229, 0.19);
+}
+
+.app-shell[data-color-mode="dark"] :is(input, textarea, select)::placeholder {
+  color: #aebeb5;
+}
+
+.app-shell[data-color-mode="dark"] .sidebar {
+  color: var(--dark-text-secondary);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .brand strong {
+  color: var(--dark-text-primary);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .brand span,
+.app-shell[data-color-mode="dark"] .sidebar .nav-item,
+.app-shell[data-color-mode="dark"] .sidebar .nav-item span,
+.app-shell[data-color-mode="dark"] .sidebar .support-nav-item,
+.app-shell[data-color-mode="dark"] .sidebar .support-nav-item span {
+  color: var(--dark-text-secondary);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item:hover,
+.app-shell[data-color-mode="dark"] .sidebar .support-nav-item:hover {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-raised) 84%, var(--dark-skin-accent));
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item.active {
+  color: var(--dark-skin-accent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--dark-skin-accent) 23%, transparent), color-mix(in srgb, var(--dark-skin-accent) 11%, transparent)),
+    var(--dark-skin-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dark-skin-accent) 54%, transparent), 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-count {
+  color: var(--dark-text-primary);
+  background: var(--dark-skin-input);
+  border-color: var(--dark-skin-border);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item.active .nav-count {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-accent) 28%, var(--dark-skin-input));
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .sidebar-divider {
+  background: var(--dark-skin-border);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .storage-line,
+.app-shell[data-color-mode="dark"] .sidebar .storage-line span {
+  color: #c9d7cd;
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .storage-line strong {
+  color: #f6fbed;
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .storage-refresh {
+  color: #e4eee4;
+}
+
+.appearance-mode-toggle {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 15px;
+  margin: 14px 0 16px;
+  text-align: left;
+  color: #244a6d;
+  background: linear-gradient(145deg, rgba(246, 249, 252, 0.98), rgba(231, 239, 246, 0.98));
+  border: 1px solid rgba(47, 93, 130, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 7px 16px rgba(22, 57, 84, 0.08);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.appearance-mode-toggle:hover {
+  border-color: rgba(232, 105, 48, 0.48);
+  box-shadow: 0 10px 20px rgba(22, 57, 84, 0.13);
+}
+
+.appearance-mode-toggle-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.appearance-mode-toggle-copy strong {
+  font-size: 14px;
+}
+
+.appearance-mode-toggle-copy small {
+  color: #6d7f90;
+  font-size: 12px;
+}
+
+.appearance-mode-toggle-indicator {
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 3px;
+  border-radius: 999px;
+  background: #a8b8c2;
+  box-shadow: inset 0 1px 2px rgba(15, 40, 58, 0.22);
+  transition: background-color 160ms ease;
+}
+
+.appearance-mode-toggle-indicator i {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(15, 40, 58, 0.22);
+  transition: translate 160ms ease;
+}
+
+.appearance-mode-toggle.selected .appearance-mode-toggle-indicator {
+  background: #e96d3b;
+}
+
+.appearance-mode-toggle.selected .appearance-mode-toggle-indicator i {
+  translate: 18px 0;
+}
+
+.app-shell[data-color-mode="dark"] .appearance-mode-toggle {
+  color: var(--dark-text-primary);
+  background: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-panel));
+  border-color: var(--dark-skin-border);
+  box-shadow: 0 9px 20px rgba(0, 0, 0, 0.23);
+}
+
+.app-shell[data-color-mode="dark"] .appearance-mode-toggle-copy small {
+  color: var(--dark-text-secondary);
 }
 
 /* 数据闭环与性能改造后的共享状态 */
@@ -4264,9 +4780,17 @@ textarea:focus-visible,
   min-height: 250px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  resize: none;
+  overflow: auto;
+  resize: both;
   scrollbar-width: thin;
   scrollbar-color: #8fa2bd #e1e6ed;
+}
+
+/* 所有桌面弹窗都由同一原生双向拖拽能力持有；内容区不能反过来锁死高度。 */
+.prototype-dialog,
+.knowledge-overview-dialog,
+.attachment-preview {
+  resize: both;
 }
 
 .prototype-dialog.is-resizable {
@@ -4877,10 +5401,14 @@ textarea:focus-visible,
 
 .knowledge-ai-insight {
   display: grid;
-  flex: none;
-  margin: 0 8px 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
   padding: 14px;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
+  overflow: hidden;
   border: 1px solid rgba(117, 91, 190, .24);
   border-radius: 14px;
   background: linear-gradient(120deg, rgba(247, 244, 255, .94), rgba(250, 252, 255, .94));
@@ -4889,6 +5417,7 @@ textarea:focus-visible,
 
 .knowledge-ai-insight > header {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   color: #57489c;
@@ -4903,7 +5432,65 @@ textarea:focus-visible,
 }
 
 .knowledge-ai-insight > header time {
+  flex: none;
   color: #8a8796;
+  font-size: 10px;
+}
+
+.knowledge-ai-insight-open {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  gap: 5px;
+  border: 1px solid rgba(117, 91, 190, .22);
+  border-radius: 8px;
+  color: #6652a5;
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.knowledge-ai-insight-preview {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.knowledge-ai-insight-content {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 12px;
+}
+
+.knowledge-ai-insight-content > .markdown-content,
+.knowledge-ai-insight-content > .markdown-content p {
+  margin: 0;
+  color: #35455d;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.knowledge-ai-insight-section {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.knowledge-ai-insight-section > h3 {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  gap: 6px;
+  color: #65568f;
+  font-size: 12px;
+}
+
+.knowledge-ai-insight-section > h3 span {
+  color: #8a819f;
   font-size: 10px;
 }
 
@@ -4922,8 +5509,11 @@ textarea:focus-visible,
 }
 
 .knowledge-ai-insight-grid article {
+  display: grid;
   min-width: 0;
   padding: 10px;
+  align-content: start;
+  gap: 5px;
   border: 1px solid rgba(117, 91, 190, .14);
   border-radius: 10px;
   background: rgba(255, 255, 255, .7);
@@ -4940,10 +5530,56 @@ textarea:focus-visible,
 }
 
 .knowledge-ai-insight-grid p {
-  margin-top: 5px;
+  margin-top: 0;
   color: #5f6c7d;
   font-size: 12px;
   line-height: 1.55;
+}
+
+.knowledge-ai-insight-grid article > span,
+.knowledge-ai-insight-grid article > small {
+  color: #768299;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.knowledge-ai-insight-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 8px;
+  list-style: none;
+}
+
+.knowledge-ai-insight-list > article,
+.knowledge-ai-insight-list > li {
+  display: grid;
+  min-width: 0;
+  padding: 10px 11px;
+  align-content: start;
+  gap: 5px;
+  border: 1px solid rgba(117, 91, 190, .14);
+  border-radius: 10px;
+  color: #53657b;
+  background: rgba(255, 255, 255, .7);
+  line-height: 1.6;
+}
+
+.knowledge-ai-insight-list > article p,
+.knowledge-ai-insight-list > article span,
+.knowledge-ai-insight-list > li span {
+  margin: 0;
+  color: #607087;
+  font-size: 11px;
+}
+
+.knowledge-ai-insight-list > article small {
+  color: #8b8797;
+  font-size: 10px;
+}
+
+.knowledge-ai-insight-list.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .knowledge-ai-insight-details {
@@ -5001,8 +5637,86 @@ textarea:focus-visible,
   line-height: 1.5;
 }
 
+.knowledge-overview-dialog.knowledge-ai-insight-dialog {
+  --overview-dialog-accent: #6652a5;
+  width: min(80vw, calc(100vw - 48px));
+  height: min(80dvh, calc(100dvh - 48px));
+  min-width: min(760px, calc(100vw - 32px));
+  min-height: min(560px, calc(100dvh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.knowledge-ai-insight-dialog > header > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.knowledge-ai-insight-dialog > header h2 {
+  flex: none;
+}
+
+.knowledge-ai-insight-dialog > header small {
+  color: #7c8798;
+  font-size: 10px;
+}
+
+.knowledge-ai-insight-dialog-body {
+  min-height: 0;
+  padding: 18px 20px 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.knowledge-ai-insight-dialog .knowledge-ai-insight-content {
+  gap: 14px;
+}
+
+.knowledge-ai-insight-dialog .knowledge-ai-insight-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.knowledge-ai-insight-dialog .knowledge-ai-insight-grid article,
+.knowledge-ai-insight-dialog .knowledge-ai-insight-list > article,
+.knowledge-ai-insight-dialog .knowledge-ai-insight-list > li {
+  padding: 11px 12px;
+}
+
+.knowledge-final-stage {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, 2fr);
+  overflow: hidden;
+}
+
+.knowledge-ai-insight-pane {
+  min-height: 0;
+  padding: 0 14px 12px;
+  overflow: hidden;
+}
+
 @media (max-width: 760px) {
-  .knowledge-ai-insight-grid {
+  .knowledge-ai-insight-grid,
+  .knowledge-ai-insight-list.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-overview-dialog.knowledge-ai-insight-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - 24px);
+    min-width: 0;
+    min-height: 0;
+    max-height: calc(100dvh - 24px);
+    resize: none;
+  }
+
+  .knowledge-ai-insight-dialog .knowledge-ai-insight-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -5050,27 +5764,29 @@ textarea:focus-visible,
 
 .ai-settings-panel {
   display: grid;
-  margin-bottom: 14px;
-  padding: 22px;
+  padding: 2px 0 0;
   gap: 16px;
 }
 
-.ai-settings-heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.ai-settings-heading h2,
-.ai-settings-heading p {
+.ai-settings-intro {
   margin: 0;
-}
-
-.ai-settings-heading p {
-  margin-top: 4px;
   color: var(--text-muted, #6b788b);
   font-size: 13px;
+  line-height: 1.55;
 }
+
+.ai-settings-route-note {
+  margin: -4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #e6d9f4;
+  border-radius: 10px;
+  background: #faf7ff;
+  color: #625277;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.ai-settings-route-note strong { color: #7546a5; }
 
 .ai-channel-switch {
   display: flex;
@@ -5108,7 +5824,8 @@ textarea:focus-visible,
   gap: 12px;
 }
 
-.ai-settings-fields label {
+.ai-settings-fields label,
+.ai-model-field {
   display: grid;
   gap: 6px;
   color: #52667f;
@@ -5175,6 +5892,183 @@ textarea:focus-visible,
   box-shadow: 0 0 0 3px rgba(255, 123, 51, .1);
 }
 
+.ai-model-picker-trigger {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  min-height: 40px;
+  padding: 7px 10px;
+  gap: 8px;
+  color: #24415f;
+  border: 1px solid #d7e0ea;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.ai-model-picker-trigger:focus-visible {
+  border-color: rgba(255, 123, 51, .62);
+  box-shadow: 0 0 0 3px rgba(255, 123, 51, .1);
+  outline: none;
+}
+
+.ai-model-picker-trigger > span:nth-child(2),
+.ai-model-option > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.ai-model-picker-trigger strong,
+.ai-model-option strong {
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-model-picker-trigger small,
+.ai-model-option small {
+  overflow: hidden;
+  color: #75849a;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-model-picker-bar,
+.ai-model-option-bar {
+  align-self: stretch;
+  min-height: 23px;
+  border-radius: 99px;
+  background: #8a99ad;
+}
+
+.ai-model-picker-bar.openai,
+.ai-model-option.openai .ai-model-option-bar { background: #15936e; }
+.ai-model-picker-bar.anthropic,
+.ai-model-option.anthropic .ai-model-option-bar { background: #bd6337; }
+.ai-model-picker-bar.deepseek,
+.ai-model-option.deepseek .ai-model-option-bar { background: #4078d7; }
+.ai-model-picker-bar.qwen,
+.ai-model-option.qwen .ai-model-option-bar { background: #8452be; }
+
+.ai-model-picker-options {
+  display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
+  min-height: 0;
+  gap: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ai-model-picker-backdrop {
+  position: fixed;
+  z-index: 180;
+  inset: 0;
+  display: grid;
+  padding: 42px;
+  place-items: center;
+  background: rgba(28, 30, 34, .42);
+  backdrop-filter: blur(5px) saturate(.82);
+  -webkit-backdrop-filter: blur(5px) saturate(.82);
+}
+
+.ai-model-picker-dialog {
+  display: grid;
+  grid-template-rows: auto auto;
+  width: min(840px, calc(100vw - 84px));
+  max-height: min(760px, calc(100vh - 84px));
+  padding: 24px;
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .62);
+  border-radius: 20px;
+  color: #263f5d;
+  background: rgb(255, 255, 255);
+  box-shadow: 0 34px 84px -34px rgba(8, 23, 45, .68);
+}
+
+.ai-model-picker-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e4eaf1;
+}
+
+.ai-model-picker-dialog > header > div { display: grid; gap: 4px; }
+.ai-model-picker-dialog > header span { color: #315dc0; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.ai-model-picker-dialog > header h2 { margin: 0; color: #173765; font-size: 22px; }
+.ai-model-picker-dialog > header p { margin: 0; color: #72829a; font-size: 12px; }
+.ai-model-picker-dialog .ai-model-picker-options {
+  max-height: 560px;
+  padding-right: 4px;
+}
+
+.ai-model-picker-dialog .ai-model-option {
+  min-height: 68px;
+  padding: 10px 12px;
+}
+
+.ai-model-picker-dialog .ai-model-option strong { font-size: 13px; }
+.ai-model-picker-dialog .ai-model-option small { font-size: 11px; }
+
+.ai-model-option {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 54px;
+  padding: 8px 10px;
+  gap: 10px;
+  color: #36536f;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.ai-model-option.openai { background: rgb(234, 248, 242); }
+.ai-model-option.anthropic { background: rgb(255, 242, 237); }
+.ai-model-option.deepseek { background: rgb(239, 245, 255); }
+.ai-model-option.qwen { background: rgb(246, 240, 255); }
+.ai-model-option.selected { border-color: rgba(44, 90, 139, .35); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .72); }
+.ai-model-option:focus-visible { outline: 3px solid rgba(255, 123, 51, .22); outline-offset: 1px; }
+
+.ai-model-picker-empty {
+  color: #7c899b;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+@media (max-width: 900px) {
+  .prototype-dialog.ai-automation-dialog {
+    width: calc(100vw - 32px);
+    height: calc(100vh - 32px);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .ai-model-picker-backdrop { padding: 16px; }
+  .ai-model-picker-dialog {
+    width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
+    padding: 20px;
+  }
+}
+
 .ai-settings-error {
   margin: 0;
   color: #b23b31;
@@ -5222,6 +6116,14 @@ textarea:focus-visible,
 }
 
 @media (max-width: 760px) {
+  .settings-action-section.ai-automation-entry {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-automation-entry-cue {
+    display: none;
+  }
+
   .ai-settings-fields {
     grid-template-columns: 1fr;
   }
@@ -5428,8 +6330,11 @@ textarea:focus-visible,
   --overview-dialog-accent: #2b69ad;
   display: grid;
   width: min(760px, calc(100vw - 48px));
-  max-height: min(760px, calc(100dvh - 48px));
+  max-height: calc(100dvh - 32px);
+  min-width: min(420px, calc(100vw - 32px));
+  min-height: min(260px, calc(100dvh - 32px));
   overflow: hidden;
+  resize: both;
   grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid color-mix(in srgb, var(--overview-dialog-accent) 28%, #dbe4ef);
   border-radius: 18px;
@@ -5445,6 +6350,70 @@ textarea:focus-visible,
 .ai-batch-result-dialog.failed { --overview-dialog-accent: #c84f36; }
 .ai-batch-progress-dialog { --overview-dialog-accent: #c95822; }
 
+.ai-single-progress-dialog,
+.ai-single-result-dialog {
+  --overview-dialog-accent: #6652a5;
+  width: min(560px, calc(100vw - 48px));
+  height: auto;
+  min-height: 0;
+}
+
+.ai-taxonomy-progress-dialog,
+.ai-taxonomy-result-dialog {
+  --overview-dialog-accent: #6652a5;
+  width: min(620px, calc(100vw - 48px));
+  height: auto;
+  min-height: 0;
+}
+
+.ai-taxonomy-result-dialog.success { --overview-dialog-accent: #16885f; }
+.ai-taxonomy-result-dialog.failed { --overview-dialog-accent: #c84f36; }
+
+.ai-taxonomy-progress-track {
+  position: relative;
+  height: 5px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(102, 82, 165, .12);
+}
+
+.ai-taxonomy-progress-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8066c3, #c95822);
+  animation: ai-taxonomy-progress 1.35s ease-in-out infinite alternate;
+}
+
+@keyframes ai-taxonomy-progress {
+  from { translate: -20% 0; }
+  to { translate: 185% 0; }
+}
+
+.ai-single-result-dialog.success { --overview-dialog-accent: #16885f; }
+.ai-single-result-dialog.failed { --overview-dialog-accent: #c84f36; }
+
+.ai-single-dialog-body {
+  display: grid;
+  padding: 22px 24px 24px;
+  align-content: center;
+  gap: 8px;
+  color: #516981;
+}
+
+.ai-single-dialog-body strong {
+  color: #173d68;
+  font-size: 15px;
+}
+
+.ai-single-dialog-body p,
+.ai-single-dialog-body small {
+  margin: 0;
+  line-height: 1.65;
+}
+
 .knowledge-overview-dialog > header {
   display: flex;
   min-width: 0;
@@ -5454,7 +6423,7 @@ textarea:focus-visible,
   border-bottom: 1px solid rgba(91, 112, 137, .14);
 }
 
-.knowledge-overview-dialog > header > span {
+.knowledge-overview-dialog > header > span:first-child {
   display: grid;
   flex: none;
   width: 34px;
@@ -5801,13 +6770,12 @@ textarea:focus-visible,
 }
 
 .knowledge-final-tabs {
-  position: sticky;
+  position: relative;
   z-index: 6;
-  top: 0;
   display: flex;
   flex: none;
   min-width: 0;
-  margin: 0 -14px 14px;
+  margin: 0;
   padding: 0 18px;
   overflow-x: auto;
   border-bottom: 1px solid #dfe5ee;
@@ -5883,16 +6851,17 @@ textarea:focus-visible,
 
 .knowledge-final-scroll {
   min-height: 0;
-  flex: 1;
-  padding: 0 14px 14px;
+  padding: 14px;
   overflow-x: hidden;
   overflow-y: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
 .knowledge-final-mode-content {
   min-width: 0;
+  min-height: 100%;
 }
 
 .knowledge-final-content-grid,
@@ -6909,6 +7878,182 @@ textarea:focus-visible,
   line-height: 1.55;
 }
 
+.knowledge-ai-mode-list,
+.knowledge-ai-evolution,
+.knowledge-ai-decisions {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.knowledge-ai-mode-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis {
+  min-height: 0;
+  padding: 12px;
+  gap: 9px;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis > .knowledge-ai-hypothesis-header {
+  min-height: 28px;
+  padding: 0 0 8px;
+  white-space: nowrap;
+}
+
+.knowledge-ai-mode-list .knowledge-ai-hypothesis-header > span {
+  display: inline-flex;
+  width: auto;
+  height: 22px;
+  padding: 0 7px;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+  font-size: 10px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.knowledge-ai-mode-list .knowledge-ai-hypothesis-header > strong {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis-thesis {
+  min-height: 0;
+  margin-top: 0;
+  padding: 10px 11px;
+  gap: 5px;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis-thesis > h3 {
+  margin: 0;
+  color: #213f64;
+  font-size: 14px;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis-thesis > p {
+  margin: 0;
+  color: #536a84;
+  font-size: 12px;
+  line-height: 1.58;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis > footer {
+  display: block;
+  margin-top: 0;
+  padding: 8px 2px 0;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis > footer div {
+  gap: 4px;
+}
+
+.knowledge-ai-mode-list .knowledge-final-hypothesis > footer strong {
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.knowledge-ai-evolution > article {
+  display: grid;
+  min-width: 0;
+  padding: 14px 16px;
+  gap: 8px;
+  border: 1px solid rgba(49, 123, 161, .24);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.knowledge-ai-evolution > article > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: #1e5488;
+}
+
+.knowledge-ai-evolution > article > header span {
+  color: #7a8ca1;
+  font-size: 11px;
+}
+
+.knowledge-ai-evolution > article > p {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  margin: 0;
+  color: #526b87;
+  line-height: 1.65;
+}
+
+.knowledge-ai-evolution > article > p small {
+  color: #8090a4;
+}
+
+.knowledge-ai-decisions {
+  margin-bottom: 12px;
+}
+
+.knowledge-ai-decisions .knowledge-final-decision-chain {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.knowledge-ai-decisions .knowledge-final-decision-card {
+  width: auto;
+  min-width: 0;
+}
+
+.knowledge-ai-decisions .knowledge-final-decision-card > p {
+  margin: 8px 0 0;
+  color: #596b82;
+  line-height: 1.6;
+}
+
+.knowledge-ai-source-references {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.knowledge-ai-source-references button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 6px;
+  gap: 4px;
+  color: #315f91;
+  border: 1px solid rgba(72, 116, 164, .18);
+  border-radius: 7px;
+  background: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.knowledge-ai-source-references button > svg {
+  flex: none;
+}
+
+.knowledge-ai-source-references button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .knowledge-final-chain-fragment > svg {
   flex: none;
   margin: 0 8px;
@@ -7565,6 +8710,33 @@ mark.source-search-highlight {
 .source-final-body .knowledge-source-preview {
   min-height: 0;
   margin-top: 8px;
+}
+
+/* 正文是按需读取的；保持提示克制，避免在阅读区域形成突兀的大号“等待页”。 */
+.source-body-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 100%;
+  width: 100%;
+  padding: 16px;
+  color: #71839b;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.source-body-loading .save-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  flex: 0 0 auto;
+}
+
+.app-shell[data-skin-material="scene"] .source-body-loading {
+  color: var(--skin-scene-muted, #5e7189);
+  text-shadow: var(--skin-scene-text-shadow, 0 1px 0 rgba(255, 255, 255, .72));
 }
 
 .source-final-insights {
@@ -9391,6 +10563,13 @@ span.source-image-placeholder {
   text-align: left;
 }
 
+/* 视频与可预览文档共用进入最高层预览的明确动作，不把文件名伪装成按钮语义。 */
+.source-asset-actions .source-file-chip.source-fullscreen-preview-action {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-align: center;
+}
+
 .source-asset-actions .source-file-chip > span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -9593,11 +10772,12 @@ span.source-image-placeholder {
   background: transparent;
 }
 
-/* 四套皮肤共享同一外框几何；场景皮肤只追加背景与磨砂材质。 */
-.app-shell:not([data-skin="classic"]) {
+/* 五套皮肤共享同一外框几何；仅场景皮肤追加背景与磨砂材质。 */
+.app-shell[data-skin-material="scene"] {
   --glass-panel: rgba(248, 251, 255, 0.88);
   --glass-card: rgba(250, 252, 255, 0.84);
-  --glass-card-strong: rgba(251, 253, 255, 0.91);
+  /* 最前景卡不再透出场景色；玻璃感由外层承托面负责。 */
+  --glass-card-strong: rgb(255, 255, 255);
   --glass-line: rgba(91, 116, 145, 0.14);
   --glass-shadow:
     0 22px 54px -30px rgba(13, 29, 52, 0.55),
@@ -9611,11 +10791,11 @@ span.source-image-placeholder {
   background-size: cover;
 }
 
-.app-shell:not([data-skin="classic"]) .main-region {
+.app-shell[data-skin-material="scene"] .main-region {
   background: transparent;
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar {
+.app-shell[data-skin-material="scene"] .sidebar {
   color: #173153;
   border: 0;
   background: rgba(248, 251, 255, 0.87);
@@ -9624,27 +10804,27 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(32px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .brand strong {
+.app-shell[data-skin-material="scene"] .brand strong {
   color: #102b56;
 }
 
-.app-shell:not([data-skin="classic"]) .brand span,
-.app-shell:not([data-skin="classic"]) .storage,
-.app-shell:not([data-skin="classic"]) .storage-copy,
-.app-shell:not([data-skin="classic"]) .storage-meta {
+.app-shell[data-skin-material="scene"] .brand span,
+.app-shell[data-skin-material="scene"] .storage,
+.app-shell[data-skin-material="scene"] .storage-copy,
+.app-shell[data-skin-material="scene"] .storage-meta {
   color: #627087;
 }
 
-.app-shell:not([data-skin="classic"]) .nav-item {
+.app-shell[data-skin-material="scene"] .nav-item {
   color: #334761;
 }
 
-.app-shell:not([data-skin="classic"]) .nav-item:hover {
+.app-shell[data-skin-material="scene"] .nav-item:hover {
   color: #173153;
   background: rgba(255, 255, 255, 0.55);
 }
 
-.app-shell:not([data-skin="classic"]) .nav-item.active {
+.app-shell[data-skin-material="scene"] .nav-item.active {
   color: #ef4f28;
   background: rgba(255, 247, 241, 0.73);
   box-shadow:
@@ -9652,34 +10832,34 @@ span.source-image-placeholder {
     0 8px 18px -14px rgba(160, 66, 20, 0.48);
 }
 
-.app-shell:not([data-skin="classic"]) .nav-item.active::before {
+.app-shell[data-skin-material="scene"] .nav-item.active::before {
   left: -7px;
   background: #ff5f2d;
   box-shadow: 0 0 12px rgba(255, 95, 45, 0.32);
 }
 
-.app-shell:not([data-skin="classic"]) .nav-count,
-.app-shell:not([data-skin="classic"]) .nav-item.danger .nav-count {
+.app-shell[data-skin-material="scene"] .nav-count,
+.app-shell[data-skin-material="scene"] .nav-item.danger .nav-count {
   color: #5d6b81;
   border-color: rgba(117, 134, 158, 0.28);
   background: rgba(255, 255, 255, 0.42);
 }
 
-.app-shell:not([data-skin="classic"]) .nav-item.active .nav-count {
+.app-shell[data-skin-material="scene"] .nav-item.active .nav-count {
   color: #e14d26;
   border-color: rgba(244, 111, 69, 0.36);
   background: rgba(255, 248, 243, 0.66);
 }
 
-.app-shell:not([data-skin="classic"]) .nav-separator {
+.app-shell[data-skin-material="scene"] .nav-separator {
   background: rgba(78, 96, 121, 0.15);
 }
 
-.app-shell:not([data-skin="classic"]) .storage {
+.app-shell[data-skin-material="scene"] .storage {
   border-color: rgba(78, 96, 121, 0.15);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar-tag-menu {
+.app-shell[data-skin-material="scene"] .sidebar-tag-menu {
   border-color: rgba(91, 116, 145, .14);
   background: rgba(248, 251, 255, 0.58);
   box-shadow: inset 0 0 0 1px rgba(215, 224, 236, 0.32);
@@ -9687,11 +10867,11 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(20px) saturate(1.18);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar-tag-menu button {
+.app-shell[data-skin-material="scene"] .sidebar-tag-menu button {
   color: #455a75;
 }
 
-.app-shell:not([data-skin="classic"]) .records-workspace {
+.app-shell[data-skin-material="scene"] .records-workspace {
   height: 100%;
   padding: 24px 18px 18px;
   border: 0;
@@ -9702,7 +10882,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(30px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-page {
+.app-shell[data-skin-material="scene"] .knowledge-page {
   padding: 24px 26px 30px;
   border: 0;
   border-radius: 20px;
@@ -9712,16 +10892,16 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(30px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .page-shell {
+.app-shell[data-skin-material="scene"] .page-shell {
   background: transparent;
 }
 
-.app-shell:not([data-skin="classic"]) .elevated-card,
-.app-shell:not([data-skin="classic"]) .knowledge-card,
-.app-shell:not([data-skin="classic"]) .detail-panel,
-.app-shell:not([data-skin="classic"]) .search-field,
-.app-shell:not([data-skin="classic"]) .filter-popover,
-.app-shell:not([data-skin="classic"]) .action-menu {
+.app-shell[data-skin-material="scene"] .elevated-card,
+.app-shell[data-skin-material="scene"] .knowledge-card,
+.app-shell[data-skin-material="scene"] .detail-panel,
+.app-shell[data-skin-material="scene"] .search-field,
+.app-shell[data-skin-material="scene"] .filter-popover,
+.app-shell[data-skin-material="scene"] .action-menu {
   border: 1px solid var(--glass-line);
   background-color: var(--glass-card);
   box-shadow: var(--glass-shadow);
@@ -9729,41 +10909,41 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(28px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .detail-panel {
+.app-shell[data-skin-material="scene"] .detail-panel {
   background: var(--glass-panel);
 }
 
-.app-shell:not([data-skin="classic"]) .record-card,
-.app-shell:not([data-skin="classic"]) .trash-card,
-.app-shell:not([data-skin="classic"]) .settings-row {
+.app-shell[data-skin-material="scene"] .record-card,
+.app-shell[data-skin-material="scene"] .trash-card,
+.app-shell[data-skin-material="scene"] .settings-row {
   background-color: var(--glass-card-strong);
 }
 
-.app-shell:not([data-skin="classic"]) .record-card.selected,
-.app-shell:not([data-skin="classic"]) .knowledge-source-list-item.active {
+.app-shell[data-skin-material="scene"] .record-card.selected,
+.app-shell[data-skin-material="scene"] .knowledge-source-list-item.active {
   border-color: #ff6a2e;
   background: var(--glass-card-strong);
   box-shadow: 0 14px 26px -20px rgba(184, 73, 23, 0.5);
 }
 
-.app-shell:not([data-skin="classic"]) .record-detail-connector {
+.app-shell[data-skin-material="scene"] .record-detail-connector {
   background: linear-gradient(90deg, #ff672d, rgba(255, 103, 45, 0.72));
 }
 
-.app-shell:not([data-skin="classic"]) .connector-dot {
+.app-shell[data-skin-material="scene"] .connector-dot {
   border-color: rgba(255, 255, 255, 0.92);
   background: #ff672d;
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-detail-columns > div,
-.app-shell:not([data-skin="classic"]) .knowledge-timeline-item,
-.app-shell:not([data-skin="classic"]) .knowledge-evidence-item,
-.app-shell:not([data-skin="classic"]) .knowledge-question-item,
-.app-shell:not([data-skin="classic"]) .knowledge-note-item,
-.app-shell:not([data-skin="classic"]) .knowledge-decision-list > article,
-.app-shell:not([data-skin="classic"]) .knowledge-decision-editor,
-.app-shell:not([data-skin="classic"]) .knowledge-note-editor,
-.app-shell:not([data-skin="classic"]) .knowledge-domain {
+.app-shell[data-skin-material="scene"] .knowledge-detail-columns > div,
+.app-shell[data-skin-material="scene"] .knowledge-timeline-item,
+.app-shell[data-skin-material="scene"] .knowledge-evidence-item,
+.app-shell[data-skin-material="scene"] .knowledge-question-item,
+.app-shell[data-skin-material="scene"] .knowledge-note-item,
+.app-shell[data-skin-material="scene"] .knowledge-decision-list > article,
+.app-shell[data-skin-material="scene"] .knowledge-decision-editor,
+.app-shell[data-skin-material="scene"] .knowledge-note-editor,
+.app-shell[data-skin-material="scene"] .knowledge-domain {
   border-color: rgba(91, 116, 145, 0.14);
   background-color: rgba(250, 252, 255, 0.9);
   box-shadow:
@@ -9772,13 +10952,13 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(20px) saturate(1.16);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-domain > strong,
-.app-shell:not([data-skin="classic"]) .knowledge-topic-row,
-.app-shell:not([data-skin="classic"]) .knowledge-suggestion-empty {
+.app-shell[data-skin-material="scene"] .knowledge-domain > strong,
+.app-shell[data-skin-material="scene"] .knowledge-topic-row,
+.app-shell[data-skin-material="scene"] .knowledge-suggestion-empty {
   background-color: rgba(249, 252, 255, 0.68);
 }
 
-.app-shell:not([data-skin="classic"]) .prototype-dialog {
+.app-shell[data-skin-material="scene"] .prototype-dialog {
   border: 0;
   background: rgba(249, 252, 255, 0.84);
   box-shadow: 0 32px 72px -28px rgba(8, 23, 45, 0.65);
@@ -9787,7 +10967,7 @@ span.source-image-placeholder {
 }
 
 /* 禁止给所有场景卡片统一补一圈等亮白线；需要边界时由对应材质层自行处理。 */
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .sidebar,
   .knowledge-page,
   .elevated-card,
@@ -9812,7 +10992,7 @@ span.source-image-placeholder {
   display: flex;
   align-items: flex-start;
   gap: 13px;
-  margin: 0 auto 12px;
+  margin: 16px auto 12px;
   padding: 14px 18px;
   border-radius: 14px;
 }
@@ -9874,7 +11054,7 @@ span.source-image-placeholder {
 
 .skin-option-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-top: 15px;
 }
@@ -9931,16 +11111,42 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(8px) saturate(1.15);
 }
 
-.skin-preview.classic {
-  background: #eef1f5;
+.skin-preview.entity {
+  background: #eaf1f7;
 }
 
-.skin-preview.classic i {
+.skin-preview.entity-mist {
+  background: #eaf1f7;
+}
+
+.skin-preview.entity-sage {
+  background: #eef2ed;
+}
+
+.skin-preview.entity-terracotta {
+  background: #f3eeea;
+}
+
+.skin-preview.entity i {
   position: absolute;
   z-index: 1;
   inset: 0 auto 0 0;
   width: 28%;
-  background: #062b56;
+  background: #173a61;
+}
+
+.skin-preview.entity-sage i {
+  background: #304b43;
+}
+
+.skin-preview.entity-terracotta i {
+  background: #493830;
+}
+
+.skin-preview.entity::after {
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .skin-option-copy {
@@ -9993,7 +11199,7 @@ span.source-image-placeholder {
 
 /*
  * 核心工作区结构不变量
- * 四套皮肤可以改变背景与卡片材质，但不得改变四张最终页面共同使用的
+ * 五套皮肤可以改变背景与卡片材质，但不得改变最终页面共同使用的
  * 全高主导航、工作区起点和核心页面栏位。
  */
 .core-workspace-active .app-header {
@@ -10004,7 +11210,7 @@ span.source-image-placeholder {
   display: none !important;
 }
 
-.core-workspace-active:not([data-skin="classic"]) .knowledge-reading-page {
+.core-workspace-active[data-skin-material="scene"] .knowledge-reading-page {
   padding: 26px 27px 22px 16px;
 }
 
@@ -10044,9 +11250,10 @@ span.source-image-placeholder {
 .topic-final-search {
   display: flex;
   align-items: center;
-  flex: 0 0 52px;
-  gap: 10px;
-  padding: 0 16px;
+  flex: 0 0 36px;
+  min-height: 36px;
+  gap: 8px;
+  padding: 0 12px;
   color: #244a76;
   border: 1px solid #d9e1ec;
   border-radius: 999px;
@@ -10056,33 +11263,99 @@ span.source-image-placeholder {
 
 .topic-final-filter-row {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 6px;
+  gap: 8px;
 }
 
-.topic-final-filter-row button {
+.topic-final-filter-controls,
+.topic-final-ai-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.topic-final-filter-controls > button,
+.topic-final-ai-actions > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
-  padding: 0 9px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
   gap: 5px;
   color: #5f748e;
   border: 1px solid #dbe3ed;
   border-radius: 8px;
   background: rgba(255, 255, 255, .82);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.topic-final-filter-row button.active {
+.topic-final-filter-controls > button.active {
   color: #c65319;
   border-color: #ff9a66;
   background: rgba(255, 247, 241, .94);
 }
 
-.topic-final-filter-row .topic-final-new {
+.topic-final-ai-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.topic-final-ai-actions .topic-final-new {
+  min-height: 38px;
+  padding: 0 10px;
   color: #d1531b;
   border-color: #ff8b52;
+  background: rgba(255, 249, 245, .92);
+  box-shadow: 0 5px 12px rgba(195, 92, 28, .08);
+}
+
+.topic-final-ai-actions .topic-final-incremental {
+  color: #1a6a8b;
+  border-color: #9bcadd;
+  background: rgba(246, 252, 255, .94);
+  box-shadow: 0 5px 12px rgba(42, 112, 148, .08);
+}
+
+.topic-final-ai-actions > button:only-child,
+.topic-final-ai-actions > button:nth-child(3):last-child {
+  grid-column: 1 / -1;
+}
+
+.knowledge-ai-model-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  color: #647995;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+}
+
+.knowledge-ai-model-select > span {
+  flex: 0 0 auto;
+}
+
+.knowledge-ai-model-select .ai-model-picker-trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+.knowledge-ai-model-select select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  color: #244a76;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 12px;
 }
 
 .topic-final-search input {
@@ -10309,14 +11582,84 @@ span.source-image-placeholder {
   gap: 11px;
 }
 
-.topic-final-basis p {
-  display: grid;
-  grid-template-columns: 18px 98px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
+.topic-final-basis > p,
+.topic-final-basis > article p {
+  display: block;
   margin: 0;
   color: #536d89;
   line-height: 1.55;
+  overflow-wrap: anywhere;
+  writing-mode: horizontal-tb;
+}
+
+.topic-final-basis > article {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid rgba(91, 116, 145, .12);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.topic-final-basis > article strong,
+.topic-final-basis > article small {
+  min-width: 0;
+}
+
+.topic-final-basis > article strong {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.topic-final-basis > article p {
+  font-size: 11px;
+}
+
+.topic-final-basis > article small {
+  color: #7b8da2;
+  font-size: 10px;
+}
+
+.topic-final-integration .markdown-content {
+  color: #435f7d;
+  line-height: 1.75;
+}
+
+.topic-final-integration-sources {
+  display: grid;
+  margin-top: 12px;
+  padding-top: 10px;
+  gap: 8px;
+  border-top: 1px solid rgba(91, 116, 145, .12);
+}
+
+.topic-final-integration-sources > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #345d88;
+  font-size: 11px;
+}
+
+.topic-final-integration-sources > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.topic-final-integration-sources span {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 5px 8px;
+  overflow: hidden;
+  border-radius: 7px;
+  color: #60758d;
+  background: #f4f7fa;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topic-final-basis svg {
@@ -10468,6 +11811,18 @@ span.source-image-placeholder {
   text-align: center;
 }
 
+.topic-final-no-selection small,
+.topic-final-awaiting-card small {
+  color: #7c899b;
+  font-size: 11px;
+}
+
+.topic-final-awaiting-card {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+}
+
 .topic-reading-page > .knowledge-secondary-maintenance:not([open]) {
   display: none;
 }
@@ -10493,6 +11848,11 @@ span.source-image-placeholder {
 
   .topic-final-content {
     grid-template-columns: minmax(0, 1fr) 220px;
+  }
+
+  .knowledge-ai-mode-list,
+  .knowledge-ai-decisions .knowledge-final-decision-chain {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -10869,7 +12229,7 @@ span.source-image-placeholder {
   outline-offset: -2px;
 }
 
-.app-shell:not([data-skin="classic"]) .association-link-target {
+.app-shell[data-skin-material="scene"] .association-link-target {
   border-color: rgba(255, 109, 37, .76);
   outline-color: rgba(255, 255, 255, .58);
 }
@@ -11305,8 +12665,15 @@ span.source-image-placeholder {
 }
 
 .attachment-timeline-dialog {
-  width: min(940px, calc(100vw - 42px));
-  max-height: min(760px, calc(100vh - 48px));
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  width: min(80vw, calc(100vw - 42px));
+  height: min(80dvh, calc(100dvh - 48px));
+  min-width: min(420px, calc(100vw - 32px));
+  min-height: min(360px, calc(100dvh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
 }
 
 .attachment-timeline-search {
@@ -11347,10 +12714,39 @@ span.source-image-placeholder {
 
 .attachment-timeline-list {
   display: grid;
+  min-height: 0;
   gap: 7px;
-  max-height: 510px;
   overflow: auto;
   padding: 2px;
+  scrollbar-gutter: stable;
+}
+
+.attachment-timeline-refreshing {
+  margin: 0;
+  padding: 6px 8px;
+  color: #71849a;
+  border-radius: 8px;
+  background: rgba(240, 245, 250, .72);
+  font-size: 11px;
+}
+
+.attachment-timeline-load-more {
+  justify-self: center;
+  min-height: 34px;
+  margin: 6px 0 4px;
+  padding: 0 12px;
+  border: 1px solid rgba(222, 106, 46, .48);
+  border-radius: 9px;
+  color: #bd511b;
+  background: rgba(255, 248, 243, .9);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.attachment-timeline-load-more:hover,
+.attachment-timeline-load-more:focus-visible {
+  border-color: rgba(222, 106, 46, .78);
+  background: #fff3ea;
 }
 
 .attachment-timeline-month {
@@ -11418,10 +12814,27 @@ span.source-image-placeholder {
   overflow: hidden;
   border-bottom: 1px solid rgba(189, 204, 223, .46);
   background: linear-gradient(145deg, rgba(31, 49, 69, .96), rgba(18, 31, 47, .98));
+  border-right: 0;
+  border-left: 0;
+  cursor: pointer;
+}
+
+.attachment-timeline-media-visual:focus-visible,
+.attachment-timeline-media-footer button:focus-visible {
+  outline: 2px solid rgba(239, 105, 43, .86);
+  outline-offset: -3px;
 }
 
 .attachment-timeline-media-card[data-media-kind="image"] .attachment-timeline-media-visual {
   background: linear-gradient(145deg, rgba(234, 239, 244, .96), rgba(211, 220, 229, .94));
+}
+
+.attachment-timeline-media-card[data-media-kind="audio"] .attachment-timeline-media-visual {
+  background: linear-gradient(145deg, #243b5a, #17263a);
+}
+
+.attachment-timeline-media-card[data-media-kind="file"] .attachment-timeline-media-visual {
+  background: linear-gradient(145deg, rgba(236, 242, 249, .98), rgba(217, 228, 240, .96));
 }
 
 .attachment-timeline-media-visual img,
@@ -11442,6 +12855,24 @@ span.source-image-placeholder {
   justify-items: center;
   gap: 8px;
   color: rgba(228, 236, 245, .9);
+}
+
+.attachment-timeline-audio-visual,
+.attachment-timeline-file-visual {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  color: #e8f1fb;
+}
+
+.attachment-timeline-file-visual {
+  color: #3e6387;
+}
+
+.attachment-timeline-audio-visual span,
+.attachment-timeline-file-visual span {
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .attachment-timeline-media-card[data-media-kind="image"] .attachment-timeline-media-placeholder {
@@ -11502,6 +12933,45 @@ span.source-image-placeholder {
   gap: 8px;
   color: #8190a5;
   font-size: 11px;
+}
+
+.attachment-timeline-audio-player {
+  width: 100%;
+  min-width: 0;
+  height: 31px;
+  margin-top: 2px;
+  accent-color: #d45c27;
+}
+
+.attachment-timeline-media-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 2px;
+  color: #8190a5;
+  font-size: 11px;
+}
+
+.attachment-timeline-media-footer > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 7px;
+  gap: 4px;
+  border: 1px solid rgba(206, 104, 48, .38);
+  border-radius: 8px;
+  color: #bd511b;
+  background: rgba(255, 249, 245, .86);
+  font: inherit;
+  cursor: pointer;
+}
+
+.attachment-timeline-media-footer > button:hover {
+  border-color: rgba(206, 104, 48, .72);
+  background: #fff4ec;
 }
 
 .attachment-timeline-media-copy em {
@@ -11711,8 +13181,8 @@ span.source-image-placeholder {
 }
 
 /* 传送到 document.body 的弹窗与提示继承当前皮肤，不残留经典蓝色。 */
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .prototype-dialog,
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .prototype-notice {
+:root[data-knowledge-skin-material="scene"] .prototype-dialog,
+:root[data-knowledge-skin-material="scene"] .prototype-notice {
   border: 1px solid rgba(255, 255, 255, .88);
   color: #17385f;
   background: var(--skin-scene-surface, rgba(250, 252, 255, .9));
@@ -11723,78 +13193,78 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(30px) saturate(1.1);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .data-exchange-tabs {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .data-exchange-tabs {
   border: 1px solid rgba(255, 255, 255, .86);
   background: rgba(248, 251, 255, .76);
   box-shadow: 0 12px 24px -20px rgba(19, 42, 72, .55);
   backdrop-filter: blur(20px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .data-exchange-tabs button {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .data-exchange-tabs button {
   color: var(--skin-scene-text, #17385f);
   border: 1px solid transparent;
   background: transparent;
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .data-exchange-tabs button.active {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .data-exchange-tabs button.active {
   color: #fff;
   border-color: #db581f;
   background: linear-gradient(145deg, #f0763d, #d9531d);
   box-shadow: 0 9px 18px -12px rgba(164, 61, 18, .72);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .drop-zone,
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .preview-card,
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .import-notice,
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .import-log-card {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .drop-zone,
+.app-shell[data-skin-material="scene"] .settings-transfer-page .preview-card,
+.app-shell[data-skin-material="scene"] .settings-transfer-page .import-notice,
+.app-shell[data-skin-material="scene"] .settings-transfer-page .import-log-card {
   border-color: rgba(255, 255, 255, .9);
   background: var(--glass-card-strong);
   box-shadow: var(--glass-shadow);
   backdrop-filter: blur(28px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .drop-target {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .drop-target {
   border-color: rgba(238, 121, 64, .45);
   background: rgba(249, 251, 254, .78);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .drop-zone.drag-active .drop-target {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .drop-zone.drag-active .drop-target {
   border-color: #ed6c31;
   background: rgba(255, 247, 241, .88);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .drop-icon {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .drop-icon {
   color: #e65d24;
   background: rgba(255, 232, 217, .84);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .primary-button,
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .prototype-dialog .primary-button {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .primary-button,
+:root[data-knowledge-skin-material="scene"] .prototype-dialog .primary-button {
   color: #fff;
   border-color: #d9561f;
   background: linear-gradient(145deg, #f1783f, #d9531d);
   box-shadow: 0 9px 18px -12px rgba(164, 61, 18, .72);
 }
 
-.app-shell:not([data-skin="classic"]) .settings-transfer-page .secondary-button,
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .prototype-dialog .secondary-button {
+.app-shell[data-skin-material="scene"] .settings-transfer-page .secondary-button,
+:root[data-knowledge-skin-material="scene"] .prototype-dialog .secondary-button {
   color: #274765;
   border-color: rgba(116, 136, 159, .28);
   background: rgba(250, 252, 255, .86);
 }
 
-.app-shell:not([data-skin="classic"]) .page-shell > .page-title h1 {
+.app-shell[data-skin-material="scene"] .page-shell > .page-title h1 {
   color: var(--skin-scene-text, #15345e);
   text-shadow: var(--skin-scene-text-shadow, 0 1px 0 rgba(255, 255, 255, .72));
 }
 
-.app-shell:not([data-skin="classic"]) .page-shell > .page-title p,
-.app-shell:not([data-skin="classic"]) .page-loading {
+.app-shell[data-skin-material="scene"] .page-shell > .page-title p,
+.app-shell[data-skin-material="scene"] .page-loading {
   color: var(--skin-scene-muted, #3d536d);
   text-shadow: var(--skin-scene-text-shadow, 0 1px 0 rgba(255, 255, 255, .72));
 }
 
-.app-shell:not([data-skin="classic"]) .page-shell > .page-title > div > span {
+.app-shell[data-skin-material="scene"] .page-shell > .page-title > div > span {
   color: var(--skin-scene-accent, #07557f);
   text-shadow: var(--skin-scene-text-shadow, 0 1px 0 rgba(255, 255, 255, .72));
 }
@@ -11835,7 +13305,7 @@ span.source-image-placeholder {
   font-weight: 700;
 }
 
-.app-shell:not([data-skin="classic"]) .scene-surface-state {
+.app-shell[data-skin-material="scene"] .scene-surface-state {
   width: min(680px, calc(100% - 48px));
   min-height: 220px;
   margin: auto;
@@ -11853,11 +13323,11 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(24px) saturate(1.08);
 }
 
-.app-shell:not([data-skin="classic"]) .scene-surface-state strong {
+.app-shell[data-skin-material="scene"] .scene-surface-state strong {
   color: var(--skin-surface-text, #17375f);
 }
 
-.app-shell:not([data-skin="classic"]) .scene-surface-state svg {
+.app-shell[data-skin-material="scene"] .scene-surface-state svg {
   color: var(--skin-surface-muted, #52647a);
 }
 
@@ -12067,7 +13537,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(28px) saturate(1.08);
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .prototype-notice {
+:root[data-knowledge-skin-material="scene"] .prototype-notice {
   color: var(--skin-surface-text, #17385f);
   border: 2px solid rgba(232, 101, 43, .78);
   background: var(--skin-scene-surface, rgba(253, 252, 250, .94));
@@ -12280,6 +13750,52 @@ span.source-image-placeholder {
   font-weight: 800;
 }
 
+.knowledge-final-insights li.is-ai-generated {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+}
+
+.knowledge-final-insights li.is-ai-generated > small,
+.knowledge-ai-validity-item > strong > small {
+  display: inline-grid;
+  min-width: 20px;
+  height: 18px;
+  margin: 1px 0 0;
+  place-items: center;
+  border-radius: 6px;
+  color: #5d4da0;
+  background: #f0ecff;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.knowledge-ai-validity-item {
+  display: grid;
+  min-width: 0;
+  padding: 8px 0;
+  gap: 4px;
+  border-bottom: 1px solid #e9edf3;
+}
+
+.knowledge-ai-validity-item > strong {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 5px;
+  color: #425b78;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.knowledge-ai-validity-item > p {
+  margin: 0;
+  color: #64758b;
+  font-size: 10px;
+  line-height: 1.48;
+}
+
 .knowledge-final-confidence-row,
 .knowledge-final-evolution-grid {
   gap: 16px;
@@ -12382,7 +13898,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: blur(24px) saturate(1.08);
 }
 
-.app-shell[data-skin="classic"] .unified-note-list-panel {
+.app-shell[data-skin-material="entity"] .unified-note-list-panel {
   background: rgba(248, 250, 253, .98);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -12911,6 +14427,10 @@ span.source-image-placeholder {
 }
 
 .knowledge-final-decisions-mode > .knowledge-final-decision-history > .knowledge-final-decision-version {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   margin-top: 0;
 }
 
@@ -13223,7 +14743,7 @@ span.source-image-placeholder {
   overflow: hidden;
   flex-direction: column;
   border-color: rgba(49, 123, 161, .3);
-  background: rgba(255, 255, 255, .84);
+  background: rgb(255, 255, 255);
   box-shadow: 0 12px 24px -22px rgba(23, 62, 103, .58);
 }
 
@@ -13270,16 +14790,10 @@ span.source-image-placeholder {
 }
 
 /*
- * 当前主题洞察是三套场景皮肤共享的材质基线，具体背景图不是基线本身。
+ * 当前主题洞察是两套场景皮肤共享的材质基线，具体背景图不是基线本身。
  * 页面只消费侧栏 / 工作区 / 内容 / 控件 / 浮层 / 弹窗这套统一配方；
  * 每套场景只调整环境冷暖，不再各自重写透明度、模糊和边缘逻辑。
  */
-:root[data-knowledge-skin="desert-lantern"] {
-  --knowledge-material-halo-rgb: 255, 252, 248;
-  --knowledge-material-cool-rgb: 240, 242, 244;
-  --knowledge-material-warm-rgb: 246, 243, 240;
-}
-
 :root[data-knowledge-skin="florist-studio"] {
   --knowledge-material-halo-rgb: 255, 253, 249;
   --knowledge-material-cool-rgb: 242, 243, 241;
@@ -13292,7 +14806,7 @@ span.source-image-placeholder {
   --knowledge-material-warm-rgb: 247, 243, 237;
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) {
+:root[data-knowledge-skin-material="scene"] {
   /* 极轻中性抖动只负责打散大面积低对比渐变的 8-bit 色阶，不改变既定冷暖和透明层级。 */
   --knowledge-material-dither: url("./assets/skins/material-dither.svg");
   /* 大承托面在到达裁切边缘前先柔和回落，避免浅色填充的抗锯齿像一圈连续白描边。 */
@@ -13313,28 +14827,39 @@ span.source-image-placeholder {
   --knowledge-material-content-surface: var(--knowledge-material-dither), var(--knowledge-material-edge-vignette), linear-gradient(145deg, rgba(250, 249, 247, .76), rgba(var(--knowledge-material-cool-rgb), .5) 58%, rgba(var(--knowledge-material-warm-rgb), .44));
   --knowledge-material-content-shadow: 0 22px 46px -28px rgba(18, 42, 72, .68);
   /*
-   * 前景卡只通过低色度 RGB 明度与直接承托层拉开，不改变既有透明度、模糊职责或场景取样。
-   * 2026-08-09 的真实 WebView2 反馈替代 v61 偏灰的收白幅度；大承托面继续保持低纯白度。
+   * 最前景卡必须完全不透明；玻璃取景只由外层承托面负责。
+   * 2026-08-10 的真实 WebView2 反馈替代 v87 的半透明前景卡，避免暖色背景再次把白卡染灰。
    */
-  --knowledge-material-foreground-card-color: rgba(255, 255, 255, .92);
-  --knowledge-material-browser-group-surface:
-    var(--knowledge-material-dither),
-    linear-gradient(145deg, rgba(252, 253, 254, .78), rgba(246, 248, 250, .78) 60%, rgba(250, 248, 246, .78));
-  --knowledge-material-browser-item-surface:
-    var(--knowledge-material-dither),
-    linear-gradient(145deg, rgba(253, 254, 255, .8), rgba(248, 250, 252, .8) 60%, rgba(252, 249, 247, .8));
+  --knowledge-material-foreground-card-color: rgb(255, 255, 255);
+  /*
+   * 中性前景卡的职责是把阅读内容从场景承托面中明确提出来，
+   * 因此这里使用纯白实体面，而不是“看起来接近白色”的渐变或半透明玻璃。
+   * 选中态与下方的语义色卡继续各自编码状态/含义。
+   */
+  --knowledge-material-browser-group-surface: rgb(255, 255, 255);
+  --knowledge-material-browser-item-surface: rgb(255, 255, 255);
   --knowledge-material-browser-active-surface:
     var(--knowledge-material-dither),
-    linear-gradient(135deg, rgba(255, 253, 251, .98), rgba(253, 246, 240, .9));
-  --knowledge-material-reading-card-surface:
+    linear-gradient(135deg, rgb(255, 255, 255), rgb(255, 248, 243));
+  --knowledge-material-reading-card-surface: rgb(255, 255, 255);
+  --knowledge-material-reading-card-nested-surface: rgb(255, 255, 255);
+  --knowledge-material-reading-support-surface: rgb(255, 255, 255);
+  --knowledge-material-ai-card-surface:
     var(--knowledge-material-dither),
-    linear-gradient(145deg, rgba(253, 254, 255, .9), rgba(248, 250, 252, .9) 58%, rgba(252, 249, 247, .9));
-  --knowledge-material-reading-card-nested-surface:
+    linear-gradient(120deg, rgb(253, 251, 255), rgb(255, 255, 255));
+  --knowledge-material-ai-nested-surface: rgb(255, 255, 255);
+  --knowledge-material-positive-card-surface:
     var(--knowledge-material-dither),
-    linear-gradient(145deg, rgba(254, 255, 255, .94), rgba(250, 252, 254, .94));
-  --knowledge-material-reading-support-surface:
+    linear-gradient(145deg, rgb(250, 255, 253), rgb(247, 253, 251));
+  --knowledge-material-negative-card-surface:
     var(--knowledge-material-dither),
-    linear-gradient(145deg, rgba(252, 254, 255, .72), rgba(247, 250, 253, .72));
+    linear-gradient(145deg, rgb(255, 252, 253), rgb(255, 249, 251));
+  --knowledge-material-action-card-surface:
+    var(--knowledge-material-dither),
+    linear-gradient(145deg, rgb(250, 255, 253), rgb(247, 253, 250));
+  --knowledge-material-result-card-surface:
+    var(--knowledge-material-dither),
+    linear-gradient(145deg, rgb(254, 252, 255), rgb(251, 249, 254));
   --knowledge-material-state-surface:
     var(--knowledge-material-dither),
     radial-gradient(ellipse at 18% 0%, rgba(var(--knowledge-material-halo-rgb), .72), transparent 44%),
@@ -13364,7 +14889,11 @@ span.source-image-placeholder {
   --knowledge-material-modal-shadow: 0 38px 96px -28px rgba(15, 31, 52, .68);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar {
+:root[data-knowledge-skin-material="entity"] {
+  --knowledge-material-foreground-card-color: rgb(255, 255, 255);
+}
+
+.app-shell[data-skin-material="scene"] .sidebar {
   border: 0;
   color: #173b63;
   background: var(--knowledge-material-sidebar-surface);
@@ -13373,93 +14902,93 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-sidebar-filter);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-tree-card {
+.app-shell[data-skin-material="scene"] .knowledge-final-tree-card {
   border: 0;
   background: var(--knowledge-material-navigation-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .brand strong {
+.app-shell[data-skin-material="scene"] .sidebar .brand strong {
   color: #0c315d;
   text-shadow: 0 1px rgba(255, 255, 255, .7);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .brand-mark {
+.app-shell[data-skin-material="scene"] .sidebar .brand-mark {
   box-shadow: 0 12px 24px -12px rgba(17, 42, 70, .48);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-item {
+.app-shell[data-skin-material="scene"] .sidebar .nav-item {
   color: #254a71;
   transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 100ms ease-out;
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-item:hover:not(.active) {
+.app-shell[data-skin-material="scene"] .sidebar .nav-item:hover:not(.active) {
   color: #173f69;
   background: var(--knowledge-material-dither), linear-gradient(135deg, rgba(255, 255, 255, .48), rgba(232, 239, 247, .32));
   box-shadow: 0 10px 20px -20px rgba(25, 54, 86, .66);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-group-supporting {
+.app-shell[data-skin-material="scene"] .sidebar .nav-group-supporting {
   padding: 4px 0;
   border-radius: 12px;
   background: var(--knowledge-material-dither), linear-gradient(180deg, rgba(250, 252, 255, .3), rgba(224, 232, 241, .16));
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar :is(
+.app-shell[data-skin-material="scene"] .sidebar :is(
   .nav-group-supporting,
   .sidebar-bottom
 ) .nav-item:not(.active) {
   color: #355778;
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-item.active {
+.app-shell[data-skin-material="scene"] .sidebar .nav-item.active {
   color: #ed4e28;
   background:
     var(--knowledge-material-dither),
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, .72), transparent 48%),
-    linear-gradient(105deg, rgba(255, 249, 245, .95), rgba(255, 248, 244, .945) 52%, rgba(255, 247, 243, .94));
+    radial-gradient(circle at 18% 0%, rgb(255, 255, 255), transparent 48%),
+    linear-gradient(105deg, rgb(255, 251, 248), rgb(255, 250, 247) 52%, rgb(255, 249, 246));
   box-shadow:
     inset 0 0 0 1px rgba(241, 104, 59, .32),
     inset 0 1px 0 rgba(255, 255, 255, .96),
     0 13px 25px -16px rgba(135, 60, 27, .58);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-count {
+.app-shell[data-skin-material="scene"] .sidebar .nav-count {
   color: #536b84;
   border-color: rgba(88, 112, 141, .22);
   background: rgba(247, 250, 253, .68);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-item.active .nav-count {
+.app-shell[data-skin-material="scene"] .sidebar .nav-item.active .nav-count {
   color: #d94b27;
   border-color: rgba(229, 91, 48, .3);
   background: rgba(255, 250, 246, .9);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .nav-separator {
+.app-shell[data-skin-material="scene"] .sidebar .nav-separator {
   background: linear-gradient(90deg, transparent, rgba(75, 101, 130, .2) 18%, rgba(75, 101, 130, .2) 82%, transparent);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .sidebar-bottom {
+.app-shell[data-skin-material="scene"] .sidebar .sidebar-bottom {
   border-radius: 12px;
   background: var(--knowledge-material-dither), linear-gradient(180deg, rgba(242, 247, 252, .08), rgba(205, 216, 228, .24));
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .storage {
+.app-shell[data-skin-material="scene"] .sidebar .storage {
   color: #5c738b;
   border-top-color: rgba(73, 99, 129, .16);
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .storage-stat-line {
+.app-shell[data-skin-material="scene"] .sidebar .storage-stat-line {
   font-weight: 650;
   letter-spacing: .01em;
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .storage strong {
+.app-shell[data-skin-material="scene"] .sidebar .storage strong {
   color: #49637d;
   font-weight: 750;
 }
 
-.app-shell:not([data-skin="classic"]) .sidebar .storage-refresh-button {
+.app-shell[data-skin-material="scene"] .sidebar .storage-refresh-button {
   color: #4e6a85;
   border-color: rgba(79, 105, 135, .18);
   background: rgba(245, 249, 253, .52);
@@ -13469,7 +14998,7 @@ span.source-image-placeholder {
  * 旧 2px 双向 mask 在 WebView2 裁切抗锯齿中会重新显成连续细白线；统一停用。
  * 边缘改由材质自身的低对比暗部渐退完成，不再额外绘制闭环描边或遮罩边。
  */
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .sidebar,
   .records-workspace,
   .knowledge-page
@@ -13478,7 +15007,7 @@ span.source-image-placeholder {
   mask-image: none;
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-reading-page {
+.app-shell[data-skin-material="scene"] .knowledge-reading-page {
   border: 0;
   background: var(--knowledge-material-workspace-surface);
   box-shadow: var(--knowledge-material-workspace-shadow);
@@ -13486,13 +15015,13 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-workspace-filter);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-tree-card {
+.app-shell[data-skin-material="scene"] .knowledge-final-tree-card {
   box-shadow: var(--knowledge-material-navigation-shadow);
   backdrop-filter: var(--knowledge-material-navigation-filter);
   -webkit-backdrop-filter: var(--knowledge-material-navigation-filter);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-search {
+.app-shell[data-skin-material="scene"] .knowledge-final-search {
   border-color: transparent;
   background: var(--knowledge-material-control-surface);
   box-shadow: 0 14px 28px -24px rgba(20, 46, 78, .7);
@@ -13500,7 +15029,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-control-filter);
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .action-menu,
   .filter-popover,
   .sidebar-tag-menu
@@ -13511,7 +15040,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-popover-filter);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-reader {
+.app-shell[data-skin-material="scene"] .knowledge-final-reader {
   border: 0;
   background: var(--knowledge-material-content-surface);
   box-shadow: var(--knowledge-material-content-shadow);
@@ -13523,7 +15052,7 @@ span.source-image-placeholder {
  * 将主题洞察已确认的材质层级同步到其余页面：
  * 页面外壳承托场景、左侧浏览区较轻、右侧正文区更实，密集内卡保持稳定可读。
  */
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .records-workspace,
   .knowledge-page
 ) {
@@ -13534,7 +15063,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-workspace-filter);
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .record-pane,
   .knowledge-inbox-list,
   .knowledge-final-tree-card
@@ -13550,7 +15079,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: none;
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .detail-panel,
   .knowledge-inbox-detail,
   .topic-final-reader
@@ -13562,7 +15091,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: none;
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .search-field,
   .topic-final-search,
   .data-exchange-tabs
@@ -13575,7 +15104,7 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: none;
 }
 
-/* 搜索框本体必须从控制层承托面上亮出来，四套皮肤保持同一清晰度。 */
+/* 搜索框本体必须从控制层承托面上亮出来，五套皮肤保持同一清晰度。 */
 .app-shell :is(
   .unified-note-list-panel .search-field,
   .knowledge-final-search,
@@ -13598,8 +15127,8 @@ span.source-image-placeholder {
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 180ms ease;
 }
 
-/* 原版浅色不能用早期皮肤私有投影覆盖共享搜索控件高度。 */
-.app-shell[data-skin="classic"] :is(
+/* 实体工作台不能用早期皮肤私有投影覆盖共享搜索控件高度。 */
+.app-shell[data-skin-material="entity"] :is(
   .unified-note-list-panel .search-field,
   .knowledge-final-search,
   .topic-final-search,
@@ -13682,24 +15211,44 @@ span.source-image-placeholder {
   background: var(--knowledge-material-dither, none), linear-gradient(180deg, rgba(255, 250, 246, .98), rgba(255, 239, 228, .94));
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+/* 五套皮肤统一：普通最前景列表卡必须是纯白实体面；选中态和语义色卡另行编码。 */
+.app-shell :is(
   .record-card:not(.selected),
   .unified-note-card:not(.selected),
-  .trash-card,
-  .settings-row,
+  .knowledge-source-list-item:not(.active),
+  .knowledge-source-preview,
+  .source-final-organization-grid > div,
+  .source-final-insights > section,
+  .source-final-proposition-list article,
+  .source-final-anchor-list article,
+  .source-final-reason-list p,
   .topic-final-section,
   .topic-final-suggestions > section,
   .topic-final-relations p,
   .topic-final-aliases span
 ) {
   border-color: rgba(91, 116, 145, .14);
-  background-color: var(--knowledge-material-foreground-card-color);
+  background: var(--knowledge-material-foreground-card-color);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) :is(
+/* 设置与回收站条目是场景页一级承托卡，不属于内容卡内部的实体前景卡。 */
+.app-shell[data-skin-material="scene"] :is(
+  .settings-page > .elevated-card,
+  .settings-page > .ai-automation-entry,
+  .settings-page .settings-row,
+  .trash-grid .trash-card
+) {
+  border-color: var(--glass-line);
+  background: var(--glass-card);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(28px) saturate(1.08);
+  -webkit-backdrop-filter: blur(28px) saturate(1.08);
+}
+
+:root[data-knowledge-skin-material="scene"] :is(
   .prototype-dialog,
   .prototype-notice
 ) {
@@ -13710,49 +15259,59 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-modal-filter);
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .knowledge-overview-judgment,
   .knowledge-overview-card,
   .knowledge-final-hypothesis
 ) {
-  background-color: var(--knowledge-material-foreground-card-color);
+  background: var(--knowledge-material-foreground-card-color);
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-hypothesis:not(.oppose) {
-  background: var(--knowledge-material-dither), linear-gradient(145deg, rgba(247, 253, 251, .94), rgba(241, 249, 247, .88));
+.app-shell[data-skin-material="scene"] .knowledge-final-hypothesis:not(.oppose) {
+  background: var(--knowledge-material-positive-card-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-hypothesis.oppose {
-  background: var(--knowledge-material-dither), linear-gradient(145deg, rgba(255, 250, 251, .94), rgba(252, 245, 247, .88));
+.app-shell[data-skin-material="scene"] .knowledge-final-hypothesis.oppose {
+  background: var(--knowledge-material-negative-card-surface);
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] .knowledge-ai-insight {
+  background: var(--knowledge-material-ai-card-surface);
+}
+
+.app-shell[data-skin-material="scene"] :is(
+  .knowledge-ai-insight-grid article,
+  .knowledge-ai-insight-list > article,
+  .knowledge-ai-insight-list > li,
+  .knowledge-ai-boundary-content
+) {
+  background: var(--knowledge-material-ai-nested-surface);
+}
+
+.app-shell[data-skin-material="scene"] :is(
   .knowledge-final-hypothesis-thesis,
   .knowledge-final-evidence-column
 ) {
   background: var(--knowledge-material-reading-card-nested-surface);
 }
 
-/*
- * 卡片二、知识四状态与其他入口消费同一组“明亮前景卡”角色；只提高内容卡 RGB 明度，外层底板不动。
- * 主题整合的 .knowledge-final-reading-pane.is-content 是主要来源阅读卡，必须显式留在本规则之外。
- */
-.app-shell:not([data-skin="classic"]) .knowledge-final-domain {
+/* 卡片二、知识四状态与其他入口消费同一组纯白前景卡；外层底板不动。 */
+.app-shell[data-skin-material="scene"] .knowledge-final-domain {
   background: var(--knowledge-material-browser-group-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-domain > button:not(.knowledge-final-domain-heading):not(.active) {
+.app-shell[data-skin-material="scene"] .knowledge-final-domain > button:not(.knowledge-final-domain-heading):not(.active) {
   background: var(--knowledge-material-browser-item-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-domain > button.active {
+.app-shell[data-skin-material="scene"] .knowledge-final-domain > button.active {
   background: var(--knowledge-material-browser-active-surface);
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .knowledge-final-insights > section,
   .knowledge-final-version-diff,
   .knowledge-final-change-summary,
@@ -13762,7 +15321,7 @@ span.source-image-placeholder {
   background: var(--knowledge-material-reading-card-surface);
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .knowledge-final-timeline-fragment article:not(.current),
   .knowledge-final-decision-summary > div,
   .knowledge-final-decision-card:not(.action):not(.result)
@@ -13770,64 +15329,58 @@ span.source-image-placeholder {
   background: var(--knowledge-material-reading-card-nested-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-decision-card.action {
-  background: var(--knowledge-material-dither), linear-gradient(145deg, rgba(247, 252, 250, .84), rgba(241, 248, 245, .84));
+.app-shell[data-skin-material="scene"] .knowledge-final-decision-card.action {
+  background: var(--knowledge-material-action-card-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-decision-card.result {
-  background: var(--knowledge-material-dither), linear-gradient(145deg, rgba(251, 249, 254, .85), rgba(246, 243, 251, .85));
+.app-shell[data-skin-material="scene"] .knowledge-final-decision-card.result {
+  background: var(--knowledge-material-result-card-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-reading-pane.is-support {
+.app-shell[data-skin-material="scene"] .knowledge-final-reading-pane.is-support {
   background: var(--knowledge-material-reading-support-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-auto-rationale {
-  background-color: var(--knowledge-material-foreground-card-color);
+.app-shell[data-skin-material="scene"] .knowledge-final-auto-rationale {
+  background: var(--knowledge-material-foreground-card-color);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-domain {
+.app-shell[data-skin-material="scene"] .knowledge-final-domain {
   background: var(--knowledge-material-browser-group-surface);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-tabs {
-  position: sticky;
+.app-shell[data-skin-material="scene"] .knowledge-final-tabs {
+  position: relative;
   z-index: 6;
-  top: 0;
   border-bottom: 0;
   background: var(--knowledge-material-control-surface);
-  box-shadow: 0 14px 24px -22px rgba(24, 51, 82, 0);
-  transition: box-shadow 160ms var(--ease-in-out);
+  box-shadow: 0 12px 22px -20px rgba(24, 51, 82, .48);
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-tabs[data-scroll-edge="visible"] {
-  box-shadow: 0 16px 25px -20px rgba(24, 51, 82, .66);
-}
-
-.app-shell:not([data-skin="classic"]) .knowledge-final-tabs button + button {
+.app-shell[data-skin-material="scene"] .knowledge-final-tabs button + button {
   border-left: 0;
 }
 
-.app-shell:not([data-skin="classic"]) .knowledge-final-tabs button.active {
+.app-shell[data-skin-material="scene"] .knowledge-final-tabs button.active {
   background: color-mix(in srgb, #fff2e9 68%, var(--knowledge-material-control-surface));
 }
 
-.app-shell:not([data-skin="classic"]) :is(
+.app-shell[data-skin-material="scene"] :is(
   .knowledge-final-tabs button,
   .knowledge-overview-card > button
 ):active,
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog button:active {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog button:active {
   transform: scale(.985);
   transition: transform 100ms ease-out;
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog-backdrop {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog-backdrop {
   background: rgba(18, 32, 50, .22);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog {
   background: var(--knowledge-material-modal-surface);
   box-shadow: var(--knowledge-material-modal-shadow);
   animation: knowledge-materialize 180ms var(--ease-out);
@@ -13835,25 +15388,25 @@ span.source-image-placeholder {
   -webkit-backdrop-filter: var(--knowledge-material-modal-filter);
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog > header {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog > header {
   border-bottom-color: rgba(82, 106, 135, .08);
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog > footer {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog > footer {
   border-top-color: rgba(82, 106, 135, .08);
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog > header button {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog > header button {
   transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog > header button:hover {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog > header button:hover {
   color: #244d76;
   background: rgba(255, 255, 255, .78);
   box-shadow: 0 8px 18px -14px rgba(25, 52, 83, .62);
 }
 
-:root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog-list li {
+:root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog-list li {
   background: rgba(252, 254, 255, .94);
 }
 
@@ -13869,21 +15422,21 @@ span.source-image-placeholder {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) .knowledge-overview-dialog {
+  :root[data-knowledge-skin-material="scene"] .knowledge-overview-dialog {
     animation: none;
   }
 
-  .app-shell:not([data-skin="classic"]) .knowledge-final-tabs {
+  .app-shell[data-skin-material="scene"] .knowledge-final-tabs {
     transition: none;
   }
 
-  .app-shell:not([data-skin="classic"]) .sidebar .nav-item {
+  .app-shell[data-skin-material="scene"] .sidebar .nav-item {
     transition: none;
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) {
+  :root[data-knowledge-skin-material="scene"] {
     --knowledge-material-sidebar-surface: #eef3f8;
     --knowledge-material-sidebar-filter: none;
     --knowledge-material-navigation-surface: #f5f7fa;
@@ -13902,7 +15455,7 @@ span.source-image-placeholder {
 }
 
 @media (prefers-contrast: more) {
-  :root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) {
+  :root[data-knowledge-skin-material="scene"] {
     --knowledge-material-sidebar-surface: #f1f4f8;
     --knowledge-material-sidebar-filter: none;
     --knowledge-material-navigation-surface: #f4f7fb;
@@ -13916,7 +15469,7 @@ span.source-image-placeholder {
     --knowledge-material-content-edge: rgba(39, 62, 91, .46);
   }
 
-  .app-shell:not([data-skin="classic"]) :is(
+  .app-shell[data-skin-material="scene"] :is(
     .sidebar,
     .records-workspace,
     .knowledge-page,
@@ -13938,7 +15491,7 @@ span.source-image-placeholder {
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root[data-knowledge-skin]:not([data-knowledge-skin="classic"]) {
+  :root[data-knowledge-skin-material="scene"] {
     --knowledge-material-sidebar-surface: #eef3f8;
     --knowledge-material-sidebar-filter: none;
     --knowledge-material-navigation-surface: #f5f7fa;
@@ -14033,6 +15586,91 @@ span.source-image-placeholder {
   padding: 20px;
 }
 
+/*
+ * NF-CORE-WORKSPACE-GEOMETRY-01
+ * 五个主要入口共用同一桌面工作区几何：卡二沿用“全部笔记”的 24% 宽度，
+ * 卡三占用余量；两张主卡的四边、圆角与搜索控件起点保持稳定。
+ * 页面原有类只负责各自内容，不能再私有改写这组外框尺寸。
+ */
+@media (min-width: 1201px) {
+  .app-shell.core-workspace-active :is(.knowledge-reading-page, .topic-reading-page, .knowledge-inbox-page) {
+    padding: 24px 28px 34px;
+  }
+
+  :is(.knowledge-final-shell, .topic-final-shell).core-workspace-grid {
+    grid-template-columns: minmax(300px, 24%) 14px minmax(0, 1fr);
+  }
+
+  .knowledge-inbox-layout.core-workspace-grid,
+  .app-shell .records-workspace.core-workspace-grid {
+    grid-template-columns: minmax(300px, 24%) minmax(0, 1fr);
+    gap: 14px;
+    padding: 24px 28px 34px;
+  }
+
+  .app-shell .knowledge-inbox-layout.core-workspace-grid {
+    padding: 0;
+  }
+}
+
+.core-workspace-card-two,
+.core-workspace-card-three {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  border-radius: 14px;
+}
+
+:is(.knowledge-final-browser, .topic-final-browser).core-workspace-card-two {
+  padding: 10px;
+  overflow: hidden;
+}
+
+.topic-final-browser.core-workspace-card-two {
+  gap: 8px;
+}
+
+:is(.knowledge-final-browser, .topic-final-browser).core-workspace-card-two > .knowledge-final-tree-card {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.topic-final-browser.core-workspace-card-two > .knowledge-final-tree-card {
+  margin-top: 0;
+}
+
+.app-shell[data-skin-material="entity"] .core-workspace-card-two {
+  border-color: var(--classic-edge);
+  background: var(--classic-navigation-surface);
+  box-shadow: var(--classic-panel-shadow);
+}
+
+.app-shell[data-skin-material="scene"] .core-workspace-card-two {
+  border: 0;
+  background: var(--knowledge-material-navigation-surface);
+  box-shadow: var(--knowledge-material-navigation-shadow);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-shell :is(
+  .unified-note-list-panel .search-field,
+  .knowledge-final-search,
+  .topic-final-search
+) {
+  flex: 0 0 45px;
+  height: 45px;
+  min-height: 45px;
+  border-radius: 23px;
+}
+
 @media (max-width: 1240px) {
   .records-workspace.record-subview-workspace {
     grid-template-columns: minmax(280px, 30%) minmax(0, 1fr);
@@ -14112,7 +15750,7 @@ span.source-image-placeholder {
   }
 
   /* 场景皮肤的静态材质会以更高选择器清掉基础投影；悬浮投影必须重新显式胜出。 */
-  .app-shell:not([data-skin="classic"]) :is(
+  .app-shell[data-skin-material="scene"] :is(
     [data-card-interaction="lift"],
     [data-card-interaction="surface-lift"]
   ):hover {
@@ -14186,4 +15824,1301 @@ span.source-image-placeholder {
   .app-shell [data-card-rendering="repeated-list"]:active {
     top: 0;
   }
+}
+
+/* 暗色令牌需置于皮肤规则末尾，确保只覆盖材质，不覆盖 v144 的几何合同。 */
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-mist"] {
+  --entity-sidebar: #102e4a;
+  --entity-canvas: #101d26;
+  --entity-workspace-start: #182a35;
+  --entity-workspace-end: #13242d;
+  --entity-navigation-start: #1b303d;
+  --entity-navigation-end: #152631;
+  --entity-edge: rgba(203, 225, 233, 0.14);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-sage"] {
+  --entity-sidebar: #183f38;
+  --entity-canvas: #12231f;
+  --entity-workspace-start: #1d312b;
+  --entity-workspace-end: #142720;
+  --entity-navigation-start: #243c34;
+  --entity-navigation-end: #192d27;
+  --entity-edge: rgba(216, 236, 223, 0.14);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin="entity-terracotta"] {
+  --entity-sidebar: #482d29;
+  --entity-canvas: #291c1b;
+  --entity-workspace-start: #382521;
+  --entity-workspace-end: #2b1d1b;
+  --entity-navigation-start: #432d27;
+  --entity-navigation-end: #301f1c;
+  --entity-edge: rgba(244, 218, 202, 0.15);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="entity"] {
+  --classic-workspace-surface: linear-gradient(140deg, var(--entity-workspace-start), var(--entity-workspace-end));
+  --classic-navigation-surface: linear-gradient(160deg, var(--entity-navigation-start), var(--entity-navigation-end));
+  /* 实体皮肤的每一层都由当前皮肤的暗色令牌派生，不能回退到旧蓝灰常量。 */
+  --classic-content-surface: var(--dark-skin-panel);
+  --classic-nested-surface: var(--dark-skin-raised);
+  --classic-control-surface: linear-gradient(145deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --classic-panel-shadow: 0 18px 38px rgba(0, 0, 0, 0.27);
+  --classic-content-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+  --classic-edge: var(--entity-edge);
+}
+
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="scene"] {
+  --knowledge-material-edge-vignette: radial-gradient(circle at center, transparent 48%, rgba(3, 11, 9, 0.27) 100%);
+  --knowledge-material-sidebar-surface:
+    linear-gradient(145deg, color-mix(in srgb, var(--dark-skin-panel) 94%, transparent), color-mix(in srgb, var(--dark-skin-subtle) 90%, transparent)),
+    radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--dark-skin-accent) 12%, transparent), transparent 38%);
+  --knowledge-material-navigation-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 94%, transparent), color-mix(in srgb, var(--dark-skin-panel) 90%, transparent));
+  --knowledge-material-workspace-surface: linear-gradient(135deg, color-mix(in srgb, var(--dark-skin-panel) 82%, transparent), color-mix(in srgb, var(--dark-skin-subtle) 76%, transparent));
+  --knowledge-material-content-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 95%, transparent), color-mix(in srgb, var(--dark-skin-panel) 95%, transparent));
+  --knowledge-material-foreground-surface: var(--dark-skin-panel);
+  --knowledge-material-foreground-muted-surface: var(--dark-skin-raised);
+  --knowledge-material-browser-group-surface: var(--dark-skin-subtle);
+  --knowledge-material-browser-active-surface: linear-gradient(135deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-reading-surface: var(--dark-skin-subtle);
+  --knowledge-material-positive-surface: linear-gradient(145deg, color-mix(in srgb, #1a6b51 56%, var(--dark-skin-panel)), var(--dark-skin-panel));
+  --knowledge-material-negative-surface: linear-gradient(145deg, #3b292a, #302224);
+  --knowledge-material-action-surface: linear-gradient(145deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-result-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-panel));
+  --knowledge-material-state-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-raised));
+  --knowledge-material-control-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-panel));
+  --knowledge-material-control-muted-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-subtle));
+  --knowledge-material-scroll-track: rgba(226, 241, 228, 0.1);
+  --knowledge-material-scroll-thumb: rgba(235, 246, 234, 0.36);
+  --knowledge-material-scroll-thumb-hover: var(--dark-skin-accent);
+  --knowledge-material-popover-surface: color-mix(in srgb, var(--dark-skin-raised) 97%, transparent);
+  --knowledge-material-control-filter: saturate(110%) blur(14px);
+  --knowledge-material-modal-surface: color-mix(in srgb, var(--dark-skin-panel) 97%, transparent);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .brand strong {
+  color: #fff9ec;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.32);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar :is(.brand span, .nav-item, .nav-item span) {
+  color: var(--dark-text-secondary);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item:hover {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-raised) 84%, var(--dark-skin-accent));
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item.active {
+  color: var(--dark-skin-accent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--dark-skin-accent) 23%, transparent), color-mix(in srgb, var(--dark-skin-accent) 11%, transparent)),
+    var(--dark-skin-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dark-skin-accent) 54%, transparent), 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-count {
+  color: var(--dark-text-primary);
+  background: var(--dark-skin-input);
+  border-color: var(--dark-skin-border);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item.active .nav-count {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-accent) 28%, var(--dark-skin-input));
+}
+
+.app-shell[data-color-mode="dark"] .sidebar :is(.nav-separator, .storage) {
+  border-color: var(--dark-skin-border);
+  background-color: transparent;
+}
+
+.app-shell[data-color-mode="dark"] .sidebar :is(.storage, .storage-stat-line, .storage-stat-line span) {
+  color: var(--dark-text-secondary);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .storage-stat-line strong {
+  color: var(--dark-text-primary);
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .storage-refresh-button {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-skin-border);
+  background: var(--dark-skin-input);
+}
+
+/* 最前景卡的浅色合同只适用于默认浅色模式；暗色模式改为不透明深色实体面。 */
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="scene"] {
+  --knowledge-material-foreground-card-color: var(--dark-skin-panel);
+  --knowledge-material-browser-group-surface: var(--dark-skin-subtle);
+  --knowledge-material-browser-item-surface: var(--dark-skin-raised);
+  --knowledge-material-browser-active-surface: linear-gradient(135deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-reading-card-surface: var(--dark-skin-panel);
+  --knowledge-material-reading-card-nested-surface: var(--dark-skin-raised);
+  --knowledge-material-reading-support-surface: var(--dark-skin-raised);
+  --knowledge-material-ai-card-surface: linear-gradient(120deg, var(--dark-skin-raised), var(--dark-skin-panel));
+  --knowledge-material-ai-nested-surface: var(--dark-skin-input);
+  --knowledge-material-positive-card-surface: linear-gradient(145deg, #16362c, #112d25);
+  --knowledge-material-negative-card-surface: linear-gradient(145deg, #3b282b, #302124);
+  --knowledge-material-action-card-surface: linear-gradient(145deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-result-card-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-panel));
+  --knowledge-material-state-card-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-raised));
+}
+
+.app-shell[data-color-mode="dark"][data-skin-material="entity"] :is(
+  .record-pane,
+  .detail-panel,
+  .knowledge-final-browser,
+  .knowledge-final-reader,
+  .knowledge-reading-page,
+  .settings-page > .elevated-card,
+  .settings-page > .ai-automation-entry,
+  .settings-page .settings-row,
+  .trash-grid .trash-card
+) {
+  background-color: var(--dark-skin-panel);
+  border-color: var(--dark-skin-border);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .knowledge-final-reader,
+  .knowledge-final-browser,
+  .record-pane,
+  .detail-panel,
+  .settings-page
+) :is(h1, h2, h3, h4, p, li, td, th, label, strong, small, span, em, article) {
+  color: var(--dark-text-primary);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .knowledge-final-reader,
+  .knowledge-final-browser,
+  .record-pane,
+  .detail-panel
+) :is(a, button) {
+  color: var(--dark-text-primary);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-anchor-button,
+.app-shell[data-color-mode="dark"] .knowledge-final-hypothesis > header > em,
+.app-shell[data-color-mode="dark"] .knowledge-final-hypothesis.oppose > header > em {
+  color: var(--dark-skin-accent);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-hypothesis > header > span,
+.app-shell[data-color-mode="dark"] .knowledge-final-evidence-column article > svg {
+  color: #6ee1bd;
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-hypothesis.oppose > header > span {
+  color: #ff9ca5;
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-tabs button.active {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-accent) 19%, var(--dark-skin-raised));
+}
+
+/* 暗色场景中的三类浅色遗留控件：必须有独立深色承托，不能只把文字提亮。 */
+.app-shell[data-color-mode="dark"] .knowledge-final-domain > .knowledge-final-domain-heading {
+  color: var(--dark-control-text);
+  background: var(--dark-control-surface);
+  box-shadow: inset 0 -1px rgba(231, 243, 234, 0.15);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-domain > .knowledge-final-domain-heading :is(strong, svg) {
+  color: var(--dark-control-text);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-domain > .knowledge-final-domain-heading span {
+  color: var(--dark-control-text);
+  background: var(--dark-control-badge-surface);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-heading button {
+  color: var(--dark-control-emphasis-text);
+  border-color: var(--dark-control-border);
+  background: var(--dark-control-emphasis-surface);
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.2);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-heading button:hover:not(:disabled) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-skin-accent);
+  background: var(--dark-control-hover-surface);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-heading button:disabled {
+  color: var(--dark-control-muted-text);
+  border-color: var(--dark-skin-border);
+  background: var(--dark-skin-subtle);
+  opacity: 1;
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-tabs button {
+  color: var(--dark-control-text);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-tabs button span {
+  color: var(--dark-control-text);
+  background: var(--dark-control-badge-surface);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-final-tabs button.active span {
+  color: var(--dark-control-emphasis-text);
+  background: var(--dark-control-badge-active-surface);
+}
+
+/* 全部笔记、来源、收藏、持续跟踪共享的列表卡：深色实体面与明确文字层级。 */
+.app-shell[data-color-mode="dark"] :is(
+  .unified-note-card,
+  .record-card.unified-note-card,
+  .knowledge-source-list-item.unified-note-card
+) {
+  color: var(--dark-note-list-title);
+  border-color: var(--dark-note-list-border);
+  background: var(--dark-note-list-surface);
+  box-shadow: 0 10px 22px -20px rgba(0, 0, 0, 0.72);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .unified-note-card,
+  .record-card.unified-note-card,
+  .knowledge-source-list-item.unified-note-card
+):hover {
+  border-color: var(--dark-note-list-selected-border);
+  background: var(--dark-note-list-hover-surface);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .unified-note-card.selected,
+  .record-card.unified-note-card.selected,
+  .knowledge-source-list-item.unified-note-card.active
+) {
+  border-color: var(--dark-note-list-selected-border);
+  background: var(--dark-note-list-selected-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dark-skin-accent) 16%, transparent), 0 13px 24px -18px rgba(0, 0, 0, 0.62);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .unified-note-copy > strong,
+  .unified-note-card.selected .unified-note-copy > strong,
+  .record-card.unified-note-card.selected .unified-note-copy > strong,
+  .knowledge-source-list-item.unified-note-card.active .unified-note-copy > strong
+) {
+  color: var(--dark-note-list-title);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .unified-note-meta,
+  .unified-note-date,
+  .unified-note-card.selected .unified-note-meta,
+  .unified-note-card.selected .unified-note-date,
+  .record-card.unified-note-card.selected .unified-note-meta,
+  .record-card.unified-note-card.selected .unified-note-date,
+  .knowledge-source-list-item.unified-note-card.active .unified-note-meta,
+  .knowledge-source-list-item.unified-note-card.active .unified-note-date
+) {
+  color: var(--dark-note-list-meta);
+}
+
+.app-shell[data-color-mode="dark"] .unified-note-date {
+  color: var(--dark-note-list-date);
+}
+
+.app-shell[data-color-mode="dark"] .unified-note-meta i {
+  color: var(--dark-text-tertiary);
+}
+
+.app-shell[data-color-mode="dark"] .unified-note-actions .note-list-quick-actions {
+  border-color: var(--dark-note-list-action-border);
+  background: var(--dark-note-list-action-surface);
+  box-shadow: 0 10px 20px -14px rgba(0, 0, 0, 0.72);
+}
+
+.app-shell[data-color-mode="dark"] .detail-title-row h1 {
+  color: var(--dark-note-list-title);
+}
+
+.app-shell[data-color-mode="dark"] .detail-title-actions button {
+  color: var(--dark-note-list-title);
+  border-color: var(--dark-note-list-action-border);
+  background: var(--dark-note-list-action-surface);
+}
+
+/* 暗色文字层级是跨页面合同：正文不允许继承浅色主题的深蓝/灰蓝字。 */
+.app-shell[data-color-mode="dark"] :is(
+  .records-workspace,
+  .record-pane,
+  .detail-panel,
+  .knowledge-page,
+  .knowledge-reading-page,
+  .knowledge-final-browser,
+  .knowledge-final-reader,
+  .settings-page,
+  .trash-page,
+  .favorites-page,
+  .tracking-page
+) {
+  color: var(--dark-text-primary);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .record-pane,
+  .detail-panel,
+  .knowledge-page,
+  .knowledge-reading-page,
+  .settings-page,
+  .trash-page,
+  .favorites-page,
+  .tracking-page
+) :is(h1, h2, h3, h4, strong, label, th, td) {
+  color: var(--dark-text-primary);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .record-pane,
+  .detail-panel,
+  .knowledge-page,
+  .knowledge-reading-page,
+  .settings-page,
+  .trash-page,
+  .favorites-page,
+  .tracking-page
+) :is(p, small, time, .meta, .muted, .empty-state, .helper-text) {
+  color: var(--dark-text-secondary);
+}
+
+/* 输入、筛选、定位与轻量操作：所有记录入口消费相同暗色可操作面。 */
+.app-shell[data-color-mode="dark"] :is(
+  .search-field,
+  .knowledge-final-search,
+  .source-search-field,
+  .knowledge-source-search-row .search-field,
+  .attachment-timeline-search input,
+  .record-content-tools input
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-input);
+  box-shadow: var(--search-control-elevation), var(--search-control-inner-highlight);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .search-field > svg,
+  .source-search-field > svg
+) {
+  color: var(--dark-text);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .search-field input,
+  .source-search-field input,
+  .attachment-timeline-search input,
+  .record-content-tools input
+) {
+  color: var(--dark-text);
+}
+
+.app-shell[data-color-mode="dark"] :is(.search-field kbd, .search-field button) {
+  color: var(--dark-muted);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .filter-button,
+  .list-toolbar button,
+  .unified-note-list-locator > button,
+  .knowledge-inbox-list > .source-list-locator button,
+  .knowledge-source-filter-control-row > .source-load-all-button,
+  .knowledge-source-filter-control-row > .source-filter-tabs button,
+  .record-content-action,
+  .attachment-locate-button,
+  .attachment-timeline-search button,
+  .attachment-timeline-load-more,
+  .detail-title-actions button,
+  .favorite-button
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .filter-button:hover,
+  .filter-button.active,
+  .list-toolbar button:hover,
+  .unified-note-list-locator > button:hover,
+  .knowledge-inbox-list > .source-list-locator button:hover,
+  .knowledge-source-filter-control-row > .source-load-all-button:hover:not(:disabled),
+  .knowledge-source-filter-control-row > .source-filter-tabs button:hover,
+  .knowledge-source-filter-control-row > .source-filter-tabs button.active,
+  .record-content-action:hover,
+  .attachment-locate-button:hover,
+  .attachment-timeline-search button:hover,
+  .attachment-timeline-load-more:hover,
+  .detail-title-actions button:hover,
+  .favorite-button:hover
+) {
+  color: var(--dark-accent);
+  border-color: var(--dark-border-strong);
+  background: var(--dark-surface-input-focus);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-source-filter-control-row > .source-filter-tabs button span,
+.app-shell[data-color-mode="dark"] .list-result-summary strong {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-input);
+}
+
+.app-shell[data-color-mode="dark"] .knowledge-source-filter-control-row > .source-filter-tabs button.active span {
+  color: var(--dark-accent);
+  border-color: var(--dark-border-strong);
+  background: var(--dark-surface-input-focus);
+}
+
+.app-shell[data-color-mode="dark"] .unified-note-list-locator {
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+.app-shell[data-color-mode="dark"] .unified-note-list-locator input[type="range"]::-webkit-slider-runnable-track {
+  background: var(--dark-skin-input-focus);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
+}
+
+.app-shell[data-color-mode="dark"] .unified-note-list-locator input[type="range"]::-webkit-slider-thumb {
+  border-color: var(--dark-surface-raised);
+  background: var(--dark-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--dark-skin-accent) 44%, transparent), 0 4px 8px rgba(0, 0, 0, 0.34);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .list-toolbar,
+  .knowledge-source-filter-control-row,
+  .list-result-summary,
+  .unified-note-list-locator > span
+) {
+  color: var(--dark-muted);
+  border-color: var(--dark-border);
+}
+
+.app-shell[data-color-mode="dark"] .list-result-summary span,
+.app-shell[data-color-mode="dark"] .knowledge-source-filter-control-row > .source-filter-tabs button.active {
+  color: var(--dark-text);
+}
+
+/* 正文消息、详情和附件承托全部使用不透明深面，保留用户/助手的语义边线。 */
+.app-shell[data-color-mode="dark"] :is(
+  .detail-panel,
+  .record-content-card,
+  .source-preview-block,
+  .source-message,
+  .source-message.human,
+  .source-message.assistant,
+  .source-plain-text,
+  .attachment-text-reader,
+  .attachment-text-state
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-panel);
+}
+
+.app-shell[data-color-mode="dark"] .source-message.human {
+  border-left-color: var(--dark-accent);
+  background: color-mix(in srgb, var(--dark-skin-accent) 12%, var(--dark-skin-panel));
+}
+
+.app-shell[data-color-mode="dark"] .source-message.assistant {
+  border-left-color: var(--dark-skin-accent);
+  background: var(--dark-skin-raised);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .detail-meta,
+  .record-content-heading em,
+  .record-summary-block > strong,
+  .source-preview-block > strong,
+  .source-summary > strong,
+  .source-message-header span,
+  .record-content-endcap > span,
+  .attachment-row span
+) {
+  color: var(--dark-muted);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .record-content-heading,
+  .record-summary-block > p,
+  .source-preview-block > p,
+  .record-content-empty,
+  .source-message-header strong,
+  .source-message.human .source-message-header strong,
+  .source-message pre,
+  .source-plain-text,
+  .source-message .markdown-content,
+  .attachment-text-reader .markdown-content,
+  .attachment-text-reader > pre
+) {
+  color: var(--dark-text);
+}
+
+.app-shell[data-color-mode="dark"] .status-pill {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, #1a7a5a 46%, var(--dark-skin-panel));
+}
+
+/* 设置页一级卡、二级操作卡与皮肤选择卡同属暗色承托，不能继续显示浅色面。 */
+.app-shell[data-color-mode="dark"] .settings-page :is(
+  .skin-settings-panel,
+  .runtime-build-card,
+  .settings-row,
+  .settings-action-section,
+  .settings-action-section.ai-automation-entry,
+  .settings-page > .elevated-card
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-panel);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22);
+}
+
+.app-shell[data-color-mode="dark"] .settings-page :is(
+  .settings-row:hover,
+  .settings-row-clickable:hover,
+  .settings-action-section:hover
+) {
+  border-color: var(--dark-border-strong);
+  background: var(--dark-surface-raised);
+}
+
+.app-shell[data-color-mode="dark"] .settings-page :is(
+  .settings-row > div:nth-child(2) span,
+  .settings-action-section > div:first-child > p,
+  .ai-automation-entry-text > span,
+  .runtime-build-card p,
+  .runtime-build-card small
+) {
+  color: var(--dark-muted);
+}
+
+.app-shell[data-color-mode="dark"] .settings-page :is(
+  .settings-row > div:nth-child(2) strong,
+  .settings-action-section > div:first-child > strong,
+  .ai-automation-entry-text > strong,
+  .runtime-build-card strong,
+  .skin-settings-heading h2,
+  .skin-settings-heading p
+) {
+  color: var(--dark-text);
+}
+
+.app-shell[data-color-mode="dark"] .skin-option {
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+.app-shell[data-color-mode="dark"] .skin-option.selected {
+  border-color: var(--dark-border-strong);
+  background: var(--dark-surface-selected);
+}
+
+/* 设置内的皮肤缩略图也是界面的一部分：暗色时用当前皮肤材质示意，不保留白卡幻象。 */
+.app-shell[data-color-mode="dark"] .skin-preview {
+  border-color: var(--dark-skin-border);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dark-skin-accent) 14%, transparent);
+}
+
+.app-shell[data-color-mode="dark"] .skin-preview::after,
+.app-shell[data-color-mode="dark"] .skin-preview.entity::after {
+  border-color: var(--dark-skin-border);
+  background: color-mix(in srgb, var(--dark-skin-raised) 92%, transparent);
+  box-shadow: 0 8px 16px -12px rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(8px) saturate(1.05);
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+}
+
+.app-shell[data-color-mode="dark"] .skin-preview.entity {
+  background: var(--dark-skin-raised);
+}
+
+.app-shell[data-color-mode="dark"] .skin-preview.entity i {
+  background: var(--dark-skin-subtle);
+}
+
+.app-shell[data-color-mode="dark"] .skin-choice-indicator {
+  border-color: var(--dark-skin-border);
+  background: color-mix(in srgb, var(--dark-skin-panel) 82%, transparent);
+}
+
+.app-shell[data-color-mode="dark"] .skin-option.selected .skin-choice-indicator {
+  color: var(--dark-skin-panel);
+  border-color: var(--dark-skin-accent);
+  background: var(--dark-skin-accent);
+}
+
+/* Portal 会脱离 app-shell：临时承托面直接从根节点的暗色令牌读取。 */
+:root[data-knowledge-color-mode="dark"] :is(
+  .prototype-dialog,
+  .knowledge-overview-dialog,
+  .attachment-preview,
+  .action-menu,
+  .filter-popover,
+  .unified-note-list-filter-popover,
+  .sidebar-tag-menu
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-panel);
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.46);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog-backdrop {
+  background: rgba(3, 12, 10, 0.62);
+  backdrop-filter: blur(6px);
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .prototype-dialog-heading,
+  .prototype-dialog-heading h2,
+  .prototype-dialog-heading span,
+  .prototype-dialog p,
+  .prototype-dialog li,
+  .prototype-dialog label,
+  .dialog-footnote,
+  .action-menu button,
+  .filter-popover > strong,
+  .filter-popover button,
+  .unified-note-list-filter-popover > strong,
+  .unified-note-list-filter-popover label,
+  .sidebar-tag-menu button
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .prototype-dialog input,
+  .prototype-dialog textarea,
+  .prototype-dialog select,
+  .dialog-footnote
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-input);
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .prototype-dialog .icon-button,
+  .prototype-dialog .secondary-button,
+  .prototype-dialog .primary-button,
+  .prototype-dialog .danger-button,
+  .action-menu button:hover,
+  .filter-popover button:hover,
+  .filter-popover button.selected,
+  .sidebar-tag-menu button:hover
+) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-notice {
+  color: var(--dark-text);
+  border: 1px solid var(--dark-border-strong);
+  background: var(--dark-surface-raised);
+  box-shadow: 0 18px 36px -16px rgba(0, 0, 0, 0.64);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-notice > svg {
+  color: #76e5c1;
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-notice :is(.notice-action, .notice-close) {
+  color: var(--dark-text);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-input);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-notice :is(.notice-action:hover, .notice-close:hover) {
+  color: var(--dark-accent);
+  border-color: var(--dark-border-strong);
+  background: var(--dark-surface-input-focus);
+}
+
+/* 辅助导航和底部信息在暗色侧栏中直接落在玻璃上，不再人为包一张灰色卡。 */
+.app-shell[data-color-mode="dark"] .sidebar :is(.nav-group-supporting, .sidebar-bottom) {
+  border-radius: 0;
+  background: transparent;
+}
+
+/* 页面场景皮肤的浅色导航规则位于文件中段；暗色合同必须在最终层再次明确接管。 */
+.app-shell[data-color-mode="dark"] .sidebar :is(
+  .brand span,
+  .nav-item,
+  .nav-item span,
+  .support-nav-item,
+  .support-nav-item span
+) {
+  color: var(--dark-text-secondary);
+  opacity: 1;
+}
+
+.app-shell[data-color-mode="dark"] .sidebar :is(.nav-item, .support-nav-item):hover:not(.active) {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-raised) 84%, var(--dark-skin-accent));
+}
+
+.app-shell[data-color-mode="dark"] .sidebar .nav-item.active {
+  color: var(--dark-skin-accent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--dark-skin-accent) 23%, transparent), color-mix(in srgb, var(--dark-skin-accent) 11%, transparent)),
+    var(--dark-skin-raised);
+}
+
+/* 设置入口图标同样是可读性的一部分：深色模式不再保留浅灰图标底板。 */
+.app-shell[data-color-mode="dark"] .settings-icon,
+:root[data-knowledge-color-mode="dark"] .prototype-dialog .settings-icon {
+  color: var(--dark-skin-accent);
+  border: 1px solid var(--dark-border);
+  background: var(--dark-surface-input);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--dark-text-primary) 8%, transparent);
+}
+
+.app-shell[data-color-mode="dark"] .settings-icon > svg,
+:root[data-knowledge-color-mode="dark"] .prototype-dialog .settings-icon > svg {
+  color: var(--dark-skin-accent);
+  opacity: 1;
+}
+
+/* 暗色模式的输入选区也属于控件材质：禁止保留浏览器默认黑底反白。 */
+:root[data-knowledge-color-mode="dark"] ::selection,
+:root[data-knowledge-color-mode="dark"] :is(input, textarea, [contenteditable="true"])::selection {
+  color: var(--dark-text-primary);
+  background: color-mix(in srgb, var(--dark-skin-accent) 36%, var(--dark-skin-input));
+}
+
+/* 弹窗会传送到 document.body，必须由根级暗色角色完整接管其内部表面与文字。 */
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .prototype-dialog-heading,
+  .setting-preview,
+  .settings-data-location,
+  .storage-breakdown > div,
+  .restore-preview-grid > div,
+  .settings-action-section,
+  .settings-action-section.primary,
+  .settings-action-section.backup,
+  .settings-action-section.optimization,
+  .settings-action-section.attachment-recovery,
+  .settings-advanced-maintenance,
+  .shortcut-list > div,
+  .shortcut-list kbd,
+  .safe-callout,
+  .data-optimization-grid > div,
+  .data-optimization-grid > div.total,
+  .ai-settings-route-note,
+  .ai-channel-switch button,
+  .ai-settings-fields input,
+  .ai-settings-fields select,
+  .ai-model-picker-trigger,
+  .ai-settings-error
+) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .setting-preview p,
+  .settings-data-location p,
+  .settings-data-location p span,
+  .settings-data-location small,
+  .data-migration-summary,
+  .storage-breakdown span,
+  .restore-preview-grid span,
+  .settings-action-section > div:first-child > p,
+  .ai-settings-intro,
+  .ai-settings-route-note,
+  .ai-settings-fields label,
+  .ai-model-field,
+  .ai-model-picker-trigger small,
+  .ai-settings-footer,
+  .safe-callout,
+  .data-optimization-grid span
+) {
+  color: var(--dark-text-secondary);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .setting-preview strong,
+  .settings-data-location strong,
+  .settings-data-location p code,
+  .data-migration-summary strong,
+  .storage-breakdown strong,
+  .restore-preview-grid strong,
+  .settings-storage-overview-heading > strong,
+  .settings-action-section > div:first-child > strong,
+  .ai-settings-route-note strong,
+  .data-optimization-grid strong,
+  .shortcut-list span
+) {
+  color: var(--dark-text-primary);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .primary-button,
+  .secondary-button,
+  .text-button,
+  .danger-button,
+  .storage-refresh-button,
+  .ai-settings-footer > button,
+  .ai-api-key-control button
+) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-input);
+  box-shadow: none;
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .primary-button:hover:not(:disabled),
+  .secondary-button:hover:not(:disabled),
+  .text-button:hover:not(:disabled),
+  .ai-settings-footer > button:hover:not(:disabled),
+  .ai-channel-switch button:hover:not(:disabled),
+  .ai-channel-switch button.selected
+) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border-strong);
+  background: var(--dark-surface-input-focus);
+}
+
+/* AI 模型选择是第二层 Portal，单独声明以消除白弹窗与彩色浅底选项。 */
+:root[data-knowledge-color-mode="dark"] :is(
+  .ai-model-picker-dialog,
+  .ai-model-picker-dialog .ai-model-option,
+  .ai-model-picker-dialog .ai-model-option.openai,
+  .ai-model-picker-dialog .ai-model-option.anthropic,
+  .ai-model-picker-dialog .ai-model-option.deepseek,
+  .ai-model-picker-dialog .ai-model-option.qwen
+) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+:root[data-knowledge-color-mode="dark"] .ai-model-picker-dialog :is(
+  header,
+  header h2,
+  header span,
+  header p,
+  .ai-model-option small,
+  .ai-model-picker-empty
+) {
+  color: var(--dark-text-secondary);
+  border-color: var(--dark-border);
+}
+
+:root[data-knowledge-color-mode="dark"] .ai-model-picker-dialog :is(header h2, .ai-model-option strong) {
+  color: var(--dark-text-primary);
+}
+
+/* 回收站、待分类空状态和正文引用/代码块均属于暗色内容面，不允许留下浅底深字。 */
+.app-shell[data-color-mode="dark"] :is(
+  .trash-card,
+  .topic-final-awaiting-card,
+  .topic-final-no-selection,
+  .knowledge-final-no-topic,
+  .source-summary,
+  .source-plain-text,
+  .source-preview-block,
+  .source-image-placeholder,
+  .markdown-content blockquote,
+  .markdown-content .markdown-callout,
+  .markdown-content code
+) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+.app-shell[data-color-mode="dark"] :is(
+  .trash-card > div:nth-child(2) span,
+  .topic-final-awaiting-card small,
+  .topic-final-no-selection small,
+  .source-summary > p,
+  .markdown-content blockquote,
+  .markdown-content .markdown-callout > :first-child
+) {
+  color: var(--dark-text-secondary);
+}
+
+.app-shell[data-color-mode="dark"] .markdown-content :is(pre, pre code) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-subtle);
+}
+
+.app-shell[data-color-mode="dark"] .trash-page :is(.secondary-button, .danger-button) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-input);
+}
+
+/*
+ * 暗色黑色材质总线
+ *
+ * 所有暗色控件都只消费同一组语义表面；五套皮肤各自提供该组表面的色相。
+ * 这层放在样式文件末尾，专门接管历史页面私有的浅色背景、边框和输入框，
+ * 也覆盖被 Portal 挂到 document.body 的二级弹窗。它不重新指定皮肤颜色，
+ * 从而避免红棕/金棕皮肤被旧蓝灰或统一黑色覆盖。
+ */
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin] {
+  color-scheme: dark;
+  --dark-surface-panel: var(--dark-skin-panel);
+  --dark-surface-raised: var(--dark-skin-raised);
+  --dark-surface-input: var(--dark-skin-input);
+  --dark-surface-input-focus: var(--dark-skin-input-focus);
+  --dark-surface-subtle: var(--dark-skin-subtle);
+  --dark-surface-selected: var(--dark-skin-selected);
+  --dark-border: var(--dark-skin-border);
+  --dark-border-strong: var(--dark-skin-border-strong);
+  --dark-text-primary: #f5fbf8;
+  --dark-text-secondary: #c2d0ca;
+  --dark-text: #f5fbf8;
+  --dark-muted: #a8b8b0;
+  --dark-icon: #dcebe4;
+  --dark-icon-muted: #b3c4bc;
+  --search-control-elevation: 0 12px 24px -20px rgba(0, 0, 0, 0.68);
+  --search-control-inner-highlight: inset 0 1px color-mix(in srgb, var(--dark-text-primary) 9%, transparent);
+}
+
+/* 场景皮肤允许外层承托面透出背景；输入与可操作面仍保持足够实体，保证文字可读。 */
+:root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="scene"] {
+  --dark-surface-panel: color-mix(in srgb, var(--dark-skin-panel) 91%, transparent);
+  --dark-surface-raised: color-mix(in srgb, var(--dark-skin-raised) 94%, transparent);
+  --dark-surface-input: color-mix(in srgb, var(--dark-skin-input) 92%, var(--dark-skin-panel));
+}
+
+/* 搜索输入本体永远透明，避免值文本背后残留一块浅色或默认黑色。 */
+:root[data-knowledge-color-mode="dark"] :is(
+  .search-field,
+  .knowledge-final-search,
+  .topic-final-search,
+  .source-search-field,
+  .source-body-search-wrap,
+  .source-body-tools,
+  .attachment-timeline-search,
+  .record-content-tools
+) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-input) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .search-field input,
+  .knowledge-final-search input,
+  .topic-final-search input,
+  .source-search-field input,
+  .source-body-search-wrap input,
+  .source-body-tools input,
+  .knowledge-source-search-row input,
+  .attachment-timeline-search input,
+  .record-content-tools input
+) {
+  color: var(--dark-text-primary) !important;
+  -webkit-text-fill-color: var(--dark-text-primary) !important;
+  caret-color: var(--dark-skin-accent) !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .search-field input,
+  .knowledge-final-search input,
+  .topic-final-search input,
+  .source-search-field input,
+  .source-body-search-wrap input,
+  .source-body-tools input,
+  .knowledge-source-search-row input,
+  .attachment-timeline-search input,
+  .record-content-tools input
+)::placeholder {
+  color: var(--dark-icon-muted) !important;
+  opacity: 1;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .search-field > svg,
+  .knowledge-final-search > svg,
+  .topic-final-search > svg,
+  .source-search-field > svg,
+  .source-body-search-wrap > svg,
+  .source-body-tools > svg,
+  .knowledge-source-search-row svg,
+  .attachment-timeline-search > svg,
+  .record-content-tools > svg
+) {
+  color: var(--dark-icon) !important;
+  opacity: 1;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.search-field kbd, .search-field button) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-raised) !important;
+  box-shadow: none !important;
+}
+
+/* 列表卡是五入口共同的卡二承托面；实体皮肤不能从早期规则继承蓝灰描边。 */
+:root[data-knowledge-color-mode="dark"] .unified-note-list-panel {
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-raised) !important;
+  box-shadow: var(--classic-content-shadow, 0 14px 28px -20px rgba(0, 0, 0, 0.48)) !important;
+}
+
+/* 搜索行只是布局容器；只有内部搜索框和筛选按钮承担材质，避免出现一整块直角黑底。 */
+:root[data-knowledge-color-mode="dark"] :is(.search-row, .knowledge-source-search-row, .unified-note-list-search-row) {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* 主工作区的按钮只能落在黑色可操作面；语义动作保留颜色而不再使用白色底板。 */
+:root[data-knowledge-color-mode="dark"] .app-shell :is(.main-content, .main-region, .content-area, .workspace-main) button,
+:root[data-knowledge-color-mode="dark"] :is(.prototype-dialog, .attachment-preview, .ai-model-picker-dialog, .knowledge-overview-dialog) button {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-input) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .primary-button,
+  .secondary-button,
+  .text-button,
+  .filter-button,
+  .list-toolbar button,
+  .record-content-action,
+  .attachment-locate-button,
+  .attachment-timeline-load-more,
+  .detail-title-actions button,
+  .favorite-button,
+  .trash-page button,
+  .attachment-row button
+) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-input) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .primary-button:hover:not(:disabled),
+  .secondary-button:hover:not(:disabled),
+  .text-button:hover:not(:disabled),
+  .filter-button:hover:not(:disabled),
+  .list-toolbar button:hover:not(:disabled),
+  .record-content-action:hover:not(:disabled),
+  .attachment-locate-button:hover:not(:disabled),
+  .attachment-timeline-load-more:hover:not(:disabled),
+  .detail-title-actions button:hover:not(:disabled),
+  .favorite-button:hover:not(:disabled),
+  .trash-page button:hover:not(:disabled),
+  .attachment-row button:hover:not(:disabled)
+) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border-strong) !important;
+  background: var(--dark-surface-input-focus) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.danger-button, .icon-button.danger, .trash-page .danger-button) {
+  color: #ff9e95 !important;
+  border-color: #371415 !important;
+  background: #221011 !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.danger-button:hover:not(:disabled), .icon-button.danger:hover:not(:disabled), .trash-page .danger-button:hover:not(:disabled)) {
+  color: #ffd5d0 !important;
+  border-color: #6b2928 !important;
+  background: #351718 !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(button, input, textarea, select):disabled {
+  color: var(--dark-icon-muted) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-subtle) !important;
+  opacity: 1;
+}
+
+/* 空状态是说明文字，不是禁用按钮；使用低强调的皮肤色面，避免再次出现大块浅灰占位。 */
+:root[data-knowledge-color-mode="dark"] .knowledge-final-empty {
+  color: var(--dark-text-secondary) !important;
+  border-color: var(--dark-border) !important;
+  background: color-mix(in srgb, var(--dark-skin-input) 74%, transparent) !important;
+  background-image: none !important;
+}
+
+/* 图标底板、回收站卡、附件与等待态使用同一黑色卡片，不再继承场景皮肤的白玻璃边。 */
+:root[data-knowledge-color-mode="dark"] :is(
+  .record-icon,
+  .settings-icon,
+  .attachment-history-hit,
+  .attachment-row,
+  .attachments-card,
+  .trash-card,
+  .topic-final-awaiting-card,
+  .topic-final-no-selection,
+  .knowledge-final-no-topic,
+  .source-image-placeholder,
+  .source-summary,
+  .source-preview-block,
+  .source-message,
+  .source-message.human,
+  .source-message.assistant
+) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-raised) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.record-icon, .settings-icon) {
+  color: var(--dark-skin-accent) !important;
+  background: var(--dark-surface-input) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.record-icon, .settings-icon) svg {
+  color: var(--dark-skin-accent) !important;
+  opacity: 1;
+}
+
+/* 列表、标题工具区与标签同样属于前景面，显式阻断各页面遗留的白卡变量。 */
+:root[data-knowledge-color-mode="dark"] :is(
+  .record-card,
+  .unified-note-card,
+  .knowledge-final-domain-heading,
+  .knowledge-final-heading-actions > button,
+  .knowledge-final-tabs button,
+  .knowledge-final-tabs button span,
+  .note-list-quick-actions,
+  .detail-tag,
+  .source-tag,
+  .record-tag,
+  .status-pill,
+  .source-attachment-asset,
+  .source-asset-shell,
+  .attachment-text-reader,
+  .attachment-text-state
+) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-raised) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.record-card.selected, .record-card[aria-current="true"], .unified-note-card.selected, .unified-note-card[aria-current="true"], .knowledge-final-tabs button.active, .knowledge-final-tabs button.active span) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border-strong) !important;
+  background: color-mix(in srgb, var(--dark-skin-accent) 15%, var(--dark-surface-raised)) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.attachment-row span, .attachment-history-hit small, .trash-card > div:nth-child(2) span, .topic-final-awaiting-card small) {
+  color: var(--dark-text-secondary) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(.source-message.human, .source-message.assistant) {
+  border-left-color: var(--dark-skin-accent) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] .source-message.human {
+  background: color-mix(in srgb, var(--dark-skin-accent) 10%, var(--dark-surface-raised)) !important;
+}
+
+/* 搜索历史与组合筛选是弹层，不继承页面按钮的实黑底；同一层次只在悬停/选中时加轻微强调。 */
+:root[data-knowledge-color-mode="dark"] :is(.recent-searches, .source-body-tools .source-body-search-history) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: color-mix(in srgb, var(--dark-skin-panel) 95%, transparent) !important;
+  background-image: none !important;
+  box-shadow: 0 18px 36px -18px rgba(0, 0, 0, 0.52) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .recent-searches > div:not(.history-search-types),
+  .recent-searches > div:not(.history-search-types) button,
+  .recent-searches > button,
+  .recent-searches-empty,
+  .source-body-tools .source-body-search-history > header button,
+  .source-body-tools .source-body-search-history > button,
+  .filter-popover > strong,
+  .filter-popover label
+) {
+  color: var(--dark-text-secondary) !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] :is(
+  .recent-searches > button:hover,
+  .source-body-tools .source-body-search-history > button:hover,
+  .filter-popover button:hover,
+  .filter-popover button.selected
+) {
+  color: var(--dark-text-primary) !important;
+  border-color: color-mix(in srgb, var(--dark-skin-accent) 38%, var(--dark-border)) !important;
+  background: color-mix(in srgb, var(--dark-skin-accent) 14%, var(--dark-surface-raised)) !important;
+}
+
+:root[data-knowledge-color-mode="dark"] .filter-popover :is(input, select) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-input) !important;
+}
+
+/* Markdown 由内容导入而来，表格和引用块不能再携带文档自己的白底。 */
+:root[data-knowledge-color-mode="dark"] .markdown-content :is(table, thead, tbody, tr, th, td, blockquote, pre, pre code, code, .markdown-callout) {
+  color: var(--dark-text-primary) !important;
+  border-color: var(--dark-border) !important;
+  background: var(--dark-surface-raised) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+:root[data-knowledge-color-mode="dark"] .markdown-content :is(th, pre, pre code, code) {
+  background: var(--dark-surface-input) !important;
+}
+
+/* 侧栏辅助图标不依赖低对比度 inherited color；选中项只改变强调色。 */
+:root[data-knowledge-color-mode="dark"] .app-shell[data-color-mode="dark"] .sidebar :is(.nav-item, .support-nav-item) svg {
+  color: var(--dark-icon) !important;
+  opacity: 1 !important;
+}
+
+:root[data-knowledge-color-mode="dark"] .app-shell[data-color-mode="dark"] .sidebar :is(.nav-item.active, .support-nav-item.active) svg {
+  color: var(--dark-skin-accent) !important;
+}
+
+/* 浏览器的默认选区只在用户实际选择时出现，不作为未选中输入文字的底色。 */
+:root[data-knowledge-color-mode="dark"] :is(input, textarea, [contenteditable="true"])::selection {
+  color: var(--dark-text-primary) !important;
+  background: color-mix(in srgb, var(--dark-skin-accent) 42%, var(--dark-surface-input)) !important;
 }

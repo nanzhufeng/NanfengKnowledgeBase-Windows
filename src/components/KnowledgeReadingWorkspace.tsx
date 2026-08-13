@@ -2,14 +2,13 @@ import {
   ArrowRight,
   BookOpenText,
   CircleAlert,
-  CircleHelp,
   CircleDot,
   Clock3,
   ExternalLink,
   FileText,
-  FolderSearch,
   GitBranch,
   ListTodo,
+  Maximize2,
   ShieldCheck,
   Sparkles,
   StickyNote,
@@ -33,9 +32,7 @@ import {
 import { useRafScheduledCallback } from "../performance/useRafScheduledCallback";
 import { KnowledgeTopicHierarchy } from "./KnowledgeTopicHierarchy";
 import type {
-  KnowledgeDomainRow,
   KnowledgeTopicDetail,
-  KnowledgeTopicRow,
   TopicDecisionRow,
   TopicPropositionRow,
 } from "../services/knowledgeRepository";
@@ -44,30 +41,17 @@ import {
   deriveKnowledgeExpiryIssues,
   type KnowledgeEventKind,
 } from "../knowledge/knowledgeReadingModel";
-import {
-  buildKnowledgeOverview,
-  buildKnowledgeSynthesis,
-  buildKnowledgeTopicIntegration,
-  type KnowledgeOverviewItem,
-  type SynthesizedKnowledgeAnchor,
-} from "../knowledge/knowledgeSynthesis";
 import MarkdownContent from "./MarkdownContent";
-import type { AiTopicInsight } from "../services/aiRepository";
+import type { AiTaxonomyRevision, AiTopicInsight } from "../services/aiRepository";
 import { splitAiSummaryMarkdown } from "../aiInsightPresentation";
+import {
+  findAppliedAiTaxonomyTopic,
+  type AppliedAiTaxonomyHierarchy,
+} from "../aiTaxonomyPresentation";
 import type { AiTopicBatchProgress, AiTopicBatchResult } from "../aiTopicBatch";
 
 export type ReadingMode = "hypotheses" | "evolution" | "sources" | "decisions";
 
-type KnowledgeOverviewTone = "fact" | "evidence" | "question" | "action";
-
-type KnowledgeOverviewDialogState = {
-  title: string;
-  items: KnowledgeOverviewItem[];
-  icon: typeof ShieldCheck;
-  tone: KnowledgeOverviewTone;
-  targetMode: ReadingMode;
-  targetLabel: string;
-};
 
 export type KnowledgeReadingTarget = {
   requestId: number;
@@ -88,9 +72,15 @@ export type KnowledgeSourceTarget = {
   returnTarget?: KnowledgeSourceReturnTarget;
 };
 
+export type AiSingleInsightResult = {
+  status: "success" | "failed";
+  topicName: string;
+  message: string;
+  generatedAt: string | null;
+};
+
 type KnowledgeReadingWorkspaceProps = {
-  domains: KnowledgeDomainRow[];
-  topics: KnowledgeTopicRow[];
+  taxonomyHierarchy: AppliedAiTaxonomyHierarchy;
   topicDetail: KnowledgeTopicDetail | null;
   relatedTopicDetails: KnowledgeTopicDetail[];
   selectedTopicId: number | null;
@@ -98,11 +88,16 @@ type KnowledgeReadingWorkspaceProps = {
   onOpenSource: (target: KnowledgeSourceTarget) => void;
   navigationTarget: KnowledgeReadingTarget | null;
   aiInsight: AiTopicInsight | null;
+  appliedAiRevision: AiTaxonomyRevision | null;
   aiRunning: boolean;
+  aiRunningTopicName: string | null;
+  aiSingleResult: AiSingleInsightResult | null;
   aiBatchProgress: AiTopicBatchProgress | null;
   aiBatchResult: AiTopicBatchResult | null;
   onRunAiInsight: () => void;
+  onCloseAiSingleResult: () => void;
   onRunAllAiInsights: () => void;
+  onRunPendingAiInsights: () => void;
   onRetryFailedAiInsights: () => void;
   onCloseAiBatchResult: () => void;
 };
@@ -211,83 +206,15 @@ function EvidenceList({
   );
 }
 
-function AutomaticEvidenceList({
-  title,
-  items,
-  onOpenSource,
-}: {
-  title: string;
-  items: SynthesizedKnowledgeAnchor[];
-  onOpenSource: (target: KnowledgeSourceTarget) => void;
-}) {
-  return (
-    <section className="knowledge-final-evidence-column" data-card-interaction="surface-lift">
-      <h4>{title}<span>{items.length}</span></h4>
-      {items.slice(0, 4).map((item) => (
-        <article key={item.id}>
-          <CircleDot size={13} />
-          <div>
-            <MarkdownContent
-              value={item.quote}
-              className="right-reading-copy right-reading-copy-10"
-            />
-            <button
-              className="knowledge-final-anchor-button"
-              data-knowledge-source-id={item.sourceItemId}
-              onClick={() => onOpenSource({
-                sourceItemId: item.sourceItemId,
-                locatorJson: JSON.stringify({ kind: "text_quote", value: item.quote, quote: item.quote }),
-                locatorLabel: `正文片段：${item.quote.slice(0, 36)}`,
-              })}
-            >
-              {item.sourceTitle}<ExternalLink size={12} data-card-cue="forward" />
-            </button>
-          </div>
-        </article>
-      ))}
-      {!items.length ? (
-        <p className="knowledge-final-empty compact">
-          {title === "反对证据" ? "暂无反证" : "暂无支持片段"}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
 function DecisionChain({
   decision,
 }: {
-  decision: (TopicDecisionRow & { automatic?: boolean; automaticBasis?: string }) | null;
+  decision: TopicDecisionRow | null;
 }) {
   if (!decision) {
     return <p className="knowledge-final-empty">暂无决策版本</p>;
   }
-  const stages = decision.automatic ? [
-    {
-      label: "形成依据",
-      body: decision.automaticBasis || "尚缺少可独立核对的正文依据",
-      meta: formatDate(decision.decidedAt),
-      tone: "judgment",
-    },
-    {
-      label: "待确认建议",
-      body: decision.decisionMarkdown,
-      meta: "等待确认",
-      tone: "decision",
-    },
-    {
-      label: "行动",
-      body: "尚未执行",
-      meta: "待执行",
-      tone: "action",
-    },
-    {
-      label: "预期 / 结果",
-      body: `${decision.expectedResult || "预期结果待确认"}\n\n实际结果尚未产生。`,
-      meta: "未执行",
-      tone: "result",
-    },
-  ] : [
+  const stages = [
     {
       label: "判断",
       body: decision.decisionMarkdown,
@@ -338,14 +265,17 @@ function DecisionChain({
 
 function KnowledgeAssets({
   detail,
+  integrationMarkdown,
+  integrationSourceItemIds,
   onOpenSource,
   focusSourceItemId,
 }: {
   detail: KnowledgeTopicDetail;
+  integrationMarkdown: string;
+  integrationSourceItemIds: number[];
   onOpenSource: (target: KnowledgeSourceTarget) => void;
   focusSourceItemId?: number;
 }) {
-  const integration = buildKnowledgeTopicIntegration(detail);
   const [localSourceSelection, setLocalSourceSelection] = useState<{
     topicId: number;
     sourceItemId: number | null;
@@ -353,15 +283,23 @@ function KnowledgeAssets({
   const hasLocalSelection = localSourceSelection?.topicId === detail.topic.id;
   const selectedSourceItemId = hasLocalSelection ? localSourceSelection.sourceItemId : null;
   const activeSourceItemId = hasLocalSelection ? selectedSourceItemId : focusSourceItemId;
-  const selectedSource = detail.sources.find((source) => source.id === selectedSourceItemId) ?? null;
+  const integrationSourceIdSet = useMemo(
+    () => new Set(integrationSourceItemIds),
+    [integrationSourceItemIds],
+  );
+  const integrationSources = useMemo(
+    () => detail.sources.filter((source) => integrationSourceIdSet.has(source.id)),
+    [detail.sources, integrationSourceIdSet],
+  );
+  const selectedSource = integrationSources.find((source) => source.id === selectedSourceItemId) ?? null;
 
-  if (!integration) {
+  if (!detail.sources.length) {
     return (
       <p
         className="knowledge-final-empty knowledge-final-assets-empty"
         data-reading-section="notes-and-sources"
       >
-        当前主题尚未形成整合内容
+        当前主题尚无可供 AI 归纳的笔记
       </p>
     );
   }
@@ -370,11 +308,11 @@ function KnowledgeAssets({
     <section
       className="knowledge-final-assets"
       data-reading-section="notes-and-sources"
-      aria-label="主题整合与可回溯来源"
+      aria-label="AI 归纳材料与可回溯来源"
     >
       <div
-        className={`knowledge-final-note-reader is-topic-integration ${detail.sources.length ? "" : "is-integration-only"}`}
-        data-assets-layout={detail.sources.length ? "topic-integration" : "integration-only"}
+        className={`knowledge-final-note-reader is-topic-integration ${integrationSources.length ? "" : "is-integration-only"}`}
+        data-assets-layout={integrationSources.length ? "topic-integration" : "integration-only"}
       >
         <article className="knowledge-final-note-detail knowledge-final-reading-pane is-content">
           <header>
@@ -382,9 +320,9 @@ function KnowledgeAssets({
               <span>
                 {selectedSource
                   ? `来源笔记 · ${selectedSource.sourceType} · ${formatDate(selectedSource.originalAt || selectedSource.importedAt)}`
-                  : integration.statusLabel}
+                  : "AI 归纳材料"}
               </span>
-              <h3>{selectedSource?.title ?? integration.title}</h3>
+              <h3>{selectedSource?.title ?? detail.topic.name}</h3>
             </div>
             {selectedSource ? (
               <button
@@ -396,28 +334,23 @@ function KnowledgeAssets({
                 })}
               >
                 <BookOpenText size={14} aria-hidden="true" />
-                返回主题整合
+                返回材料列表
               </button>
             ) : null}
           </header>
-          {!selectedSource && integration.summary ? (
-            <p className={`knowledge-final-note-summary is-${integration.mode}`}>
-              {integration.summary}
-            </p>
-          ) : null}
           <div className="knowledge-final-note-body">
             <MarkdownContent
               value={selectedSource?.contentText?.trim() || (selectedSource
                 ? "当前来源没有可显示正文。"
-                : integration.bodyMarkdown)}
+                : integrationMarkdown || "待主题管理 AI 生成全库分类并应用后显示主题整合。")}
               className="right-reading-copy right-reading-copy-13"
             />
           </div>
         </article>
-        {detail.sources.length ? (
+        {integrationSources.length ? (
           <section className="knowledge-final-source-list knowledge-final-reading-pane is-support">
-            <h4>关联笔记与来源 <span>{detail.sources.length}</span></h4>
-            {detail.sources.map((source) => (
+            <h4>AI 自动关联笔记来源 <span>{integrationSources.length}</span></h4>
+            {integrationSources.map((source) => (
               <div
                 key={source.id}
                 className={`knowledge-final-source-item ${source.id === activeSourceItemId ? "active" : ""}`}
@@ -467,15 +400,8 @@ function KnowledgeAssets({
 
 function DecisionHistory({
   decisions,
-  onOpenSource,
 }: {
-  decisions: Array<TopicDecisionRow & {
-    automatic?: boolean;
-    automaticBasis?: string;
-    sourceItemId?: number;
-    sourceTitle?: string;
-  }>;
-  onOpenSource: (target: KnowledgeSourceTarget) => void;
+  decisions: TopicDecisionRow[];
 }) {
   if (!decisions.length) {
     return <p className="knowledge-final-empty">暂无决策记录</p>;
@@ -486,25 +412,12 @@ function DecisionHistory({
         <article className="knowledge-final-decision-version" key={decision.id}>
           <header>
             <div>
-              <span>{decision.automatic ? "自动决策草案" : `决策版本 ${decisions.length - index}`}</span>
+              <span>决策版本 {decisions.length - index}</span>
               <h3>{decision.title}</h3>
             </div>
             <div>
               <strong>{resultLabel(decision.resultStatus)}</strong>
               <small>{formatDate(decision.decidedAt)}</small>
-              {decision.automatic && decision.sourceItemId ? (
-                <button
-                  className="knowledge-final-decision-source"
-                  data-knowledge-source-id={decision.sourceItemId}
-                  onClick={() => onOpenSource({
-                    sourceItemId: decision.sourceItemId!,
-                    locatorJson: null,
-                    locatorLabel: null,
-                  })}
-                >
-                  <span>来源：{decision.sourceTitle}</span><ExternalLink size={12} />
-                </button>
-              ) : null}
             </div>
           </header>
           <DecisionChain decision={decision} />
@@ -515,6 +428,264 @@ function DecisionHistory({
           ) : null}
         </article>
       ))}
+    </div>
+  );
+}
+
+function AiSourceReferences({
+  sourceItemIds,
+  detail,
+  onOpenSource,
+}: {
+  sourceItemIds: number[];
+  detail: KnowledgeTopicDetail;
+  onOpenSource: (target: KnowledgeSourceTarget) => void;
+}) {
+  const sources = sourceItemIds
+    .map((sourceId) => detail.sources.find((source) => source.id === sourceId))
+    .filter((source): source is KnowledgeTopicDetail["sources"][number] => Boolean(source));
+  if (!sources.length) return null;
+  return (
+    <footer className="knowledge-ai-source-references" aria-label="AI 结论来源">
+      {sources.map((source) => (
+        <button
+          type="button"
+          key={source.id}
+          onClick={() => onOpenSource({
+            sourceItemId: source.id,
+            locatorJson: null,
+            locatorLabel: null,
+          })}
+        >
+          <FileText size={12} /><span>{source.title}</span>
+        </button>
+      ))}
+    </footer>
+  );
+}
+
+function AiHypothesisCards({
+  insight,
+  detail,
+  onOpenSource,
+}: {
+  insight: AiTopicInsight;
+  detail: KnowledgeTopicDetail;
+  onOpenSource: (target: KnowledgeSourceTarget) => void;
+}) {
+  return (
+    <section className="knowledge-ai-mode-list" aria-label="AI 生成的竞争假设">
+      {insight.payload.hypotheses.map((item, index) => (
+        <article
+          className={`knowledge-final-hypothesis ${index % 2 ? "oppose" : "support"}`}
+          key={`${item.title}-${item.statement}`}
+        >
+          <header className="knowledge-ai-hypothesis-header">
+            <span><Sparkles size={12} />AI {String(index + 1).padStart(2, "0")}</span>
+            <strong>{Math.round(item.confidence)}%</strong>
+          </header>
+          <div className="knowledge-final-hypothesis-thesis" data-card-interaction="surface-lift">
+            <small>核心解释</small>
+            <h3>{item.title}</h3>
+            <p>{item.statement}</p>
+          </div>
+          <footer aria-label="假设有效性条件">
+            <div><small>证伪条件</small><strong>{item.invalidationCondition || "未形成可靠条件"}</strong></div>
+          </footer>
+          <AiSourceReferences sourceItemIds={item.sourceItemIds} detail={detail} onOpenSource={onOpenSource} />
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function AiJudgmentEvolution({
+  insight,
+  detail,
+  onOpenSource,
+}: {
+  insight: AiTopicInsight;
+  detail: KnowledgeTopicDetail;
+  onOpenSource: (target: KnowledgeSourceTarget) => void;
+}) {
+  return (
+    <section className="knowledge-ai-evolution" aria-label="AI 生成的判断演变">
+      {insight.payload.judgmentEvolution.map((item, index) => (
+        <article data-card-interaction="surface-lift" key={`${item.occurredAt}-${item.title}`}>
+          <header><span>{item.occurredAt ? formatDate(item.occurredAt) : `节点 ${index + 1}`}</span><strong>{item.title}</strong></header>
+          {item.fromStatement ? <p><small>此前</small>{item.fromStatement}</p> : null}
+          <p><small>转变为</small>{item.toStatement}</p>
+          <p><small>变化原因</small>{item.reason}</p>
+          <AiSourceReferences sourceItemIds={item.sourceItemIds} detail={detail} onOpenSource={onOpenSource} />
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function AiDecisionCards({
+  insight,
+  detail,
+  onOpenSource,
+}: {
+  insight: AiTopicInsight;
+  detail: KnowledgeTopicDetail;
+  onOpenSource: (target: KnowledgeSourceTarget) => void;
+}) {
+  return (
+    <section className="knowledge-ai-decisions" aria-label="AI 生成的决策版本">
+      {insight.payload.decisions.map((item, index) => (
+        <article className="knowledge-final-decision-version" key={`${item.title}-${item.action}`}>
+          <header>
+            <div><span>AI 决策版本 {insight.payload.decisions.length - index}</span><h3>{item.title}</h3></div>
+            <strong>{item.status === "completed" ? "已完成" : item.status === "in_progress" ? "进行中" : "待确认"}</strong>
+          </header>
+          <div className="knowledge-final-decision-chain">
+            {[
+              { label: "形成依据", body: item.basis, tone: "basis" },
+              { label: "行动", body: item.action, tone: "action" },
+              { label: "结果/复盘", body: item.result || "尚未产生结果", tone: "result" },
+            ].map((stage) => (
+              <article className={`knowledge-final-decision-card ${stage.tone}`} data-card-interaction="surface-lift" key={stage.label}>
+                <header><strong>{stage.label}</strong></header>
+                <p>{stage.body}</p>
+              </article>
+            ))}
+          </div>
+          <AiSourceReferences sourceItemIds={item.sourceItemIds} detail={detail} onOpenSource={onOpenSource} />
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function AiInsightBundleContent({
+  insight,
+  detail,
+  onOpenSource,
+}: {
+  insight: AiTopicInsight;
+  detail: KnowledgeTopicDetail;
+  onOpenSource: (target: KnowledgeSourceTarget) => void;
+}) {
+  const summary = splitAiSummaryMarkdown(insight.payload.summaryMarkdown);
+  return (
+    <div className="knowledge-ai-insight-content">
+      <MarkdownContent value={summary.overviewMarkdown} />
+
+      {insight.payload.keyInsights.length ? (
+        <section className="knowledge-ai-insight-section">
+          <h3>关键洞察 <span>{insight.payload.keyInsights.length}</span></h3>
+          <div className="knowledge-ai-insight-grid">
+            {insight.payload.keyInsights.map((item) => (
+              <article data-card-interaction="surface-lift" key={`${item.title}-${item.detail}`}>
+                <strong>{item.title}</strong>
+                <p>{item.detail}</p>
+                <AiSourceReferences
+                  sourceItemIds={item.sourceItemIds}
+                  detail={detail}
+                  onOpenSource={onOpenSource}
+                />
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {insight.payload.hypotheses.length ? (
+        <section className="knowledge-ai-insight-section">
+          <h3>竞争假设 <span>{insight.payload.hypotheses.length}</span></h3>
+          <div className="knowledge-ai-insight-grid">
+            {insight.payload.hypotheses.map((item) => (
+              <article data-card-interaction="surface-lift" key={`${item.title}-${item.statement}`}>
+                <strong>{item.title} · {Math.round(item.confidence)}%</strong>
+                <p>{item.statement}</p>
+                {item.invalidationCondition ? <small>证伪条件：{item.invalidationCondition}</small> : null}
+                <AiSourceReferences
+                  sourceItemIds={item.sourceItemIds}
+                  detail={detail}
+                  onOpenSource={onOpenSource}
+                />
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {insight.payload.judgmentEvolution.length ? (
+        <section className="knowledge-ai-insight-section">
+          <h3>判断演变 <span>{insight.payload.judgmentEvolution.length}</span></h3>
+          <div className="knowledge-ai-insight-list">
+            {insight.payload.judgmentEvolution.map((item, index) => (
+              <article data-card-interaction="surface-lift" key={`${item.occurredAt}-${item.title}`}>
+                <strong>{item.title}</strong>
+                <small>{item.occurredAt ? formatDate(item.occurredAt) : `节点 ${index + 1}`}</small>
+                <p>{item.toStatement}</p>
+                <span>{item.reason}</span>
+                <AiSourceReferences
+                  sourceItemIds={item.sourceItemIds}
+                  detail={detail}
+                  onOpenSource={onOpenSource}
+                />
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {insight.payload.decisions.length ? (
+        <section className="knowledge-ai-insight-section">
+          <h3>决策与行动 <span>{insight.payload.decisions.length}</span></h3>
+          <div className="knowledge-ai-insight-grid">
+            {insight.payload.decisions.map((item) => (
+              <article data-card-interaction="surface-lift" key={`${item.title}-${item.action}`}>
+                <strong>{item.title}</strong>
+                <p>{item.basis}</p>
+                <span>行动：{item.action}</span>
+                {item.result ? <small>结果：{item.result}</small> : null}
+                <AiSourceReferences
+                  sourceItemIds={item.sourceItemIds}
+                  detail={detail}
+                  onOpenSource={onOpenSource}
+                />
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {insight.payload.openQuestions.length ? (
+        <section className="knowledge-ai-insight-section">
+          <h3>待验证问题 <span>{insight.payload.openQuestions.length}</span></h3>
+          <ul className="knowledge-ai-insight-list compact">
+            {insight.payload.openQuestions.map((item) => (
+              <li data-card-interaction="surface-lift" key={item}>{item}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {insight.payload.topicManagementSuggestions.length ? (
+        <section className="knowledge-ai-insight-section">
+          <h3>主题管理建议 <span>{insight.payload.topicManagementSuggestions.length}</span></h3>
+          <ul className="knowledge-ai-insight-list compact">
+            {insight.payload.topicManagementSuggestions.map((item) => (
+              <li data-card-interaction="surface-lift" key={`${item.action}-${item.title}`}>
+                <strong>{item.title}</strong><span>{item.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {summary.boundaryMarkdown ? (
+        <section className="knowledge-ai-insight-section knowledge-ai-boundary-section">
+          <h3>来源范围{summary.sourceCount ? <span>{summary.sourceCount}</span> : null}</h3>
+          <div className="knowledge-ai-boundary-content">
+            <MarkdownContent value={summary.boundaryMarkdown} />
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -595,49 +766,8 @@ function KnowledgeTimeline({
   );
 }
 
-function KnowledgeOverviewCard({
-  title,
-  items,
-  icon: Icon,
-  tone,
-  actionLabel,
-  onOpen,
-}: {
-  title: string;
-  items: KnowledgeOverviewItem[];
-  icon: typeof ShieldCheck;
-  tone: KnowledgeOverviewTone;
-  actionLabel: string;
-  onOpen: (trigger: HTMLButtonElement) => void;
-}) {
-  return (
-    <article className={`knowledge-overview-card ${tone}`} data-card-interaction="lift">
-      <header>
-        <span><Icon size={15} /></span>
-        <strong>{title}</strong>
-        <em>{items.length}</em>
-      </header>
-      <ul>
-        {items.slice(0, 2).map((item) => (
-          <li key={item.id} title={item.text}>
-            {item.text}
-            {item.automatic ? <small>自动</small> : null}
-          </li>
-        ))}
-      </ul>
-      {!items.length ? <p>暂无内容</p> : null}
-      {items.length ? (
-        <button type="button" onClick={(event) => onOpen(event.currentTarget)}>
-          {actionLabel}<ArrowRight size={12} data-card-cue="forward" />
-        </button>
-      ) : null}
-    </article>
-  );
-}
-
 export function KnowledgeReadingWorkspace({
-  domains,
-  topics,
+  taxonomyHierarchy,
   topicDetail,
   relatedTopicDetails,
   selectedTopicId,
@@ -645,11 +775,16 @@ export function KnowledgeReadingWorkspace({
   onOpenSource,
   navigationTarget,
   aiInsight,
+  appliedAiRevision,
   aiRunning,
+  aiRunningTopicName,
+  aiSingleResult,
   aiBatchProgress,
   aiBatchResult,
   onRunAiInsight,
+  onCloseAiSingleResult,
   onRunAllAiInsights,
+  onRunPendingAiInsights,
   onRetryFailedAiInsights,
   onCloseAiBatchResult,
 }: KnowledgeReadingWorkspaceProps) {
@@ -657,8 +792,7 @@ export function KnowledgeReadingWorkspace({
   const [search, setSearch] = useState("");
   const [eventFilter, setEventFilter] =
     useState<"all" | "sources" | "evidence" | "judgments" | "decisions">("all");
-  const [overviewDialog, setOverviewDialog] = useState<KnowledgeOverviewDialogState | null>(null);
-  const [readerHasScrolled, setReaderHasScrolled] = useState(false);
+  const [aiInsightDialogOpen, setAiInsightDialogOpen] = useState(false);
   const [connector, setConnector] = useState<{
     top: number;
     left: number;
@@ -668,22 +802,18 @@ export function KnowledgeReadingWorkspace({
   const activeTopicRef = useRef<HTMLButtonElement>(null);
   const readerRef = useRef<HTMLElement>(null);
   const readerScrollRef = useRef<HTMLDivElement>(null);
-  const overviewDialogCloseRef = useRef<HTMLButtonElement>(null);
+  const aiInsightOpenButtonRef = useRef<HTMLButtonElement>(null);
+  const aiInsightDialogCloseRef = useRef<HTMLButtonElement>(null);
   const aiBatchConfirmRef = useRef<HTMLButtonElement>(null);
   const aiBatchCurrentRef = useRef<HTMLLIElement>(null);
-  const overviewDialogReturnFocusRef = useRef<HTMLButtonElement | null>(null);
-  const scrollPositions = useRef<Record<ReadingMode, number>>({
-    hypotheses: 0,
-    evolution: 0,
-    sources: 0,
-    decisions: 0,
-  });
+  const pendingModeScrollTopRef = useRef<number | null>(null);
   const deferredSearch = useDeferredValue(search);
+  const { domains, topics, hasAppliedRevision } = taxonomyHierarchy;
 
   const visibleTopics = useMemo(() => {
     const query = deferredSearch.trim().toLocaleLowerCase("zh-CN");
     return topics.filter((topic) => (
-      topic.status !== "merged"
+      topic.status !== "merged" && topic.status !== "archived"
       && (!query || `${topic.name} ${topic.description}`.toLocaleLowerCase("zh-CN").includes(query))
     ));
   }, [deferredSearch, topics]);
@@ -691,7 +821,6 @@ export function KnowledgeReadingWorkspace({
     () => topics.find((topic) => topic.id === selectedTopicId)?.domainId ?? null,
     [selectedTopicId, topics],
   );
-
   const updateConnector = () => {
     const shell = shellRef.current;
     const active = activeTopicRef.current;
@@ -726,28 +855,28 @@ export function KnowledgeReadingWorkspace({
 
   useEffect(() => {
     setEventFilter("all");
+    setAiInsightDialogOpen(false);
   }, [selectedTopicId]);
 
   useEffect(() => {
-    if (!overviewDialog) return undefined;
+    if (!aiInsightDialogOpen) return undefined;
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    overviewDialogCloseRef.current?.focus();
+    const frame = requestAnimationFrame(() => aiInsightDialogCloseRef.current?.focus());
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOverviewDialog(null);
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setAiInsightDialogOpen(false);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = previousBodyOverflow;
+      aiInsightOpenButtonRef.current?.focus();
     };
-  }, [overviewDialog]);
+  }, [aiInsightDialogOpen]);
 
-  useEffect(() => {
-    if (overviewDialog) return;
-    overviewDialogReturnFocusRef.current?.focus();
-    overviewDialogReturnFocusRef.current = null;
-  }, [overviewDialog]);
 
   useEffect(() => {
     if (!aiBatchResult) return undefined;
@@ -774,14 +903,17 @@ export function KnowledgeReadingWorkspace({
 
   const switchMode = (nextMode: ReadingMode) => {
     if (nextMode === mode) return;
-    if (readerScrollRef.current) scrollPositions.current[mode] = readerScrollRef.current.scrollTop;
+    const container = readerScrollRef.current;
+    if (container) pendingModeScrollTopRef.current = container.scrollTop;
     setMode(nextMode);
-    requestAnimationFrame(() => {
-      if (readerScrollRef.current) {
-        readerScrollRef.current.scrollTop = scrollPositions.current[nextMode];
-      }
-    });
   };
+
+  useLayoutEffect(() => {
+    const pendingScrollTop = pendingModeScrollTopRef.current;
+    if (pendingScrollTop === null || !readerScrollRef.current) return;
+    readerScrollRef.current.scrollTop = pendingScrollTop;
+    pendingModeScrollTopRef.current = null;
+  }, [mode]);
 
   useEffect(() => {
     if (!navigationTarget?.viewMode) return;
@@ -847,120 +979,37 @@ export function KnowledgeReadingWorkspace({
     return () => cancelAnimationFrame(frame);
   }, [mode, navigationTarget, selectedTopicId, topicDetail?.topic.id]);
 
-  const displayDetail = topicDetail;
-  const synthesis = useMemo(
-    () => displayDetail ? buildKnowledgeSynthesis(displayDetail) : null,
-    [displayDetail],
+  const displayDetail = hasAppliedRevision
+    && topicDetail
+    && taxonomyHierarchy.topicIds.has(topicDetail.topic.id)
+    ? topicDetail
+    : null;
+  const appliedRevisionTopic = useMemo(
+    () => findAppliedAiTaxonomyTopic(
+      appliedAiRevision,
+      displayDetail?.topic.name ?? "",
+      (displayDetail?.sources ?? []).map((source) => source.id),
+    ),
+    [appliedAiRevision, displayDetail?.sources, displayDetail?.topic.name],
   );
-  const overview = useMemo(
-    () => displayDetail && synthesis ? buildKnowledgeOverview(displayDetail, synthesis) : null,
-    [displayDetail, synthesis],
-  );
-  const aiSummary = useMemo(
-    () => splitAiSummaryMarkdown(aiInsight?.payload.summaryMarkdown ?? ""),
-    [aiInsight?.payload.summaryMarkdown],
-  );
+  const topicIntegrationMarkdown = appliedRevisionTopic?.integrationMarkdown.trim() ?? "";
   const readingModel = useMemo(() => {
-    const automaticJudgmentsFromContent = [...(synthesis?.judgments ?? [])]
-      .reverse()
-      .map((judgment, index) => ({
-        id: -(index + 1),
-        publicId: judgment.id,
-        propositionId: null,
-        statementMarkdown: judgment.statement,
-        state: "正文提炼",
-        confidence: judgment.confidence,
-        changeReason: judgment.changeReason,
-        effectiveAt: judgment.effectiveAt,
-        createdAt: judgment.effectiveAt,
-      }));
-    const judgments = (displayDetail?.judgments.length ?? 0) > 0
-      ? displayDetail!.judgments
-      : automaticJudgmentsFromContent;
+    const judgments = displayDetail?.judgments ?? [];
     const persistedHypotheses = displayDetail?.propositions.filter(
       (item) => item.propositionKind === "hypothesis" && item.status !== "superseded",
     ) ?? [];
-    const hypothesesFromContent = (synthesis?.hypotheses ?? []).map((hypothesis, index) => ({
-      id: -(index + 1),
-      publicId: hypothesis.id,
-      topicId: displayDetail!.topic.id,
-      statementMarkdown: hypothesis.statement,
-      status: "open" as const,
-      propositionKind: "hypothesis" as const,
-      hypothesisGroup: null,
-      confidence: hypothesis.confidence,
-      invalidationCondition: hypothesis.invalidationCondition,
-      validityStatus: "active" as const,
-      confirmedAt: null,
-      validFrom: hypothesis.anchors[0]?.occurredAt ?? null,
-      validUntil: null,
-      reviewAt: null,
-      createdAt: hypothesis.anchors[0]?.occurredAt ?? "",
-      updatedAt: hypothesis.anchors.at(-1)?.occurredAt ?? "",
-      automatic: true,
-      sourceItemIds: [...new Set(hypothesis.anchors.map((anchor) => anchor.sourceItemId))],
-      automaticAnchors: hypothesis.anchors,
-      automaticRationale: hypothesis.rationale,
-      automaticIndex: index,
-    }));
-    const hypotheses = persistedHypotheses.length
-      ? persistedHypotheses.map((item) => ({
-          ...item,
-          automatic: false,
-          sourceItemIds: [] as number[],
-          automaticAnchors: [] as SynthesizedKnowledgeAnchor[],
-          automaticRationale: "",
-        }))
-      : hypothesesFromContent;
+    const hypotheses = persistedHypotheses;
     const pendingQuestions = displayDetail?.questions.filter(
       (item) => item.status !== "resolved",
     ) ?? [];
-    const synthesizedQuestions = pendingQuestions.length
-      ? []
-      : (synthesis?.openQuestions ?? []).map((question, index) => ({
-          id: -(index + 1),
-          publicId: `automatic-question-${index}`,
-          question,
-          importance: "medium",
-          affectsCurrentJudgment: true,
-          status: "automatic",
-          resolutionNote: "",
-          createdAt: "",
-          updatedAt: "",
-        }));
+    const synthesizedQuestions: typeof pendingQuestions = [];
     const expiryIssues = displayDetail
       ? deriveKnowledgeExpiryIssues(displayDetail, new Date())
       : [];
     const timeline = topicDetail
       ? buildKnowledgeTimeline(topicDetail, relatedTopicDetails)
       : [];
-    const automaticDecisions = (synthesis?.decisionDrafts ?? []).map((decision, index) => ({
-      id: -(index + 1),
-      publicId: decision.id,
-      topicId: displayDetail!.topic.id,
-      propositionId: null,
-      judgmentSnapshotId: null,
-      title: decision.title,
-      automaticBasis: decision.basis,
-      decisionMarkdown: decision.decision,
-      decidedAt: decision.decidedAt,
-      status: "active" as const,
-      knownRisks: decision.knownRisks,
-      expectedResult: decision.expectedResult,
-      actualActions: decision.actualActions,
-      reviewAt: null,
-      resultStatus: "pending" as const,
-      finalResult: decision.finalResult,
-      retrospective: decision.retrospective,
-      createdAt: decision.decidedAt,
-      updatedAt: decision.decidedAt,
-      automatic: true,
-      sourceItemId: decision.sourceItemId,
-      sourceTitle: decision.sourceTitle,
-    }));
-    const decisions = (displayDetail?.decisions.length ?? 0) > 0
-      ? displayDetail!.decisions
-      : automaticDecisions;
+    const decisions = displayDetail?.decisions ?? [];
 
     return {
       judgments,
@@ -976,7 +1025,7 @@ export function KnowledgeReadingWorkspace({
         ? domains.find((domain) => domain.id === topicDetail.topic.domainId) ?? null
         : null,
     };
-  }, [displayDetail, domains, relatedTopicDetails, synthesis, topicDetail]);
+  }, [displayDetail, domains, relatedTopicDetails, topicDetail]);
   const {
     judgments,
     currentJudgment,
@@ -993,6 +1042,18 @@ export function KnowledgeReadingWorkspace({
     () => timeline.filter((event) => eventMatchesFilter(event.kind, eventFilter)),
     [eventFilter, timeline],
   );
+  const aiHypothesisCount = aiInsight?.payload.hypotheses.length ?? 0;
+  const aiEvolutionCount = aiInsight?.payload.judgmentEvolution.length ?? 0;
+  const aiDecisionCount = aiInsight?.payload.decisions.length ?? 0;
+  const aiPendingQuestions = aiInsight?.payload.openQuestions ?? [];
+  const aiValidityItems = (aiInsight?.payload.hypotheses ?? [])
+    .filter((item) => item.invalidationCondition.trim())
+    .map((item, index) => ({
+      id: `ai-validity-${index}`,
+      title: item.title,
+      condition: item.invalidationCondition,
+      sourceItemIds: item.sourceItemIds,
+    }));
 
   const shellStyle = connector === null
     ? undefined
@@ -1002,37 +1063,14 @@ export function KnowledgeReadingWorkspace({
         "--knowledge-connector-width": `${connector.width}px`,
       } as CSSProperties);
 
-  const openOverviewSection = (nextMode: ReadingMode) => {
-    if (nextMode !== mode) setMode(nextMode);
-    requestAnimationFrame(() => {
-      if (readerScrollRef.current) readerScrollRef.current.scrollTop = 0;
-    });
-  };
-
-  const openOverviewDialog = (
-    dialog: KnowledgeOverviewDialogState,
-    trigger: HTMLButtonElement,
-  ) => {
-    overviewDialogReturnFocusRef.current = trigger;
-    setOverviewDialog(dialog);
-  };
-
-  const openOverviewDialogTarget = () => {
-    if (!overviewDialog) return;
-    const targetMode = overviewDialog.targetMode;
-    overviewDialogReturnFocusRef.current = null;
-    setOverviewDialog(null);
-    openOverviewSection(targetMode);
-  };
-
   return (
     <section
-      className="knowledge-final-shell"
+      className="knowledge-final-shell core-workspace-grid"
       data-reading-mode={mode}
       ref={shellRef}
       style={shellStyle}
     >
-      <aside className="knowledge-final-browser" aria-label="领域与主题">
+      <aside className="knowledge-final-browser knowledge-card core-workspace-card-two" aria-label="领域与主题">
         <label className="knowledge-final-search">
           <Search size={16} />
           <input
@@ -1051,6 +1089,7 @@ export function KnowledgeReadingWorkspace({
           activeTopicRef={activeTopicRef}
           onSelectTopic={onSelectTopic}
           onScroll={scheduleConnectorUpdate}
+          emptyMessage={hasAppliedRevision ? "没有匹配的正式主题。" : "待 AI 生成全库分类"}
         />
       </aside>
 
@@ -1059,11 +1098,11 @@ export function KnowledgeReadingWorkspace({
       ) : null}
 
       <article
-        className="knowledge-final-reader knowledge-card association-link-target"
+        className="knowledge-final-reader knowledge-card association-link-target core-workspace-card-three"
         ref={readerRef}
         data-hover-wheel-panel=""
       >
-        {topicDetail ? (
+        {topicDetail && displayDetail ? (
           <>
             <header className="knowledge-final-heading">
               <div>
@@ -1077,162 +1116,65 @@ export function KnowledgeReadingWorkspace({
                 </button>
                 <button
                   type="button"
-                  disabled={aiRunning || Boolean(aiBatchProgress) || topics.every((topic) => topic.status === "merged")}
+                  disabled={aiRunning || Boolean(aiBatchProgress) || !topics.length}
+                  title="只补当前模型尚未生成、或笔记内容已变化的主题；相同输入直接复用已有结果。"
+                  onClick={onRunPendingAiInsights}
+                >
+                  <ListTodo size={15} />AI 补充未生成主题
+                </button>
+                <button
+                  type="button"
+                  disabled={aiRunning || Boolean(aiBatchProgress) || !topics.length}
                   onClick={onRunAllAiInsights}
                 >
                   <ListTodo size={15} />
                   {aiBatchProgress
                     ? `全部整理中 ${aiBatchProgress.current}/${aiBatchProgress.total}`
-                    : "AI 整理全部主题"}
+                    : "AI 全量重新整理"}
                 </button>
               </div>
             </header>
 
-            <div
-              className="knowledge-final-scroll"
-              onScroll={(event) => setReaderHasScrolled(event.currentTarget.scrollTop > 4)}
-              ref={readerScrollRef}
-              data-hover-wheel-scroll=""
-            >
-
-            {aiInsight ? (
-              <section className="knowledge-ai-insight" aria-label="AI 主题洞察">
-                <header>
-                  <span><Sparkles size={15} /></span>
-                  <strong>AI 主题洞察</strong>
-                  <small>{aiInsight.modelId}</small>
-                  <time>{formatDate(aiInsight.generatedAt)}</time>
-                </header>
-                <MarkdownContent value={aiSummary.overviewMarkdown} />
-                {aiInsight.payload.keyInsights.length ? (
-                  <details className="knowledge-ai-insight-details">
-                    <summary>关键洞察 {aiInsight.payload.keyInsights.length} 条</summary>
-                    <div className="knowledge-ai-insight-grid">
-                      {aiInsight.payload.keyInsights.slice(0, 3).map((item) => (
-                        <article key={`${item.title}-${item.detail}`}>
-                          <strong>{item.title}</strong>
-                          <p>{item.detail}</p>
-                        </article>
-                      ))}
+            <div className="knowledge-final-stage">
+              <div className="knowledge-ai-insight-pane">
+                {aiInsight ? (
+                  <section className="knowledge-ai-insight" aria-label="AI 主题洞察">
+                    <header>
+                      <span><Sparkles size={15} /></span>
+                      <strong>AI 主题洞察</strong>
+                      <small>{aiInsight.modelId}</small>
+                      <time>{formatDate(aiInsight.generatedAt)}</time>
+                      <button
+                        aria-label="查看全部 AI 主题洞察"
+                        className="knowledge-ai-insight-open"
+                        onClick={() => setAiInsightDialogOpen(true)}
+                        ref={aiInsightOpenButtonRef}
+                        type="button"
+                      >
+                        <Maximize2 size={13} />查看全部
+                      </button>
+                    </header>
+                    <div className="knowledge-ai-insight-preview">
+                      <AiInsightBundleContent
+                        insight={aiInsight}
+                        detail={topicDetail}
+                        onOpenSource={openSourceFromCurrentPanel}
+                      />
                     </div>
-                  </details>
-                ) : null}
-                {aiInsight.payload.topicManagementSuggestions.length ? (
-                  <details className="knowledge-ai-insight-details">
-                    <summary>主题管理建议 {aiInsight.payload.topicManagementSuggestions.length} 条</summary>
-                    <ul>
-                      {aiInsight.payload.topicManagementSuggestions.map((item) => (
-                        <li key={`${item.action}-${item.title}`}>
-                          <strong>{item.title}</strong><span>{item.reason}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : null}
-                {aiSummary.boundaryMarkdown ? (
-                  <details className="knowledge-ai-insight-details knowledge-ai-boundary-details">
-                    <summary>
-                      来源范围{aiSummary.sourceCount ? ` ${aiSummary.sourceCount} 条` : ""}
-                    </summary>
-                    <div className="knowledge-ai-boundary-content">
-                      <MarkdownContent value={aiSummary.boundaryMarkdown} />
+                  </section>
+                ) : (
+                  <section className="knowledge-ai-insight" aria-label="等待 AI 主题洞察">
+                    <header><span><Sparkles size={15} /></span><strong>等待 AI 生成主题洞察</strong></header>
+                    <div className="knowledge-ai-insight-preview">
+                      <p>当前只保留原始笔记和已确认记录，不再用本地规则生成摘要、假设、判断演变或决策草案。</p>
                     </div>
-                  </details>
-                ) : null}
-              </section>
-            ) : null}
-
-            {overview ? (
-              <details className="knowledge-local-overview" open={!aiInsight}>
-                <summary hidden={!aiInsight}>
-                  <strong>本地分析</strong>
-                  <span>离线规则结果，可展开核对</span>
-                </summary>
-                <section className="knowledge-overview" aria-label="自动知识摘要">
-                <article className="knowledge-overview-judgment" data-card-interaction="surface-lift">
-                  <header>
-                    <span><Sparkles size={16} /></span>
-                    <strong>当前判断</strong>
-                    <em>{overview.currentJudgment.automatic ? "自动提炼" : "正式判断"}</em>
-                    {overview.currentJudgment.confidence !== null
-                      ? <b>{Math.round(overview.currentJudgment.confidence)}%</b>
-                      : null}
-                    {overview.currentJudgment.effectiveAt
-                      ? <small>{formatDate(overview.currentJudgment.effectiveAt)}</small>
-                      : null}
-                  </header>
-                  <p title={overview.currentJudgment.statement}>{overview.currentJudgment.statement}</p>
-                </article>
-                <div className="knowledge-overview-grid">
-                  <KnowledgeOverviewCard
-                    title="事实与线索"
-                    items={overview.facts}
-                    icon={ShieldCheck}
-                    tone="fact"
-                    actionLabel="查看全部"
-                    onOpen={(trigger) => openOverviewDialog({
-                      title: "事实与线索",
-                      items: overview.facts,
-                      icon: ShieldCheck,
-                      tone: "fact",
-                      targetMode: "hypotheses",
-                      targetLabel: "进入竞争假设",
-                    }, trigger)}
-                  />
-                  <KnowledgeOverviewCard
-                    title="关键证据"
-                    items={overview.evidence}
-                    icon={FolderSearch}
-                    tone="evidence"
-                    actionLabel="查看全部"
-                    onOpen={(trigger) => openOverviewDialog({
-                      title: "关键证据",
-                      items: overview.evidence,
-                      icon: FolderSearch,
-                      tone: "evidence",
-                      targetMode: "hypotheses",
-                      targetLabel: "进入竞争假设",
-                    }, trigger)}
-                  />
-                  <KnowledgeOverviewCard
-                    title="待验证问题"
-                    items={overview.questions}
-                    icon={CircleHelp}
-                    tone="question"
-                    actionLabel="查看全部"
-                    onOpen={(trigger) => openOverviewDialog({
-                      title: "待验证问题",
-                      items: overview.questions,
-                      icon: CircleHelp,
-                      tone: "question",
-                      targetMode: "hypotheses",
-                      targetLabel: "进入竞争假设",
-                    }, trigger)}
-                  />
-                  <KnowledgeOverviewCard
-                    title="建议下一步"
-                    items={overview.actions}
-                    icon={ListTodo}
-                    tone="action"
-                    actionLabel="查看全部"
-                    onOpen={(trigger) => openOverviewDialog({
-                      title: "建议下一步",
-                      items: overview.actions,
-                      icon: ListTodo,
-                      tone: "action",
-                      targetMode: "decisions",
-                      targetLabel: "进入决策版本",
-                    }, trigger)}
-                  />
-                </div>
-                </section>
-              </details>
-            ) : null}
+                  </section>
+                )}
+              </div>
 
             <nav
               aria-label="主题洞察模块"
               className="knowledge-final-tabs"
-              data-scroll-edge={readerHasScrolled ? "visible" : "hidden"}
             >
               <button
                 aria-selected={mode === "hypotheses"}
@@ -1240,7 +1182,7 @@ export function KnowledgeReadingWorkspace({
                 onClick={() => switchMode("hypotheses")}
                 role="tab"
               >
-                <GitBranch size={17} />竞争假设 <span>{hypotheses.length}</span>
+                <GitBranch size={17} />竞争假设 <span>{aiHypothesisCount + hypotheses.length}</span>
               </button>
               <button
                 aria-selected={mode === "evolution"}
@@ -1248,7 +1190,7 @@ export function KnowledgeReadingWorkspace({
                 onClick={() => switchMode("evolution")}
                 role="tab"
               >
-                <Clock3 size={17} />判断演变 <span>{judgments.length}</span>
+                <Clock3 size={17} />判断演变 <span>{aiEvolutionCount + judgments.length}</span>
               </button>
               <button
                 aria-selected={mode === "sources"}
@@ -1264,24 +1206,31 @@ export function KnowledgeReadingWorkspace({
                 onClick={() => switchMode("decisions")}
                 role="tab"
               >
-                <BookOpenText size={17} />决策版本 <span>{decisions.length}</span>
+                <BookOpenText size={17} />决策版本 <span>{aiDecisionCount + decisions.length}</span>
               </button>
             </nav>
 
-            <div className="knowledge-final-mode-content">
+            <div
+              className="knowledge-final-scroll"
+              ref={readerScrollRef}
+              data-hover-wheel-scroll=""
+            >
+              <div className="knowledge-final-mode-content">
               {mode === "hypotheses" ? (
                 <div className="knowledge-final-content-grid">
                   <main>
+                    {aiInsight && aiHypothesisCount ? (
+                      <AiHypothesisCards
+                        insight={aiInsight}
+                        detail={topicDetail}
+                        onOpenSource={openSourceFromCurrentPanel}
+                      />
+                    ) : null}
                     <div className="knowledge-final-hypothesis-grid">
                       {hypotheses.map((hypothesis, index) => {
                         const related = (displayDetail?.evidence ?? []).filter(
-                          (item) => hypothesis.automatic
-                            ? hypothesis.sourceItemIds.includes(item.sourceItemId)
-                            : item.propositionId === hypothesis.id,
+                          (item) => item.propositionId === hypothesis.id,
                         );
-                        const automaticAnchors = hypothesis.automatic
-                          ? hypothesis.automaticAnchors
-                          : [];
                         return (
                           <article
                             className={`knowledge-final-hypothesis ${index % 2 ? "oppose" : "support"}`}
@@ -1290,7 +1239,7 @@ export function KnowledgeReadingWorkspace({
                             <header>
                               <span>{String.fromCharCode(65 + index)}</span>
                               <div>
-                                <strong>{hypothesis.automatic ? "自动提取" : statusLabel(hypothesis.status)}</strong>
+                                <strong>{statusLabel(hypothesis.status)}</strong>
                                 {hypothesis.hypothesisGroup ? <small>{hypothesis.hypothesisGroup}</small> : null}
                               </div>
                               <em>{Math.round(hypothesis.confidence)}%</em>
@@ -1305,43 +1254,17 @@ export function KnowledgeReadingWorkspace({
                                 className="right-reading-copy right-reading-copy-13"
                               />
                             </section>
-                            {hypothesis.automatic && hypothesis.automaticRationale ? (
-                              <section
-                                className="knowledge-final-auto-rationale"
-                                data-card-interaction="surface-lift"
-                              >
-                                <span>提取依据</span>
-                                <p>{hypothesis.automaticRationale}</p>
-                              </section>
-                            ) : null}
                             <div className="knowledge-final-evidence-grid">
-                              {hypothesis.automatic ? (
-                                <>
-                                  <AutomaticEvidenceList
-                                    title="支持证据"
-                                    items={automaticAnchors.filter((item) => item.stance === "support")}
-                                    onOpenSource={openSourceFromCurrentPanel}
-                                  />
-                                  <AutomaticEvidenceList
-                                    title="反对证据"
-                                    items={automaticAnchors.filter((item) => item.stance === "oppose")}
-                                    onOpenSource={openSourceFromCurrentPanel}
-                                  />
-                                </>
-                              ) : (
-                                <>
-                                  <EvidenceList
-                                    title="支持证据"
-                                    items={related.filter((item) => item.stance === "support")}
-                                    onOpenSource={openSourceFromCurrentPanel}
-                                  />
-                                  <EvidenceList
-                                    title="反对证据"
-                                    items={related.filter((item) => item.stance === "oppose")}
-                                    onOpenSource={openSourceFromCurrentPanel}
-                                  />
-                                </>
-                              )}
+                              <EvidenceList
+                                title="支持证据"
+                                items={related.filter((item) => item.stance === "support")}
+                                onOpenSource={openSourceFromCurrentPanel}
+                              />
+                              <EvidenceList
+                                title="反对证据"
+                                items={related.filter((item) => item.stance === "oppose")}
+                                onOpenSource={openSourceFromCurrentPanel}
+                              />
                             </div>
                             <footer aria-label="假设有效性条件">
                               <div><small>有效期至</small><strong>{formatDate(hypothesis.validUntil)}</strong></div>
@@ -1350,11 +1273,11 @@ export function KnowledgeReadingWorkspace({
                           </article>
                         );
                       })}
-                      {!hypotheses.length ? (
+                      {!hypotheses.length && !aiHypothesisCount ? (
                         <section className="knowledge-final-no-proposition">
                           <CircleAlert size={22} />
                           <div>
-                            <h3>暂无竞争解释</h3>
+                            <h3>{aiInsight ? "AI 未形成可靠的竞争假设" : "等待 AI 生成竞争假设"}</h3>
                             <p>{displayDetail?.notes.length ?? 0} 篇笔记 · {displayDetail?.sources.length ?? 0} 个来源</p>
                             {(displayDetail?.notes ?? []).slice(0, 3).map((note) => (
                               <button type="button" key={note.id} onClick={() => switchMode("sources")}>
@@ -1388,13 +1311,16 @@ export function KnowledgeReadingWorkspace({
                       className="knowledge-final-insight-card"
                       data-card-interaction="surface-lift"
                     >
-                      <h3>待验证问题 <span>{pendingQuestions.length + synthesizedQuestions.length}</span></h3>
+                      <h3>待验证问题 <span>{pendingQuestions.length + synthesizedQuestions.length + aiPendingQuestions.length}</span></h3>
                       <ol>
+                        {aiPendingQuestions.slice(0, 4).map((item) => (
+                          <li className="is-ai-generated" key={`ai-question-${item}`}><small>AI</small>{item}</li>
+                        ))}
                         {[...pendingQuestions, ...synthesizedQuestions].slice(0, 4).map((item) => (
                           <li key={item.id}>{item.question}</li>
                         ))}
                       </ol>
-                      {!pendingQuestions.length && !synthesizedQuestions.length
+                      {!pendingQuestions.length && !synthesizedQuestions.length && !aiPendingQuestions.length
                         ? <small>暂无</small>
                         : null}
                     </section>
@@ -1402,7 +1328,18 @@ export function KnowledgeReadingWorkspace({
                       className="knowledge-final-insight-card expiring"
                       data-card-interaction="surface-lift"
                     >
-                      <h3>知识有效期 <span>{expiryIssues.length}</span></h3>
+                      <h3>知识有效性 <span>{expiryIssues.length + aiValidityItems.length}</span></h3>
+                      {aiValidityItems.slice(0, 4).map((item) => (
+                        <article className="knowledge-ai-validity-item" key={item.id}>
+                          <strong><small>AI</small>{item.title}</strong>
+                          <p>{item.condition}</p>
+                          <AiSourceReferences
+                            sourceItemIds={item.sourceItemIds}
+                            detail={topicDetail}
+                            onOpenSource={openSourceFromCurrentPanel}
+                          />
+                        </article>
+                      ))}
                       {expiryIssues.slice(0, 4).map((item) => (
                         <button
                           key={item.id}
@@ -1417,55 +1354,64 @@ export function KnowledgeReadingWorkspace({
                           <small>{item.status} · {formatDate(item.dueAt)}</small>
                         </button>
                       ))}
-                      {!expiryIssues.length ? <small>暂无</small> : null}
+                      {!expiryIssues.length && !aiValidityItems.length ? <small>暂无</small> : null}
                     </section>
                   </aside>
                 </div>
               ) : mode === "evolution" ? (
                 <div className="knowledge-final-evolution">
-                  <KnowledgeTimeline
-                    topicId={topicDetail.topic.id}
-                    events={visibleTimeline}
-                    eventFilter={eventFilter}
-                    onFilterChange={setEventFilter}
-                    onOpenSource={openSourceFromCurrentPanel}
-                  />
-
-                  <section
-                    className="knowledge-final-version-diff"
-                    data-reading-section="version-difference"
-                    aria-label="版本差异与变化原因"
-                  >
-                      <div>
-                        <article>
-                          <strong>上版判断 <small>{formatDate(previousJudgment?.effectiveAt)}</small></strong>
-                          <MarkdownContent
-                            value={previousJudgment?.statementMarkdown || "暂无上版"}
-                            className="right-reading-copy right-reading-copy-11"
-                          />
-                        </article>
-                        <article>
-                          <strong>当前判断 <small>{formatDate(currentJudgment?.effectiveAt)}</small></strong>
-                          <MarkdownContent
-                            value={currentJudgment?.statementMarkdown || "暂无当前判断"}
-                            className="right-reading-copy right-reading-copy-11"
-                          />
-                        </article>
-                      </div>
-                      <footer>
-                        <strong>变化原因（关联证据）</strong>
-                        <p>{currentJudgment?.changeReason || displayDetail?.turningPoints[0]?.explanation || "未记录"}</p>
-                        {displayDetail?.turningPoints.slice(0, 3).map((point) => (
-                          <small key={point.id}>• {point.title}：{point.explanation}</small>
-                        ))}
-                      </footer>
-                  </section>
+                  {aiInsight && aiEvolutionCount ? (
+                    <AiJudgmentEvolution
+                      insight={aiInsight}
+                      detail={topicDetail}
+                      onOpenSource={openSourceFromCurrentPanel}
+                    />
+                  ) : null}
+                  {judgments.length ? (
+                    <>
+                      <KnowledgeTimeline
+                        topicId={topicDetail.topic.id}
+                        events={visibleTimeline}
+                        eventFilter={eventFilter}
+                        onFilterChange={setEventFilter}
+                        onOpenSource={openSourceFromCurrentPanel}
+                      />
+                      <section
+                        className="knowledge-final-version-diff"
+                        data-reading-section="version-difference"
+                        aria-label="已确认的版本差异与变化原因"
+                      >
+                        <div>
+                          <article>
+                            <strong>上版判断 <small>{formatDate(previousJudgment?.effectiveAt)}</small></strong>
+                            <MarkdownContent value={previousJudgment?.statementMarkdown || "暂无上版"} className="right-reading-copy right-reading-copy-11" />
+                          </article>
+                          <article>
+                            <strong>当前判断 <small>{formatDate(currentJudgment?.effectiveAt)}</small></strong>
+                            <MarkdownContent value={currentJudgment?.statementMarkdown || "暂无当前判断"} className="right-reading-copy right-reading-copy-11" />
+                          </article>
+                        </div>
+                        <footer>
+                          <strong>变化原因（关联证据）</strong>
+                          <p>{currentJudgment?.changeReason || displayDetail?.turningPoints[0]?.explanation || "未记录"}</p>
+                          {displayDetail?.turningPoints.slice(0, 3).map((point) => (
+                            <small key={point.id}>• {point.title}：{point.explanation}</small>
+                          ))}
+                        </footer>
+                      </section>
+                    </>
+                  ) : null}
+                  {!aiEvolutionCount && !judgments.length ? (
+                    <p className="knowledge-final-empty">{aiInsight ? "AI 未识别出可证实的判断变化" : "等待 AI 生成判断演变"}</p>
+                  ) : null}
                 </div>
               ) : mode === "sources" ? (
                 displayDetail ? (
                   <div className="knowledge-final-source-mode">
                       <KnowledgeAssets
                         detail={displayDetail}
+                        integrationMarkdown={topicIntegrationMarkdown}
+                        integrationSourceItemIds={appliedRevisionTopic?.sourceItemIds ?? []}
                         onOpenSource={openSourceFromCurrentPanel}
                       focusSourceItemId={navigationTarget?.sourceItemId}
                     />
@@ -1477,67 +1423,112 @@ export function KnowledgeReadingWorkspace({
                   data-reading-section="decision-chain"
                   aria-label="判断、决策、行动与复盘"
                 >
-                  <DecisionHistory decisions={decisions} onOpenSource={openSourceFromCurrentPanel} />
+                  {aiInsight && aiDecisionCount ? (
+                    <AiDecisionCards insight={aiInsight} detail={topicDetail} onOpenSource={openSourceFromCurrentPanel} />
+                  ) : null}
+                  {decisions.length ? <DecisionHistory decisions={decisions} /> : null}
+                  {!aiDecisionCount && !decisions.length ? (
+                    <p className="knowledge-final-empty">{aiInsight ? "AI 未识别出明确的决策或行动记录" : "等待 AI 生成决策版本"}</p>
+                  ) : null}
                 </div>
               )}
-
+              </div>
             </div>
             </div>
           </>
         ) : (
           <div className="knowledge-final-no-topic">
             <CircleAlert size={30} />
-            <h1>选择主题阅读</h1>
+            <h1>{hasAppliedRevision ? "选择主题阅读" : "待 AI 生成全库分类"}</h1>
           </div>
         )}
       </article>
-      {overviewDialog ? createPortal((() => {
-        const DialogIcon = overviewDialog.icon;
-        return (
-          <div
-            className="knowledge-overview-dialog-backdrop"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setOverviewDialog(null);
-            }}
+      {aiInsightDialogOpen && aiInsight && topicDetail ? createPortal(
+        <div
+          className="knowledge-overview-dialog-backdrop knowledge-ai-insight-dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setAiInsightDialogOpen(false);
+          }}
+        >
+          <section
+            aria-labelledby="knowledge-ai-insight-dialog-title"
+            aria-modal="true"
+            className="knowledge-overview-dialog knowledge-ai-insight-dialog"
+            role="dialog"
           >
-            <section
-              aria-labelledby="knowledge-overview-dialog-title"
-              aria-modal="true"
-              className={`knowledge-overview-dialog ${overviewDialog.tone}`}
-              role="dialog"
-            >
-              <header>
-                <span><DialogIcon size={18} /></span>
-                <h2 id="knowledge-overview-dialog-title">{overviewDialog.title}</h2>
-                <em>{overviewDialog.items.length}</em>
-                <button
-                  aria-label="关闭完整内容"
-                  onClick={() => setOverviewDialog(null)}
-                  ref={overviewDialogCloseRef}
-                  type="button"
-                >
-                  <X size={18} />
-                </button>
-              </header>
-              <ol className="knowledge-overview-dialog-list">
-                {overviewDialog.items.map((item, index) => (
-                  <li key={item.id}>
-                    <span>{String(index + 1).padStart(2, "0")}</span>
-                    <p>{item.text}</p>
-                    {item.automatic ? <small>自动提炼</small> : null}
-                  </li>
-                ))}
-              </ol>
-              <footer>
-                <button type="button" onClick={() => setOverviewDialog(null)}>关闭</button>
-                <button className="primary" type="button" onClick={openOverviewDialogTarget}>
-                  {overviewDialog.targetLabel}<ArrowRight size={14} />
-                </button>
-              </footer>
-            </section>
-          </div>
-        );
-      })(), document.body) : null}
+            <header>
+              <span><Sparkles size={18} /></span>
+              <div>
+                <h2 id="knowledge-ai-insight-dialog-title">AI 主题洞察 · {topicDetail.topic.name}</h2>
+                <small>{aiInsight.modelId} · {formatDate(aiInsight.generatedAt)}</small>
+              </div>
+              <button
+                aria-label="关闭 AI 主题洞察"
+                onClick={() => setAiInsightDialogOpen(false)}
+                ref={aiInsightDialogCloseRef}
+                type="button"
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="knowledge-ai-insight-dialog-body" data-hover-wheel-scroll="">
+              <AiInsightBundleContent
+                insight={aiInsight}
+                detail={topicDetail}
+                onOpenSource={openSourceFromCurrentPanel}
+              />
+            </div>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+      {aiRunning && aiRunningTopicName && !aiSingleResult ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-single-progress-backdrop">
+          <section
+            aria-labelledby="ai-single-progress-title"
+            aria-modal="true"
+            className="knowledge-overview-dialog ai-single-progress-dialog"
+            role="dialog"
+          >
+            <header>
+              <span><Sparkles size={18} /></span>
+              <h2 id="ai-single-progress-title">AI 正在整理主题</h2>
+              <span className="save-spinner" aria-hidden="true" />
+            </header>
+            <div className="ai-single-dialog-body" aria-live="polite">
+              <strong>{aiRunningTopicName}</strong>
+              <p>正在读取归纳笔记、生成主题综述和四个知识模块，请保持软件开启。</p>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+      {aiSingleResult ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-single-result-backdrop">
+          <section
+            aria-labelledby="ai-single-result-title"
+            aria-modal="true"
+            className={`knowledge-overview-dialog ai-single-result-dialog ${aiSingleResult.status}`}
+            role="dialog"
+          >
+            <header>
+              <span>{aiSingleResult.status === "success" ? <ShieldCheck size={18} /> : <CircleAlert size={18} />}</span>
+              <h2 id="ai-single-result-title">
+                {aiSingleResult.status === "success" ? "AI 主题整理完成" : "AI 主题整理失败"}
+              </h2>
+            </header>
+            <div className="ai-single-dialog-body">
+              <strong>{aiSingleResult.topicName}</strong>
+              <p>{aiSingleResult.message}</p>
+              {aiSingleResult.generatedAt ? <small>{formatDate(aiSingleResult.generatedAt)}</small> : null}
+            </div>
+            <footer>
+              <button className="primary" type="button" onClick={onCloseAiSingleResult}>我知道了</button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
       {aiBatchProgress ? createPortal(
         <div className="knowledge-overview-dialog-backdrop ai-batch-progress-backdrop">
           <section

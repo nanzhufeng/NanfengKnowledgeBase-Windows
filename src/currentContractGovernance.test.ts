@@ -14,6 +14,20 @@ const nextPrompt = readProjectFile("docs/next-codex-prompt.md");
 const appShell = readProjectFile("src/App.tsx");
 const knowledgeWorkspace = readProjectFile("src/components/KnowledgeWorkspace.tsx");
 const unifiedNoteList = readProjectFile("src/components/UnifiedNoteListCard.tsx");
+const tauriBootstrap = readProjectFile("src-tauri/src/lib.rs");
+const attachmentService = readProjectFile("src-tauri/src/attachments.rs");
+const dataOptimization = readProjectFile("src-tauri/src/data_optimization.rs");
+const appPaths = readProjectFile("src-tauri/src/paths.rs");
+const aiAutomationSettings = readProjectFile("src/components/AiAutomationSettings.tsx");
+const aiModelPicker = readProjectFile("src/components/AiModelPicker.tsx");
+const readingWorkspace = readProjectFile("src/components/KnowledgeReadingWorkspace.tsx");
+const topicWorkspace = readProjectFile("src/components/TopicStructureReadingWorkspace.tsx");
+const aiModels = readProjectFile("src-tauri/src/ai/models.rs");
+const aiClient = readProjectFile("src-tauri/src/ai/client.rs");
+const aiPromptCache = readProjectFile("src-tauri/src/ai/prompt_cache.rs");
+const aiRepository = readProjectFile("src-tauri/src/ai/repository.rs");
+const aiCommands = readProjectFile("src-tauri/src/commands.rs");
+const styles = readProjectFile("src/styles.css");
 
 describe("当前合同治理", () => {
   it("用户可见入口、内部兼容标识与历史证据边界明确", () => {
@@ -43,8 +57,10 @@ describe("当前合同治理", () => {
     expect(appShell).toContain("UnifiedHistoricalSearchScope");
     expect(knowledgeWorkspace).toContain("UnifiedHistoricalSearchScope");
     expect(knowledgeWorkspace).toContain("searchSourceAttachmentCatalog(query, sourceSearchCategory)");
-    expect(knowledgeWorkspace).toContain("groupSourceAttachmentsByMonth(hits)");
+    expect(knowledgeWorkspace).toContain("groupSourceAttachmentsByMonth(visibleHits)");
     expect(knowledgeWorkspace).toContain("AttachmentTimelineDialog");
+    expect(knowledgeWorkspace).toContain("coveredByPreview={attachmentPreviewOpen}");
+    expect(knowledgeWorkspace).toContain("setSelectedId(hit.sourceItemId)");
     expect(knowledgeWorkspace).toContain("markSourceTextMatches");
     expect(knowledgeWorkspace).toContain("已跳转到正文匹配位置，并以黄色标记");
     expect(unifiedNoteList).toContain("搜索范围");
@@ -59,5 +75,89 @@ describe("当前合同治理", () => {
     expect(knowledgeWorkspace).toContain("onCurrentSourceContextChange");
     expect(knowledgeWorkspace).toContain("ensureSourceActionTarget(selected)");
     expect(appShell).not.toContain("网页捕获");
+  });
+
+  it("附件预览按单文件授权，清理候选先验证完整内容和目录树", () => {
+    expect(tauriBootstrap).toContain("attachments::allow_known_attachment_assets");
+    expect(tauriBootstrap).not.toContain("allow_directory(&paths.attachments, true)");
+    expect(attachmentService).toContain("asset_protocol_scope().allow_file(&path)");
+    expect(dataOptimization).toContain("directory_content_fingerprint");
+    expect(dataOptimization).toContain("ensure_controlled_directory_tree");
+  });
+
+  it("原始导入归档只用于保真与明确存储操作，日常来源阅读从数据库读取", () => {
+    expect(appPaths).toContain('imports_raw: root.join("imports").join("raw")');
+    expect(appShell).toContain("readCachedStorageStats");
+    expect(appShell).not.toContain('window.addEventListener("focus", refreshWhenActive)');
+    expect(appShell).not.toContain('document.addEventListener("visibilitychange", refreshWhenActive)');
+    expect(appShell).toContain("await reloadCollections(recordId);\n              await refreshStorageStats();");
+    expect(appShell).toContain("await reloadCollections();\n              await refreshStorageStats();");
+  });
+
+  it("AI 自动整理在设置页只保留入口，详细配置复用可外部关闭的二级弹窗", () => {
+    expect(appShell).toContain("<AiAutomationSettingsEntry onOpen={() => setAiAutomationSettingsOpen(true)} />");
+    expect(appShell).toContain('className="ai-automation-dialog"');
+    expect(appShell).toContain('sizePreferenceKey="ai-automation-dialog-v2"');
+    expect(appShell).toContain('onClose={() => setAiAutomationSettingsOpen(false)}');
+    expect(aiAutomationSettings).toContain("export function AiAutomationSettingsEntry");
+    expect(aiAutomationSettings).toContain('className="settings-action-section ai-automation-entry"');
+    expect(aiAutomationSettings).toContain('data-card-interaction="lift"');
+    expect(aiAutomationSettings).toContain("onClick={onOpen}");
+    expect(aiAutomationSettings).toContain('data-card-cue="forward"');
+    expect(aiAutomationSettings).not.toContain('className="secondary-button"');
+    expect(aiAutomationSettings).toContain('className="ai-settings-panel"');
+    expect(aiAutomationSettings).not.toContain('className="ai-settings-panel elevated-card"');
+    expect(aiAutomationSettings).toContain("AiModelPickerTrigger");
+    expect(aiAutomationSettings).toContain("AiModelPickerDialog");
+    expect(aiAutomationSettings).not.toContain('<select value={modelId}');
+    expect(aiModelPicker).toContain('className="ai-model-picker-trigger"');
+    expect(aiModelPicker).toContain('className={`ai-model-option ${presentation.tone}${selected ? " selected" : ""}`}');
+    expect(aiModelPicker).toContain('className="ai-model-picker-dialog"');
+    expect(aiModelPicker).toContain('aria-label="选择 AI 模型"');
+    expect(readingWorkspace).not.toContain("AiModelPicker");
+    expect(readingWorkspace).not.toContain("aiModelSelection");
+    expect(topicWorkspace).not.toContain("AiModelPicker");
+    expect(topicWorkspace).not.toContain("aiModelSelection");
+    expect(knowledgeWorkspace).not.toContain("setAiModelSelection");
+    expect(topicWorkspace).toContain("const selectedResume = Boolean(aiResume);");
+    expect(knowledgeWorkspace).toContain("aiRepository.runTaxonomyRevision(resumeTaskPublicId)");
+    expect(knowledgeWorkspace).toContain("aiRepository.runIncrementalTaxonomyRevision()");
+    expect(readingWorkspace).not.toContain('aria-label="主题洞察生成模型"\n                      value=');
+    expect(topicWorkspace).not.toContain('aria-label="主题管理生成模型"\n                    value=');
+    expect(styles).toContain(".ai-model-option.openai");
+    expect(styles).toContain(".ai-model-option.anthropic");
+    expect(styles).toContain(".ai-model-option.deepseek");
+    expect(styles).toMatch(/\.settings-action-section\.ai-automation-entry\s*\{[\s\S]*?background:\s*var\(--settings-item-surface\);/);
+    expect(styles).toMatch(/\.prototype-dialog\.ai-automation-dialog\s*\{[\s\S]*?width:\s*min\(1366px,[\s\S]*?height:\s*min\(872px,/);
+    expect(styles).toMatch(/\.ai-model-picker-dialog\s*\{[\s\S]*?width:\s*min\(840px,[\s\S]*?max-height:\s*min\(760px,/);
+    expect(styles).toMatch(/\.ai-model-picker-options\s*\{[\s\S]*?align-content:\s*start;[\s\S]*?grid-auto-rows:\s*max-content;/);
+    expect(styles).toMatch(/\.topic-final-filter-controls,\s*\.topic-final-ai-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+    expect(styles).toMatch(/\.settings-page > :is\([\s\S]*?\.ai-automation-entry,[\s\S]*?\.settings-list/);
+  });
+
+  it("所有 AI 通道以固定任务路由接入，且高难模型不自动升级", () => {
+    expect(aiAutomationSettings).toContain('qwen_direct: "千问直连"');
+    expect(aiAutomationSettings).toContain("逐篇整理与批量归属固定用 Qwen3.7 Flash");
+    expect(aiAutomationSettings).toContain("DeepSeek V4 Flash");
+    expect(aiAutomationSettings).toContain("任务路由基准");
+    expect(aiAutomationSettings).toContain("绝不跨供应商自动替换");
+    expect(aiModels).toContain('QWEN_DEFAULT_ORGANIZATION_MODEL: &str = "qwen3.7-flash"');
+    expect(aiModels).toContain('DEEPSEEK_DEFAULT_ORGANIZATION_MODEL: &str = "deepseek-v4-flash"');
+    expect(aiModels).toContain("openrouter_task_model_route");
+    expect(aiModels).toContain("same_family_candidate");
+    expect(aiModels).toContain("AiTaskModelRoute");
+    expect(aiModels).toContain('QWEN_COMPLEX_SYNTHESIS_MODEL: &str = "qwen3.7-plus"');
+    expect(aiModels).toContain('QWEN_HARD_JUDGMENT_MODEL: &str = "qwen3.8-max-preview"');
+    expect(aiRepository).toContain("resolve_task_model_route");
+    expect(aiClient).toContain("QWEN_API");
+    expect(aiClient).toContain("prompt_cache::structured_request");
+    expect(aiPromptCache).toContain('"cache_control"');
+    expect(aiPromptCache).toContain('body["session_id"]');
+    expect(aiPromptCache).toContain('body["prompt_cache_key"]');
+    expect(aiPromptCache).toContain("PROMPT_CONTRACT_VERSION");
+    expect(aiRepository).toContain("record_task_model_step");
+    expect(aiCommands).toContain("resolve_task_model_route");
+    expect(aiCommands).toContain("profile_model_id");
+    expect(aiClient).not.toContain("DeepseekDirect => QWEN_API");
   });
 });

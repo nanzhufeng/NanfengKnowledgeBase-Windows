@@ -81,12 +81,98 @@ test("快捷键设置使用独立的紧凑比例和两列信息布局", async ({
   });
 });
 
+test("暗色模式的二级弹窗、等待态与输入选区统一使用深面亮字", async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem("nanfeng-knowledge-base:appearance-skin", "florist-studio");
+    localStorage.setItem("nanfeng-knowledge-base:appearance-color-mode", "dark");
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /设置/ }).click();
+  await expect(page.locator(".ai-automation-entry .settings-icon")).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await expect(page.locator(".ai-automation-entry .settings-icon > svg")).toHaveCSS("color", "rgb(255, 180, 125)");
+  await expect(page.locator(".settings-row .settings-icon").first()).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await page.screenshot({
+    path: resolve(".runtime-qa", "dark-settings-icons-1702x1066.png"),
+    fullPage: false,
+  });
+  await page.locator(".settings-row").filter({ hasText: "快捷键" }).click();
+  const shortcutDialog = page.getByRole("dialog", { name: "快捷键" });
+  await expect(shortcutDialog).toBeVisible();
+  await expect(shortcutDialog.locator(".setting-preview")).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await expect(shortcutDialog.locator(".shortcut-list > div").first()).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await expect(shortcutDialog.locator(".shortcut-list kbd").first()).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await expect(shortcutDialog.locator(".shortcut-list span").first()).toHaveCSS("color", "rgb(245, 251, 248)");
+  await page.keyboard.press("Escape");
+
+  await page.locator(".settings-row").filter({ hasText: "数据与存储" }).click();
+  const storageDialog = page.getByRole("dialog", { name: "数据与存储" });
+  await expect(storageDialog).toBeVisible();
+  await expect(storageDialog).toHaveCSS("background-color", "rgb(16, 20, 21)");
+  await expect(storageDialog.locator(".settings-data-location")).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await expect(storageDialog.locator(".settings-action-section").first()).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await page.screenshot({
+    path: resolve(".runtime-qa", "dark-storage-dialog-1702x1066.png"),
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+
+  await page.locator(".ai-automation-entry").click();
+  const aiDialog = page.getByRole("dialog", { name: "AI 自动整理" });
+  await expect(aiDialog).toBeVisible();
+  await expect(aiDialog).toHaveCSS("background-color", "rgb(16, 20, 21)");
+  await expect(aiDialog.locator(".ai-channel-switch button").first()).toHaveCSS("background-color", "rgb(12, 16, 17)");
+  await expect(aiDialog.locator(".ai-settings-route-note")).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await expect(aiDialog.locator(".ai-model-picker-trigger")).toHaveCSS("background-color", "rgb(12, 16, 17)");
+  await aiDialog.getByRole("button", { name: "选择 AI 模型" }).click();
+  const modelDialog = page.getByRole("dialog", { name: "选择 AI 模型" });
+  await expect(modelDialog).toBeVisible();
+  await expect(modelDialog).toHaveCSS("background-color", "rgb(23, 29, 30)");
+  await page.screenshot({
+    path: resolve(".runtime-qa", "dark-ai-model-dialog-1702x1066.png"),
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
+  await page.evaluate(() => {
+    const input = document.createElement("input");
+    input.type = "search";
+    input.value = "暗色选区验证";
+    input.dataset.testid = "dark-selection-probe";
+    document.body.append(input);
+  });
+  const selectionProbe = page.locator('[data-testid="dark-selection-probe"]');
+  await selectionProbe.evaluate((input) => {
+    const selected = getComputedStyle(input, "::selection");
+    return { color: selected.color, background: selected.backgroundColor };
+  }).then((selection) => {
+    expect(selection.color).toBe("rgb(245, 251, 248)");
+    expect(selection.background).not.toBe("rgb(0, 0, 0)");
+  });
+  await selectionProbe.evaluate((input) => input.remove());
+
+  await page.getByRole("button", { name: /主题管理/ }).click();
+  const awaiting = page.locator(".topic-final-awaiting-card");
+  if (await awaiting.count()) {
+    await expect(awaiting).toHaveCSS("background-color", "rgb(23, 29, 30)");
+    await expect(awaiting.locator("small")).toHaveCSS("color", "rgb(194, 208, 202)");
+  }
+  await page.screenshot({
+    path: resolve(".runtime-qa", "dark-dialogs-and-selection-1702x1066.png"),
+    fullPage: false,
+  });
+});
+
 test("设置页所有主卡片共用同一内容列宽和左右起点", async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem("nanfeng-knowledge-base:appearance-skin", "desert-lantern");
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: /设置/ }).click();
   const cards = [
     page.locator(".skin-settings-panel"),
     page.locator(".runtime-build-card"),
-    page.locator(".ai-settings-panel"),
+    page.locator(".ai-automation-entry"),
     page.locator(".settings-row").first(),
   ];
   const boxes = await Promise.all(cards.map(async (card) => {
@@ -100,6 +186,57 @@ test("设置页所有主卡片共用同一内容列宽和左右起点", async ({
     expect(Math.abs(box!.x - reference.x)).toBeLessThan(1);
     expect(Math.abs(box!.width - reference.width)).toBeLessThan(1);
   }
+  const aiAutomationEntry = page.locator(".ai-automation-entry");
+  await expect(aiAutomationEntry).toHaveCSS("min-height", "88px");
+  await expect(aiAutomationEntry).toHaveAttribute("data-card-interaction", "lift");
+  await expect(aiAutomationEntry).toHaveAttribute("title", "打开 AI 自动整理设置");
+  await expect(aiAutomationEntry.locator(".ai-automation-entry-cue")).toHaveCount(1);
+  await expect(aiAutomationEntry.locator(".secondary-button")).toHaveCount(0);
+  const aiEntryBox = boxes[2]!;
+  expect(aiEntryBox.height).toBeGreaterThanOrEqual(88);
+  expect(aiEntryBox.height).toBeLessThanOrEqual(92);
+  expect(Math.abs(aiEntryBox.y - (reference.y + reference.height) - 18)).toBeLessThan(1);
+  const settingsListBox = await page.locator(".settings-list").boundingBox();
+  expect(settingsListBox).not.toBeNull();
+  expect(Math.abs(settingsListBox!.y - (aiEntryBox.y + aiEntryBox.height) - 16)).toBeLessThan(1);
+  const glassMaterials = await page.locator(
+    ".settings-page > .elevated-card, .settings-page > .ai-automation-entry, .settings-page .settings-row",
+  ).evaluateAll((elements) => elements.map((element) => ({
+    backgroundColor: getComputedStyle(element).backgroundColor,
+    backdropFilter: getComputedStyle(element).backdropFilter,
+  })));
+  expect(glassMaterials.length).toBeGreaterThanOrEqual(4);
+  expect(glassMaterials.every((material) => material.backgroundColor.startsWith("rgba(")))
+    .toBe(true);
+  expect(glassMaterials.every((material) => material.backdropFilter.includes("blur")))
+    .toBe(true);
+  await aiAutomationEntry.click({ position: { x: 48, y: 44 } });
+  const aiDialog = page.getByRole("dialog", { name: "AI 自动整理" });
+  await expect(aiDialog).toBeVisible();
+  const aiDialogBox = await aiDialog.boundingBox();
+  expect(aiDialogBox).not.toBeNull();
+  expect(aiDialogBox!.width).toBeGreaterThanOrEqual(1_200);
+  expect(aiDialogBox!.height).toBeGreaterThanOrEqual(820);
+  await aiDialog.getByRole("button", { name: "选择 AI 模型" }).click();
+  const modelDialog = page.getByRole("dialog", { name: "选择 AI 模型" });
+  await expect(modelDialog).toBeVisible();
+  await expect(aiDialog).toBeVisible();
+  const modelDialogBox = await modelDialog.boundingBox();
+  expect(modelDialogBox).not.toBeNull();
+  expect(modelDialogBox!.height).toBeLessThan(420);
+  await page.screenshot({
+    path: resolve(".runtime-qa", "ai-model-picker-separate-dialog-1702x1066.png"),
+    fullPage: false,
+  });
+  await page.keyboard.press("Escape");
+  await expect(modelDialog).toBeHidden();
+  await expect(aiDialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(aiDialog).toBeHidden();
+  expect(await page.locator(".runtime-build-card").evaluate((runtimeCard) => (
+    Boolean(runtimeCard.compareDocumentPosition(document.querySelector(".settings-list"))
+      & Node.DOCUMENT_POSITION_PRECEDING)
+  ))).toBe(true);
   await page.screenshot({
     path: resolve(".runtime-qa", "settings-unified-card-width-1702x1066.png"),
     fullPage: false,
@@ -295,10 +432,12 @@ test("设置将完整备份和数据库高级维护分层", async ({ page }) => 
   await page.getByRole("button", { name: /扫描可优化项/ }).click();
   const optimizationDialog = page.getByRole("dialog", { name: "确认优化数据占用" });
   await expect(optimizationDialog).toBeVisible();
-  await expect(optimizationDialog.getByText(/不会删除笔记、知识对象、历史版本、附件或导入原件/)).toBeVisible();
+  await expect(optimizationDialog.getByText(/不会删除笔记、主题、历史版本、原始导入或完整迁移备份/)).toBeVisible();
+  await expect(optimizationDialog.getByText(/无引用受控附件/)).toBeVisible();
+  await expect(optimizationDialog.getByText(/可合并数据库写入日志/)).toBeVisible();
   await expect(optimizationDialog.getByText(/完全重复备份/)).toBeVisible();
   await expect(optimizationDialog.getByText(/超过 24 小时/)).toBeVisible();
-  await expect(optimizationDialog.getByRole("button", { name: /创建安全快照并优化/ })).toBeDisabled();
+  await expect(optimizationDialog.getByRole("button", { name: /确认清理可回收项/ })).toBeDisabled();
   await optimizationDialog.getByRole("button", { name: "取消", exact: true }).click();
 
   const advanced = page.locator("details.settings-advanced-maintenance");

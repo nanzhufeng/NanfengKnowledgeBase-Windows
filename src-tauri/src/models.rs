@@ -414,11 +414,20 @@ pub struct StorageStats {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DataOptimizationPreview {
+    /// 由后端扫描命令签发；只用于本次清理确认，不能作为持久化数据保存。
+    pub confirmation_token: Option<String>,
     pub database_reclaimable_bytes: u64,
+    pub database_wal_bytes: u64,
+    pub will_vacuum: bool,
     pub duplicate_backup_count: u64,
     pub duplicate_backup_bytes: u64,
     pub incomplete_backup_count: u64,
     pub incomplete_backup_bytes: u64,
+    pub unreferenced_attachment_count: u64,
+    pub unreferenced_attachment_bytes: u64,
+    pub referenced_attachment_bytes: u64,
+    pub protected_backup_bytes: u64,
+    pub protected_import_bytes: u64,
     pub estimated_reclaimable_bytes: u64,
     pub protected_business_record_count: i64,
 }
@@ -426,12 +435,16 @@ pub struct DataOptimizationPreview {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DataOptimizationResult {
-    pub safety_backup: String,
+    pub safety_backup: Option<String>,
     pub removed_duplicate_backup_count: u64,
     pub removed_incomplete_backup_count: u64,
+    pub removed_unreferenced_attachment_count: u64,
     pub reclaimed_bytes: u64,
     pub database_bytes_before: u64,
     pub database_bytes_after: u64,
+    pub database_wal_bytes_before: u64,
+    pub database_wal_bytes_after: u64,
+    pub performed_vacuum: bool,
     pub integrity_check: String,
 }
 

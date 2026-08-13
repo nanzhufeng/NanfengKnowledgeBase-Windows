@@ -1,56 +1,25 @@
-[CmdletBinding()]
-param()
+[CmdletBinding(SupportsShouldProcess)]
+param(
+  [switch]$Apply
+)
 
 $ErrorActionPreference = "Stop"
 $projectRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$archiveRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "docs\archive\acceptance-entrypoints"))
 $runtimeRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot ".runtime-qa"))
 $separator = [System.IO.Path]::DirectorySeparatorChar
 $projectPrefix = $projectRoot.TrimEnd($separator) + $separator
 $runtimePrefix = $runtimeRoot.TrimEnd($separator) + $separator
-$currentBat = "启动南枫知识库-当前验收.bat"
-$preservedRuntimeDirectories = @("current-acceptance-v93-app")
-$legacyRunningDirectory = "attachment-default-load-v89-app"
-$legacyRunningPath = [System.IO.Path]::GetFullPath((Join-Path $runtimeRoot $legacyRunningDirectory))
-try {
-  $legacyIsRunning = Get-CimInstance Win32_Process -ErrorAction Stop |
-    Where-Object {
-      $_.ExecutablePath -and
-      [System.IO.Path]::GetFullPath($_.ExecutablePath).StartsWith(
-        $legacyRunningPath + $separator,
-        [System.StringComparison]::OrdinalIgnoreCase
-      )
-    } |
-    Select-Object -First 1
-  if ($legacyIsRunning) {
-    $preservedRuntimeDirectories += $legacyRunningDirectory
-  }
-} catch {
-  # 进程枚举失败时宁可保留旧运行包，也不冒险删除正在执行的文件。
-  $preservedRuntimeDirectories += $legacyRunningDirectory
-}
-
-if (-not $archiveRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-  throw "Archive path escaped the project root."
-}
 if (-not $runtimeRoot.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
   throw "Runtime path escaped the project root."
 }
 
-$batFiles = Get-ChildItem -LiteralPath $projectRoot -File -Filter "*.bat" |
-  Where-Object Name -ne $currentBat
+$runningExecutablePaths = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+  Where-Object { $_.ExecutablePath } |
+  ForEach-Object { [System.IO.Path]::GetFullPath($_.ExecutablePath) })
 
-foreach ($batFile in $batFiles) {
-  $destination = Join-Path $archiveRoot ($batFile.Name + ".archived")
-  if (Test-Path -LiteralPath $destination) {
-    throw "Archive collision: $destination"
-  }
-}
-
-$runtimeTargets = Get-ChildItem -LiteralPath $runtimeRoot -Directory |
+$runtimeTargets = Get-ChildItem -LiteralPath $runtimeRoot -Directory -ErrorAction Stop |
   Where-Object {
-    $_.Name -match "(-app|-build)$" -and
-    $_.Name -notin $preservedRuntimeDirectories
+    $_.Name -match "^current-acceptance-v\d+-(app|build)$"
   }
 
 foreach ($runtimeTarget in $runtimeTargets) {
@@ -60,19 +29,31 @@ foreach ($runtimeTarget in $runtimeTargets) {
   }
 }
 
-foreach ($batFile in $batFiles) {
-  $destination = Join-Path $archiveRoot ($batFile.Name + ".archived")
-  [System.IO.File]::Move($batFile.FullName, $destination)
+$runningTargets = @($runtimeTargets | Where-Object {
+  $candidatePrefix = [System.IO.Path]::GetFullPath($_.FullName).TrimEnd($separator) + $separator
+  $runningExecutablePaths | Where-Object { $_.StartsWith($candidatePrefix, [System.StringComparison]::OrdinalIgnoreCase) }
+})
+
+$deletableTargets = @($runtimeTargets | Where-Object { $_.FullName -notin $runningTargets.FullName })
+
+$summary = [pscustomobject]@{
+  Mode = if ($Apply) { "Apply" } else { "Preview" }
+  CandidateDirectories = $runtimeTargets.FullName
+  RunningDirectories = $runningTargets.FullName
+  DeletableDirectories = $deletableTargets.FullName
+  ProtectedDirectories = @("current-acceptance-app", "current-acceptance-build", "knowledge-final-layout-evidence", "build-logs")
 }
 
-foreach ($runtimeTarget in $runtimeTargets) {
-  [System.IO.Directory]::Delete($runtimeTarget.FullName, $true)
+if (-not $Apply) {
+  $summary
+  Write-Host "Preview only. Re-run with -Apply after reviewing the candidate list." -ForegroundColor Yellow
+  exit 0
 }
 
-[pscustomobject]@{
-  ArchivedBatCount = $batFiles.Count
-  DeletedRuntimeDirectoryCount = $runtimeTargets.Count
-  RemainingRootBatCount = (Get-ChildItem -LiteralPath $projectRoot -File -Filter "*.bat").Count
-  CurrentAppExists = Test-Path -LiteralPath (Join-Path $runtimeRoot "current-acceptance-v93-app\release\nanfeng-knowledge-base.exe")
-  RunningV89Preserved = Test-Path -LiteralPath (Join-Path $runtimeRoot "attachment-default-load-v89-app\release\nanfeng-knowledge-base.exe")
+foreach ($runtimeTarget in $deletableTargets) {
+  if ($PSCmdlet.ShouldProcess($runtimeTarget.FullName, "Delete historical acceptance artifact")) {
+    Remove-Item -LiteralPath $runtimeTarget.FullName -Recurse -Force
+  }
 }
+
+$summary

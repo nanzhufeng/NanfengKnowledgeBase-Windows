@@ -18,17 +18,17 @@ describe("场景背景动态文字对比度合同", () => {
 
   it("页面标题使用场景前景色，嵌套空状态明确使用磨砂表面色", () => {
     expect(styles).toContain(
-      '.app-shell:not([data-skin="classic"]) .page-shell > .page-title h1',
+      '.app-shell[data-skin-material="scene"] .page-shell > .page-title h1',
     );
     expect(styles).toContain(
-      '.app-shell:not([data-skin="classic"]) .page-shell > .page-title p',
+      '.app-shell[data-skin-material="scene"] .page-shell > .page-title p',
     );
     expect(styles).toContain(
-      '.app-shell:not([data-skin="classic"]) .scene-surface-state',
+      '.app-shell[data-skin-material="scene"] .scene-surface-state',
     );
     expect(app).toContain('empty-state wide scene-surface-state');
     expect(styles).not.toContain(
-      '.app-shell:not([data-skin="classic"]) .page-shell > .empty-state {',
+      '.app-shell[data-skin-material="scene"] .page-shell > .empty-state {',
     );
   });
 });

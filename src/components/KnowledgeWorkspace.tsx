@@ -33,7 +33,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { CLASSIFIER_ALGORITHM_VERSION } from "../knowledge/deterministicClassifier";
 import {
   connectorMetricsEqual,
   measureCardToCardConnector,
@@ -46,15 +45,8 @@ import {
   type ReadableSourceMessage,
 } from "../domain/importedContent";
 import {
-  autoOrganizeImportedSources,
-  suggestionsForPersistence,
-  undoAutoOrganization,
-} from "../services/knowledgeAutoOrganizer";
-import {
   KnowledgeRepository,
   type EvidenceLocator,
-  type KnowledgeClassificationSuggestionRow,
-  type KnowledgeClassificationRuleRow,
   type KnowledgeDomainRow,
   type KnowledgeEntityRow,
   type KnowledgeInboxItem,
@@ -62,7 +54,6 @@ import {
   type KnowledgeTopicAliasRow,
   type KnowledgeTopicDetail,
   type KnowledgeTopicRow,
-  type PersonalCatalogProposal,
   type TopicMergePreview,
   type TopicDecisionRow,
   type TopicPropositionRow,
@@ -77,13 +68,21 @@ import {
   loadSourceSupportingData,
   loadTopicMaintenanceData,
 } from "../services/knowledgeWorkspaceData";
-import { classifySourceAsync } from "../services/classificationWorker";
-import { AiRepository, type AiTopicInsight } from "../services/aiRepository";
+import {
+  AiRepository,
+  type AiTaxonomyRevision,
+  type AiTaxonomyResume,
+  type AiTopicInsight,
+} from "../services/aiRepository";
 import {
   runAiTopicBatch,
   type AiTopicBatchProgress,
   type AiTopicBatchResult,
 } from "../aiTopicBatch";
+import {
+  getAiTaxonomyIntegrationCoverage,
+  getAppliedAiTaxonomyHierarchy,
+} from "../aiTaxonomyPresentation";
 import MarkdownContent, { ReadableMessageContent } from "./MarkdownContent";
 import { AttachmentTimelineMediaCard } from "./AttachmentTimelineMediaCard";
 import { SourceAttachmentAsset } from "./SourceAttachmentAsset";
@@ -101,6 +100,7 @@ import {
   shouldResetSourceArchiveEntry,
   sourceCardIsFullyVisible,
 } from "../knowledge/sourceViewport";
+import { LOADING_LABEL } from "../ui/loadingLabel";
 import {
   clearSourceBodySearchHistory,
   clearSourceSearchHistory,
@@ -112,11 +112,13 @@ import {
 import { collectTopicStructuralAttentionIds } from "../knowledge/topicStructurePolicy";
 import {
   KnowledgeReadingWorkspace,
+  type AiSingleInsightResult,
   type KnowledgeReadingTarget,
   type KnowledgeSourceTarget,
 } from "./KnowledgeReadingWorkspace";
 import {
   TopicStructureReadingWorkspace,
+  type AiTaxonomyRunResult,
   type TopicMaintenanceTask,
 } from "./TopicStructureReadingWorkspace";
 import { NoteListActions } from "./NoteListActions";
@@ -159,6 +161,7 @@ type TopicStructureDialogState =
   | null;
 const INITIAL_INBOX_LIMIT = 120;
 const SOURCE_PREVIEW_LIMIT = 20_000;
+const SOURCE_TEXT_PREFETCH_RADIUS = 2;
 
 // 只保存当前应用会话的轻量读取快照。重新挂载时先恢复可见内容，再后台复核正式库；
 // 不持久化、不覆盖正式数据，也不把快照当作事实来源。
@@ -555,10 +558,20 @@ const attachmentTimelineLabel: Record<Exclude<HistoricalSearchCategory, "text">,
   file: "文件资料",
 };
 
+const ATTACHMENT_TIMELINE_INITIAL_VISIBLE_COUNT = 120;
+
+function attachmentTimelineCacheKey(
+  category: Exclude<HistoricalSearchCategory, "text">,
+  query: string,
+): string {
+  return `${category}\u0000${query.trim().toLocaleLowerCase()}`;
+}
+
 function AttachmentTimelineDialog({
   category,
   hits,
   busy,
+  coveredByPreview,
   onSearch,
   onOpenHit,
   onClose,
@@ -566,26 +579,39 @@ function AttachmentTimelineDialog({
   category: Exclude<HistoricalSearchCategory, "text">;
   hits: SourceAttachmentCatalogHit[];
   busy: boolean;
+  coveredByPreview: boolean;
   onSearch: (query: string) => void;
   onOpenHit: (hit: SourceAttachmentCatalogHit) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const monthGroups = useMemo(() => groupSourceAttachmentsByMonth(hits), [hits]);
-  const mediaCategory = category === "image" || category === "video" ? category : null;
+  const [visibleLimit, setVisibleLimit] = useState(ATTACHMENT_TIMELINE_INITIAL_VISIBLE_COUNT);
+  const visibleHits = useMemo(() => hits.slice(0, visibleLimit), [hits, visibleLimit]);
+  const monthGroups = useMemo(() => groupSourceAttachmentsByMonth(visibleHits), [visibleHits]);
+  const isVisualMediaCategory = category === "image" || category === "video";
   useEffect(() => {
+    setVisibleLimit(ATTACHMENT_TIMELINE_INITIAL_VISIBLE_COUNT);
     onSearch("");
   }, [category, onSearch]);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
+      // 附件预览位于时间线之上时，Escape 只交给最上层预览，避免一次关闭两层。
+      if (coveredByPreview) return;
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  }, [coveredByPreview, onClose]);
   return createPortal(
     <div className="prototype-dialog-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="prototype-dialog elevated-card attachment-timeline-dialog" role="dialog" aria-modal="true" aria-label={attachmentTimelineLabel[category]} onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="prototype-dialog elevated-card attachment-timeline-dialog"
+        role="dialog"
+        aria-modal={coveredByPreview ? undefined : "true"}
+        aria-hidden={coveredByPreview || undefined}
+        aria-label={attachmentTimelineLabel[category]}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="prototype-dialog-heading">
           <div><span>历史资料时间线</span><h2>{attachmentTimelineLabel[category]}</h2></div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
@@ -594,33 +620,39 @@ function AttachmentTimelineDialog({
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`在${attachmentTimelineLabel[category]}中继续搜索`} aria-label={`搜索${attachmentTimelineLabel[category]}`} autoFocus />
           <button type="submit"><Search size={15} />搜索</button>
         </form>
-        <p className="attachment-timeline-caption">{mediaCategory
+        <p className="attachment-timeline-caption">{isVisualMediaCategory
           ? "按月显示全部媒体预览；图片点击查看，视频点击播放，缺失预览会在后台自动生成。"
-          : "正文已声明的文件会全部列出并按月分组；已加载文件可直接预览，未加载文件会在打开笔记后自动完成。"}</p>
+          : category === "audio"
+            ? "按月显示音频卡；已加载音频可直接播放、拖动进度和调节音量，未加载项可单独展开加载。"
+            : "按月显示文件卡；PDF、文本等支持软件内预览，其他格式保留明确的预览与定位入口。"}</p>
         <div className="attachment-timeline-list">
-          {busy ? <p className="knowledge-empty">正在读取完整附件目录…</p> : monthGroups.map((group) => (
+          {busy && !visibleHits.length ? <p className="knowledge-empty">{LOADING_LABEL}</p> : null}
+          {monthGroups.map((group) => (
             <section className="attachment-timeline-month" key={group.key}>
               <header><strong>{group.label}</strong><span>{group.hits.length}</span></header>
-              <div className={mediaCategory ? "attachment-timeline-media-grid" : undefined}>
-                {group.hits.map((hit) => mediaCategory ? (
+              <div className="attachment-timeline-media-grid">
+                {group.hits.map((hit) => (
                   <AttachmentTimelineMediaCard
                     key={hit.key}
-                    category={mediaCategory}
+                    category={category}
                     hit={hit}
                     dateLabel={formatSourceDate(hit.recordOriginalAt ?? hit.attachment?.createdAt)}
                     onOpen={() => onOpenHit(hit)}
                   />
-                ) : (
-                  <button type="button" key={hit.key} className="attachment-timeline-item" onClick={() => onOpenHit(hit)}>
-                    <time>{formatSourceDate(hit.recordOriginalAt ?? hit.attachment?.createdAt)}</time>
-                    <span><strong>{hit.fileName}</strong><em>{hit.recordTitle}</em></span>
-                    <small>{hit.availability === "ready" ? hit.mimeType ?? "文件" : "打开笔记后自动加载"}</small>
-                  </button>
                 ))}
               </div>
             </section>
           ))}
           {!busy && !hits.length ? <p className="knowledge-empty">当前分类没有找到附件声明。</p> : null}
+          {visibleHits.length < hits.length ? (
+            <button
+              className="attachment-timeline-load-more"
+              type="button"
+              onClick={() => setVisibleLimit((value) => value + ATTACHMENT_TIMELINE_INITIAL_VISIBLE_COUNT)}
+            >
+              继续显示 {Math.min(ATTACHMENT_TIMELINE_INITIAL_VISIBLE_COUNT, hits.length - visibleHits.length)} 项（已显示 {visibleHits.length}/{hits.length}）
+            </button>
+          ) : null}
         </div>
       </section>
     </div>, document.body,
@@ -646,6 +678,7 @@ function KnowledgeWorkspaceView({
   onMoveRecordToTrash,
   onExportRecord,
   onOpenAttachment,
+  attachmentPreviewOpen,
   onRevealAttachment,
   onSourceTitleUpdated,
   onSourceActionRecordCreated,
@@ -683,6 +716,7 @@ function KnowledgeWorkspaceView({
   onMoveRecordToTrash: (recordId: number) => Promise<boolean>;
   onExportRecord: (recordId: number) => Promise<void>;
   onOpenAttachment: (attachment: AttachmentItem) => void;
+  attachmentPreviewOpen: boolean;
   onRevealAttachment: (attachment: AttachmentItem) => void;
   onSourceTitleUpdated: (recordId: number | null, title: string, updatedAt: string) => void;
   onSourceActionRecordCreated: (
@@ -748,11 +782,15 @@ function KnowledgeWorkspaceView({
   const sourceAttachmentSearchRequestSequence = useRef(0);
   const sourceActionRecordRequests = useRef(new Map<number, Promise<IntelligenceRecord>>());
   const sourceAttachmentHydrationAttempts = useRef(new Set<string>());
+  const sourceAttachmentSessionCache = useRef(new Map<number, {
+    attachments: AttachmentItem[];
+    recovery: Record<string, { state: "pending" | "loading" | "failed"; message?: string }>;
+  }>());
   const attachmentTimelineHydrationAttempts = useRef(new Set<string>());
+  const attachmentTimelineCatalogCache = useRef(new Map<string, SourceAttachmentCatalogHit[]>());
+  const attachmentTimelineRequestSequence = useRef(0);
   const loadedModes = useRef<Set<Mode>>(new Set());
   const cancelSourceSupportingLoad = useRef<(() => void) | null>(null);
-  const preparedCatalogVersion = useRef<string | null>(null);
-  const catalogPreparation = useRef<Promise<void> | null>(null);
   const [domains, setDomains] = useState<KnowledgeDomainRow[]>(() => workspaceSession.domains);
   const [topics, setTopics] = useState<KnowledgeTopicRow[]>(() => workspaceSession.topics);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -776,7 +814,6 @@ function KnowledgeWorkspaceView({
     left: number;
     width: number;
   } | null>(null);
-  const [suggestions, setSuggestions] = useState<KnowledgeClassificationSuggestionRow[]>([]);
   const [selectedTopicId, setSelectedTopicId] = useState<number | null>(null);
   const [loading, setLoading] = useState(() => !workspaceSession.loadedModes.has(mode));
   const observedKnowledgeOrganizationRevision = useRef(knowledgeOrganizationRevision);
@@ -793,7 +830,6 @@ function KnowledgeWorkspaceView({
   const [editTopicId, setEditTopicId] = useState<number | null>(null);
   const [editTopicName, setEditTopicName] = useState("");
   const [editTopicDescription, setEditTopicDescription] = useState("");
-  const [autoSuggestingSourceId, setAutoSuggestingSourceId] = useState<number | null>(null);
   const [browserTopicId, setBrowserTopicId] = useState<number | null>(null);
   const browserTopicIdRef = useRef<number | null>(browserTopicId);
   browserTopicIdRef.current = browserTopicId;
@@ -801,8 +837,21 @@ function KnowledgeWorkspaceView({
   const [relatedTopicDetails, setRelatedTopicDetails] = useState<KnowledgeTopicDetail[]>([]);
   const [aiInsight, setAiInsight] = useState<AiTopicInsight | null>(null);
   const [aiRunning, setAiRunning] = useState(false);
+  const [aiRunningTopicName, setAiRunningTopicName] = useState<string | null>(null);
+  const [aiSingleResult, setAiSingleResult] = useState<AiSingleInsightResult | null>(null);
   const [aiBatchProgress, setAiBatchProgress] = useState<AiTopicBatchProgress | null>(null);
   const [aiBatchResult, setAiBatchResult] = useState<AiTopicBatchResult | null>(null);
+  const [aiTaxonomyRevision, setAiTaxonomyRevision] = useState<AiTaxonomyRevision | null>(null);
+  const [appliedAiTaxonomyRevision, setAppliedAiTaxonomyRevision] =
+    useState<AiTaxonomyRevision | null>(null);
+  const [aiTaxonomyRunning, setAiTaxonomyRunning] = useState(false);
+  const [aiTaxonomyResult, setAiTaxonomyResult] = useState<AiTaxonomyRunResult | null>(null);
+  const [aiTaxonomyResume, setAiTaxonomyResume] = useState<AiTaxonomyResume | null>(null);
+  const [aiTaxonomyContinuing, setAiTaxonomyContinuing] = useState(false);
+  const appliedAiTaxonomyHierarchy = useMemo(
+    () => getAppliedAiTaxonomyHierarchy(appliedAiTaxonomyRevision, domains, topics),
+    [appliedAiTaxonomyRevision, domains, topics],
+  );
   const [sourceTopicDetail, setSourceTopicDetail] = useState<KnowledgeTopicDetail | null>(null);
   const [topicMaintenanceOpen, setTopicMaintenanceOpen] = useState(false);
   const [topicStructureEditorOpen, setTopicStructureEditorOpen] = useState(false);
@@ -873,10 +922,8 @@ function KnowledgeWorkspaceView({
   const [splitTopicId, setSplitTopicId] = useState<number | null>(null);
   const [splitPreview, setSplitPreview] = useState<TopicSplitPreview | null>(null);
   const [relationSuggestions, setRelationSuggestions] = useState<TopicRelationSuggestion[]>([]);
-  const [catalogProposal, setCatalogProposal] = useState<PersonalCatalogProposal | null>(null);
   const [topicAliases, setTopicAliases] = useState<KnowledgeTopicAliasRow[]>([]);
   const [entities, setEntities] = useState<KnowledgeEntityRow[]>([]);
-  const [classificationRules, setClassificationRules] = useState<KnowledgeClassificationRuleRow[]>([]);
   const [aliasEditId, setAliasEditId] = useState<number | null>(null);
   const [aliasTopicId, setAliasTopicId] = useState<number | null>(null);
   const [aliasValue, setAliasValue] = useState("");
@@ -885,12 +932,6 @@ function KnowledgeWorkspaceView({
   const [entityName, setEntityName] = useState("");
   const [entityType, setEntityType] = useState<KnowledgeEntityRow["entityType"]>("other");
   const [entityAliasesText, setEntityAliasesText] = useState("");
-  const [ruleEditId, setRuleEditId] = useState<number | null>(null);
-  const [ruleTopicId, setRuleTopicId] = useState<number | null>(null);
-  const [ruleType, setRuleType] = useState<KnowledgeClassificationRuleRow["ruleType"]>("keyword");
-  const [rulePattern, setRulePattern] = useState("");
-  const [ruleWeight, setRuleWeight] = useState(0.8);
-  const [ruleEnabled, setRuleEnabled] = useState(true);
 
   const sourceSearchQuery = deferredSourceSearch.trim();
   const sourceCollection = useMemo(() => {
@@ -1025,6 +1066,17 @@ function KnowledgeWorkspaceView({
         cancelled = true;
       };
     }
+    const cached = sourceAttachmentSessionCache.current.get(selectedSourceItemId);
+    if (cached) {
+      sourceAttachmentSessionCache.current.delete(selectedSourceItemId);
+      sourceAttachmentSessionCache.current.set(selectedSourceItemId, cached);
+      setSourceAttachments(cached.attachments);
+      setSourceAttachmentsLoadedFor(selectedSourceItemId);
+      setSourceAttachmentRecovery(cached.recovery);
+      return () => {
+        cancelled = true;
+      };
+    }
     setSourceAttachments([]);
     setSourceAttachmentsLoadedFor(null);
     setSourceAttachmentRecovery({});
@@ -1043,6 +1095,20 @@ function KnowledgeWorkspaceView({
       cancelled = true;
     };
   }, [onNotify, repository, selectedSourceItemId]);
+
+  // 已物化附件按来源保留在当前应用会话；回看刚打开过的笔记不重新出现加载占位。
+  useEffect(() => {
+    if (selectedSourceItemId === null || sourceAttachmentsLoadedFor !== selectedSourceItemId) return;
+    sourceAttachmentSessionCache.current.set(selectedSourceItemId, {
+      attachments: sourceAttachments,
+      recovery: sourceAttachmentRecovery,
+    });
+    while (sourceAttachmentSessionCache.current.size > 32) {
+      const oldest = sourceAttachmentSessionCache.current.keys().next().value;
+      if (oldest === undefined) break;
+      sourceAttachmentSessionCache.current.delete(oldest);
+    }
+  }, [selectedSourceItemId, sourceAttachmentRecovery, sourceAttachments, sourceAttachmentsLoadedFor]);
 
   useEffect(() => {
     setEditingSourceTitle(false);
@@ -1175,6 +1241,41 @@ function KnowledgeWorkspaceView({
         error instanceof Error ? error.message : "这篇笔记的操作入口建立失败",
       ));
   }, [ensureSourceActionTarget, onNotify]);
+
+  const removeTrashedSourceFromSession = useCallback((sourceItemId: number) => {
+    const withoutTrashed = (items: KnowledgeInboxItem[]) => (
+      items.filter((item) => item.id !== sourceItemId)
+    );
+    const withoutTrashedAttachment = (items: SourceAttachmentCatalogHit[]) => (
+      items.filter((item) => item.sourceItemId !== sourceItemId)
+    );
+    // 删除后让旧异步请求失效，并清除本会话的附件目录缓存。否则请求在删除前已返回、
+    // 但在删除后才落地时，时间线仍可能短暂显示一条已经移入回收站的资料。
+    sourceAttachmentSearchRequestSequence.current += 1;
+    attachmentTimelineRequestSequence.current += 1;
+    sourceActionRecordRequests.current.delete(sourceItemId);
+    sourceAttachmentSessionCache.current.delete(sourceItemId);
+    attachmentTimelineCatalogCache.current.forEach((hits, key) => {
+      attachmentTimelineCatalogCache.current.set(key, withoutTrashedAttachment(hits));
+    });
+    setInbox((current) => {
+      const next = withoutTrashed(current);
+      workspaceSession.inbox = next;
+      return next;
+    });
+    setSourceSearchResults((current) => current ? withoutTrashed(current) : current);
+    setSourceAttachmentHits(withoutTrashedAttachment);
+    setAttachmentTimelineHits(withoutTrashedAttachment);
+    setLoadedSourceText((current) => current?.sourceItemId === sourceItemId ? null : current);
+    setSourceAttachmentsLoadedFor((current) => current === sourceItemId ? null : current);
+    setSourceAttachments((current) => (
+      sourceAttachmentsLoadedFor === sourceItemId ? [] : current
+    ));
+    setSourceAttachmentRecovery({});
+    setSourceDetailOpen((current) => selectedIdRef.current === sourceItemId ? false : current);
+    setSelectedId((current) => current === sourceItemId ? null : current);
+    setSourceArchiveTotal((current) => Math.max(0, current - 1));
+  }, [sourceAttachmentsLoadedFor]);
 
   useEffect(() => {
     if (mode !== "sources" || !selected) {
@@ -1541,30 +1642,6 @@ function KnowledgeWorkspaceView({
     resetSourceBodyViewport(sourceBodyRef.current);
   }, [mode, selectedId]);
 
-  const currentPendingSuggestions = suggestions.filter(
-    (item) => item.status === "pending"
-      && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION
-      && item.suggestedTopicId !== null,
-  );
-  const currentClassificationSuggestions = suggestions.filter(
-    (item) => item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION
-      && item.suggestedTopicId !== null
-      && item.status !== "rejected"
-      && item.status !== "undone",
-  );
-  const displayableClassificationSuggestions = suggestions.filter(
-    (item) => item.suggestedTopicId !== null
-      && item.status !== "rejected"
-      && item.status !== "undone",
-  );
-  const selectedSuggestion = currentClassificationSuggestions.find(
-    (item) => item.suggestedTopicId === (selected?.primaryTopicId ?? selectedTopicId),
-  ) ?? currentClassificationSuggestions[0]
-    ?? displayableClassificationSuggestions.find(
-      (item) => item.suggestedTopicId === (selected?.primaryTopicId ?? selectedTopicId),
-    )
-    ?? displayableClassificationSuggestions[0]
-    ?? null;
   const sourceKnowledgeTopic = sourceTopicDetail?.topic ?? null;
   // 标题动作必须由首帧已有的列表项决定；异步主题详情只补充内容，不能插入新按钮导致布局跳动。
   const sourceReturnTopicId = sourceKnowledgeTopic?.id ?? selected?.primaryTopicId ?? null;
@@ -1598,13 +1675,35 @@ function KnowledgeWorkspaceView({
 
   const searchAttachmentTimeline = useCallback((query: string) => {
     if (!attachmentTimelineCategory) return;
+    const category = attachmentTimelineCategory;
+    const cacheKey = attachmentTimelineCacheKey(category, query);
+    const cached = attachmentTimelineCatalogCache.current.get(cacheKey);
+    const requestSequence = ++attachmentTimelineRequestSequence.current;
     setAttachmentTimelineQuery(query);
+    setAttachmentTimelineHits(cached ?? []);
     setAttachmentTimelineBusy(true);
-    void repository.searchSourceAttachmentCatalog(query, attachmentTimelineCategory)
-      .then(setAttachmentTimelineHits)
+    void repository.searchSourceAttachmentCatalog(query, category)
+      .then((nextHits) => {
+        attachmentTimelineCatalogCache.current.set(cacheKey, nextHits);
+        if (requestSequence === attachmentTimelineRequestSequence.current) {
+          setAttachmentTimelineHits(nextHits);
+        }
+      })
       .catch((error) => onNotify(error instanceof Error ? error.message : "资料时间线读取失败"))
-      .finally(() => setAttachmentTimelineBusy(false));
+      .finally(() => {
+        if (requestSequence === attachmentTimelineRequestSequence.current) {
+          setAttachmentTimelineBusy(false);
+        }
+      });
   }, [attachmentTimelineCategory, onNotify, repository]);
+
+  const openAttachmentTimeline = useCallback((category: Exclude<HistoricalSearchCategory, "text">) => {
+    const cacheKey = attachmentTimelineCacheKey(category, "");
+    setAttachmentTimelineQuery("");
+    setAttachmentTimelineHits(attachmentTimelineCatalogCache.current.get(cacheKey) ?? []);
+    setAttachmentTimelineBusy(false);
+    setAttachmentTimelineCategory(category);
+  }, []);
 
   // 图片/视频时间线打开后直接补齐缺失实体，让目录本身成为可视预览库。
   // 这里只生成受控附件副本和内存代表帧，不改写导入 ZIP 或原始媒体。
@@ -1642,7 +1741,13 @@ function KnowledgeWorkspaceView({
           attachmentTimelineQuery,
           attachmentTimelineCategory,
         );
-        if (!cancelled) setAttachmentTimelineHits(refreshed);
+        if (!cancelled) {
+          attachmentTimelineCatalogCache.current.set(
+            attachmentTimelineCacheKey(attachmentTimelineCategory, attachmentTimelineQuery),
+            refreshed,
+          );
+          setAttachmentTimelineHits(refreshed);
+        }
       } catch (error) {
         if (!cancelled) onNotify(error instanceof Error ? error.message : "媒体预览刷新失败");
       }
@@ -1661,7 +1766,6 @@ function KnowledgeWorkspaceView({
   ]);
 
   const openSourceAttachmentCatalogHit = useCallback(async (hit: SourceAttachmentCatalogHit) => {
-    setAttachmentTimelineCategory(null);
     let attachment = hit.attachment;
     if (!attachment && hit.fileUuid && hit.availability === "recoverable") {
       try {
@@ -1689,14 +1793,6 @@ function KnowledgeWorkspaceView({
     setSelectedId(hit.sourceItemId);
     if (attachment) onOpenAttachment(attachment);
   }, [inbox, inboxLimit, onNotify, onOpenAttachment, repository, sourceArchiveTotal]);
-  const hasCurrentClassificationRun = suggestions.some(
-    (item) => item.status === "pending"
-      && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
-  );
-  const hasStalePendingSuggestions = suggestions.some(
-    (item) => item.status === "pending"
-      && item.classifierVersion !== CLASSIFIER_ALGORITHM_VERSION,
-  );
 
   const applyCatalogSelectionState = (
     nextDomains: KnowledgeDomainRow[],
@@ -1712,7 +1808,6 @@ function KnowledgeWorkspaceView({
         ? current
         : nextTopics[0]?.id ?? null);
     setAliasTopicId((current) => current ?? nextTopics[0]?.id ?? null);
-    setRuleTopicId((current) => current ?? nextTopics[0]?.id ?? null);
     setBrowserTopicId((current) =>
       current && nextTopics.some((topic) => topic.id === current)
         ? current
@@ -1781,40 +1876,10 @@ function KnowledgeWorkspaceView({
 
     const data = await loadTopicMaintenanceData(repository);
     applyReadingCatalog(data.domains, data.topics);
-    setCatalogProposal(data.catalog);
     setTopicAliases(data.aliases);
     setEntities(data.entities);
-    setClassificationRules(data.rules);
     workspaceSession.loadedModes.add(targetMode);
     loadedModes.current.add(targetMode);
-  };
-
-  const ensureCurrentCatalog = async () => {
-    const proposal = catalogProposal ?? await repository.getPersonalCatalogProposal();
-    if (!proposal || preparedCatalogVersion.current === proposal.version) return;
-    if (!catalogPreparation.current) {
-      catalogPreparation.current = repository.applyPersonalCatalog(proposal.version)
-        .then(() => {
-          preparedCatalogVersion.current = proposal.version;
-        })
-        .finally(() => {
-          catalogPreparation.current = null;
-        });
-    }
-    await catalogPreparation.current;
-  };
-
-  const computeAndSaveSuggestions = async (sourceItemId: number) => {
-    // 新版目录必须先进入同一持久化入口，否则已有 Topic 的库会一直沿用旧目录，
-    // 自动计算与用户点击“重新计算”将产生不同结果。
-    await ensureCurrentCatalog();
-    const context = await repository.prepareClassificationContext(sourceItemId);
-    const result = await classifySourceAsync(context);
-    return repository.saveSuggestions({
-      sourceItemId,
-      classifierVersion: CLASSIFIER_ALGORITHM_VERSION,
-      suggestions: suggestionsForPersistence(result),
-    });
   };
 
   useEffect(() => {
@@ -1851,46 +1916,6 @@ function KnowledgeWorkspaceView({
   }, [knowledgeOrganizationRevision, mode]);
 
   useEffect(() => {
-    const current = inbox.find((item) => item.id === selectedId);
-    if (!selectedId || mode !== "sources" || !current) {
-      setSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    setAutoSuggestingSourceId(selectedId);
-    void repository.listSuggestions(selectedId)
-      .then(async (items) => {
-        const hasCurrentRun = items.some(
-          (item) => item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
-        );
-        if (hasCurrentRun || !topics.length || current.organizationState !== "inbox") return items;
-        return computeAndSaveSuggestions(selectedId);
-      })
-      .then((items) => {
-        if (cancelled) return;
-        setSuggestions(items);
-        setSelectedTopicId(items.find(
-          (item) => item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION
-            && item.status !== "rejected"
-            && item.status !== "undone"
-            && item.suggestedTopicId === current.primaryTopicId,
-        )?.suggestedTopicId ?? items.find(
-          (item) => item.status === "pending"
-            && item.classifierVersion === CLASSIFIER_ALGORITHM_VERSION,
-        )?.suggestedTopicId ?? current.primaryTopicId);
-      })
-      .catch(() => {
-        if (!cancelled) setSuggestions([]);
-      })
-      .finally(() => {
-        if (!cancelled) setAutoSuggestingSourceId(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [inbox, mode, repository, selectedId, topics.length]);
-
-  useEffect(() => {
     const domain = domains.find((candidate) => candidate.id === editDomainId);
     setEditDomainName(domain?.name ?? "");
     setEditDomainDescription(domain?.description ?? "");
@@ -1918,6 +1943,19 @@ function KnowledgeWorkspaceView({
   }, [mode]);
 
   useEffect(() => {
+    const visibleTopicIds = appliedAiTaxonomyHierarchy.topicIds;
+    if (!visibleTopicIds.size) {
+      setBrowserTopicId(null);
+      return;
+    }
+    setBrowserTopicId((current) => (
+      current !== null && visibleTopicIds.has(current)
+        ? current
+        : appliedAiTaxonomyHierarchy.topics[0]?.id ?? null
+    ));
+  }, [appliedAiTaxonomyHierarchy]);
+
+  useEffect(() => {
     const sequence = ++sourceTextRequestSequence.current;
     setSourceDetailOpen(false);
     setSourceBodySearch("");
@@ -1925,6 +1963,8 @@ function KnowledgeWorkspaceView({
       setLoadedSourceText(null);
       return;
     }
+    const cachedText = repository.peekSourceOriginalText(selectedId);
+    setLoadedSourceText(cachedText === null ? null : { sourceItemId: selectedId, text: cachedText });
     void repository.getSourceOriginalText(selectedId)
       .then((originalText) => {
         if (sequence === sourceTextRequestSequence.current) {
@@ -1938,6 +1978,32 @@ function KnowledgeWorkspaceView({
         }
       });
   }, [mode, repository, selectedId]);
+
+  // 当前正文完成后才在交互空闲期预取左右各两篇。这样“继续浏览”通常命中缓存，
+  // 又不会在打开全部笔记时把 889 篇正文一次性读进内存或抢占首屏。
+  useEffect(() => {
+    if (
+      mode !== "sources"
+      || selectedId === null
+      || loadedSourceText?.sourceItemId !== selectedId
+    ) return;
+    const selectedIndex = visibleSources.findIndex((source) => source.id === selectedId);
+    if (selectedIndex < 0) return;
+    const prefetchIds = visibleSources
+      .slice(
+        Math.max(0, selectedIndex - SOURCE_TEXT_PREFETCH_RADIUS),
+        selectedIndex + SOURCE_TEXT_PREFETCH_RADIUS + 1,
+      )
+      .map((source) => source.id)
+      .filter((sourceId) => sourceId !== selectedId && repository.peekSourceOriginalText(sourceId) === null);
+    if (!prefetchIds.length) return;
+
+    return scheduleIdleWork(() => {
+      void Promise.all(prefetchIds.map((sourceId) => (
+        repository.getSourceOriginalText(sourceId).catch(() => null)
+      )));
+    }, { delayMs: 280, timeoutMs: 1_200 });
+  }, [loadedSourceText, mode, repository, selectedId, visibleSources]);
 
   useEffect(() => {
     const topicId = selected?.primaryTopicId ?? selectedTopicId;
@@ -1962,7 +2028,11 @@ function KnowledgeWorkspaceView({
   }, [mode, onNotify, repository, selected?.primaryTopicId, selectedTopicId]);
 
   useEffect(() => {
-    if (!browserTopicId || (mode !== "knowledge" && mode !== "topics")) {
+    if (
+      !browserTopicId
+      || !appliedAiTaxonomyHierarchy.topicIds.has(browserTopicId)
+      || (mode !== "knowledge" && mode !== "topics")
+    ) {
       setTopicDetail(null);
       setRelatedTopicDetails([]);
       return;
@@ -1991,10 +2061,14 @@ function KnowledgeWorkspaceView({
     return () => {
       cancelled = true;
     };
-  }, [browserTopicId, knowledgeOrganizationRevision, mode, onNotify, repository]);
+  }, [appliedAiTaxonomyHierarchy, browserTopicId, knowledgeOrganizationRevision, mode, onNotify, repository]);
 
   useEffect(() => {
-    if (!browserTopicId || mode !== "knowledge") {
+    if (
+      !browserTopicId
+      || !appliedAiTaxonomyHierarchy.topicIds.has(browserTopicId)
+      || mode !== "knowledge"
+    ) {
       setAiInsight(null);
       return;
     }
@@ -2010,23 +2084,52 @@ function KnowledgeWorkspaceView({
     return () => {
       cancelled = true;
     };
-  }, [aiRepository, browserTopicId, mode, onNotify]);
+  }, [aiRepository, appliedAiTaxonomyHierarchy, browserTopicId, mode, onNotify]);
 
   const runAiInsight = async () => {
-    if (!browserTopicId || aiRunning || aiBatchProgress) return;
+    if (
+      !browserTopicId
+      || !appliedAiTaxonomyHierarchy.topicIds.has(browserTopicId)
+      || aiRunning
+      || aiBatchProgress
+    ) return;
+    const topicId = browserTopicId;
+    const topicName = topicDetail?.topic.id === topicId
+      ? topicDetail.topic.name
+      : topics.find((topic) => topic.id === topicId)?.name ?? "当前主题";
+    setAiSingleResult(null);
+    setAiRunningTopicName(topicName);
     setAiRunning(true);
     try {
-      const insight = await aiRepository.runTopicInsight(browserTopicId);
-      setAiInsight(insight);
-      onNotify("AI 主题洞察已更新；人工判断与证据未被修改");
+      const insight = await aiRepository.runTopicInsight(
+        topicId,
+        undefined,
+        true,
+      );
+      if (browserTopicIdRef.current === topicId) setAiInsight(insight);
+      setAiSingleResult({
+        status: "success",
+        topicName,
+        message: "主题综述和知识模块已经更新；人工判断、证据与主题归属未被修改。",
+        generatedAt: insight.generatedAt,
+      });
     } catch (error) {
-      onNotify(error instanceof Error ? error.message : "AI 主题整理失败");
+      setAiSingleResult({
+        status: "failed",
+        topicName,
+        message: error instanceof Error ? error.message : "AI 主题整理失败",
+        generatedAt: null,
+      });
     } finally {
       setAiRunning(false);
+      setAiRunningTopicName(null);
     }
   };
 
-  const executeAiTopicBatch = async (batchTopics: KnowledgeTopicRow[]) => {
+  const executeAiTopicBatch = async (
+    batchTopics: KnowledgeTopicRow[],
+    force = false,
+  ) => {
     if (aiRunning || aiBatchProgress) return;
     const candidates = batchTopics.filter((topic) => topic.status !== "merged");
     if (!candidates.length) {
@@ -2039,7 +2142,11 @@ function KnowledgeWorkspaceView({
       const result = await runAiTopicBatch(
         batchTopics,
         async (topic) => {
-          const insight = await aiRepository.runTopicInsight(topic.id);
+          const insight = await aiRepository.runTopicInsight(
+            topic.id,
+            undefined,
+            force,
+          );
           if (browserTopicIdRef.current === topic.id) setAiInsight(insight);
         },
         setAiBatchProgress,
@@ -2070,13 +2177,182 @@ function KnowledgeWorkspaceView({
   };
 
   const runAllAiInsights = async () => {
-    await executeAiTopicBatch(topics);
+    await executeAiTopicBatch(appliedAiTaxonomyHierarchy.topics, true);
+  };
+
+  const runPendingAiInsights = async () => {
+    await executeAiTopicBatch(appliedAiTaxonomyHierarchy.topics);
   };
 
   const retryFailedAiInsights = async () => {
     if (!aiBatchResult?.failedTopics.length) return;
     const failedTopicIds = new Set(aiBatchResult.failedTopics.map((topic) => topic.id));
-    await executeAiTopicBatch(topics.filter((topic) => failedTopicIds.has(topic.id)));
+    await executeAiTopicBatch(topics.filter((topic) => failedTopicIds.has(topic.id)), true);
+  };
+
+  useEffect(() => {
+    if (mode !== "topics" && mode !== "knowledge") return;
+    let cancelled = false;
+    void Promise.all([
+      aiRepository.getLatestTaxonomyRevision(),
+      aiRepository.getAppliedTaxonomyRevision(),
+      aiRepository.getResumableTaxonomyRun(),
+    ])
+      .then(([latestRevision, appliedRevision, resumableRun]) => {
+        if (cancelled) return;
+        setAiTaxonomyRevision(latestRevision);
+        setAppliedAiTaxonomyRevision(appliedRevision);
+        setAiTaxonomyResume(resumableRun);
+      })
+      .catch((error) => {
+        if (!cancelled) onNotify(error instanceof Error ? error.message : "AI 分类修订读取失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aiRepository, mode, onNotify]);
+
+  useEffect(() => {
+    if (!aiTaxonomyRunning) return undefined;
+    let cancelled = false;
+    const refreshCheckpoint = () => {
+      void aiRepository.getResumableTaxonomyRun()
+        .then((resumableRun) => {
+          if (!cancelled && resumableRun) setAiTaxonomyResume(resumableRun);
+        })
+        .catch(() => undefined);
+    };
+    refreshCheckpoint();
+    const interval = window.setInterval(refreshCheckpoint, 1_200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [aiRepository, aiTaxonomyRunning]);
+
+  const runAiTaxonomyRevision = async (resumeTaskPublicId?: string) => {
+    if (aiTaxonomyRunning) return;
+    setAiTaxonomyResult(null);
+    setAiTaxonomyContinuing(Boolean(resumeTaskPublicId));
+    setAiTaxonomyRunning(true);
+    try {
+      const revision = await aiRepository.runTaxonomyRevision(resumeTaskPublicId);
+      const integrationCoverage = getAiTaxonomyIntegrationCoverage(revision);
+      if (
+        integrationCoverage.assignedTopicCount === 0
+        || integrationCoverage.incompleteTopicKeys.length > 0
+      ) {
+        throw new Error("AI 全库分类未完整生成主题整合或自动关联笔记来源，请重新生成");
+      }
+      setAiTaxonomyRevision(revision);
+      setAiTaxonomyResume(null);
+      setAiTaxonomyResult({
+        status: "success",
+        message: `已生成 ${revision.domains.length} 个领域、${revision.topics.length} 个主题，覆盖 ${revision.assignedSourceCount}/${revision.sourceCount} 条笔记，并完成 ${integrationCoverage.completeTopicCount} 份主题整合及其自动关联来源。当前是待审核草稿，确认后再应用。`,
+      });
+    } catch (error) {
+      const resumableRun = await aiRepository.getResumableTaxonomyRun().catch(() => null);
+      setAiTaxonomyResume(resumableRun);
+      setAiTaxonomyResult({
+        status: "failed",
+        message: `${error instanceof Error ? error.message : "AI 全库分类生成失败"}${resumableRun ? " 已完成批次已保存，下次可从断点继续。" : ""}`,
+      });
+    } finally {
+      setAiTaxonomyRunning(false);
+      setAiTaxonomyContinuing(false);
+    }
+  };
+
+  const runIncrementalAiTaxonomyRevision = async () => {
+    if (aiTaxonomyRunning) return;
+    setAiTaxonomyResult(null);
+    setAiTaxonomyRunning(true);
+    try {
+      const revision = await aiRepository.runIncrementalTaxonomyRevision();
+      const integrationCoverage = getAiTaxonomyIntegrationCoverage(revision);
+      if (integrationCoverage.incompleteTopicKeys.length > 0) {
+        throw new Error("AI 增量分类未完整更新受影响主题的整合内容或自动关联来源");
+      }
+      setAiTaxonomyRevision(revision);
+      setAiTaxonomyResult({
+        status: "success",
+        message: `已仅补充新增或已变更的笔记，并重整 ${integrationCoverage.completeTopicCount} 个受影响主题。既有领域、主题及未受影响内容已保留；当前是待审核草稿。`,
+      });
+    } catch (error) {
+      const resumableRun = await aiRepository.getResumableTaxonomyRun().catch(() => null);
+      setAiTaxonomyResume(resumableRun);
+      setAiTaxonomyResult({
+        status: "failed",
+        message: `${error instanceof Error ? error.message : "AI 增量分类生成失败"}${resumableRun ? " 已完成批次已保存，可从断点继续。" : ""}`,
+      });
+    } finally {
+      setAiTaxonomyRunning(false);
+    }
+  };
+
+  const discardAndRestartAiTaxonomyRevision = async () => {
+    if (aiTaxonomyRunning) return;
+    try {
+      const taskPublicId = aiTaxonomyResume?.taskPublicId;
+      if (taskPublicId) {
+        await aiRepository.discardTaxonomyRun(taskPublicId);
+        setAiTaxonomyResume(null);
+      }
+      await runAiTaxonomyRevision();
+    } catch (error) {
+      setAiTaxonomyResult({
+        status: "failed",
+        message: error instanceof Error ? error.message : "无法放弃上次任务并重新生成",
+      });
+    }
+  };
+
+  const applyAiTaxonomyRevision = async () => {
+    if (!aiTaxonomyRevision || aiTaxonomyRevision.status !== "draft" || aiTaxonomyRunning) return;
+    const integrationCoverage = getAiTaxonomyIntegrationCoverage(aiTaxonomyRevision);
+    if (
+      integrationCoverage.assignedTopicCount === 0
+      || integrationCoverage.incompleteTopicKeys.length > 0
+    ) {
+      setAiTaxonomyResult({
+        status: "failed",
+        message: "当前草稿缺少 AI 主题整合或自动关联笔记来源，不能应用；请重新生成全库分类。",
+      });
+      return;
+    }
+    setAiTaxonomyRunning(true);
+    try {
+      const result = await aiRepository.applyTaxonomyRevision(aiTaxonomyRevision.publicId);
+      const [latestRevision, appliedRevision] = await Promise.all([
+        aiRepository.getLatestTaxonomyRevision(),
+        aiRepository.getAppliedTaxonomyRevision(),
+      ]);
+      setAiTaxonomyRevision(latestRevision);
+      setAppliedAiTaxonomyRevision(appliedRevision);
+      await reload("topics");
+      onNotify(
+        `AI 分类已应用：${result.assignedSources} 条笔记进入主题，新增 ${result.createdDomains} 个领域、${result.createdTopics} 个主题；可撤销`,
+        {
+          durationMs: 12_000,
+          actionLabel: "撤销本次分类",
+          onAction: async () => {
+            await aiRepository.undoTaxonomyRevision(result.revisionPublicId);
+            const [latestRevision, appliedRevision] = await Promise.all([
+              aiRepository.getLatestTaxonomyRevision(),
+              aiRepository.getAppliedTaxonomyRevision(),
+            ]);
+            setAiTaxonomyRevision(latestRevision);
+            setAppliedAiTaxonomyRevision(appliedRevision);
+            await reload("topics");
+            onNotify("本次 AI 分类已撤销，原有主主题归属已恢复");
+          },
+        },
+      );
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "AI 分类修订应用失败");
+    } finally {
+      setAiTaxonomyRunning(false);
+    }
   };
 
   useEffect(() => {
@@ -2272,14 +2548,13 @@ function KnowledgeWorkspaceView({
       setBrowserTopicId(targetTopic.id);
       setEditTopicId(targetTopic.id);
       if (task === "aliases") setAliasTopicId(targetTopic.id);
-      if (task === "rules") setRuleTopicId(targetTopic.id);
       if (task === "new-topic") openCreateTopicDialog(targetTopic.domainId, null);
       if (task === "boundary") openEditTopicDialog(targetTopic);
     } else if (task === "new-topic" && domains[0]) {
       openCreateTopicDialog(domains[0].id, null);
     }
     setTopicStructureEditorOpen(["boundary", "new-topic"].includes(task));
-    setTopicAdvancedMaintenanceOpen(["aliases", "rules", "relations"].includes(task));
+    setTopicAdvancedMaintenanceOpen(["aliases", "relations"].includes(task));
     setTopicMaintenanceOpen(true);
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -2375,37 +2650,6 @@ function KnowledgeWorkspaceView({
     }
   };
 
-  const saveRule = async () => {
-    if (!ruleTopicId || !rulePattern.trim()) return;
-    const target = topics.find((topic) => topic.id === ruleTopicId);
-    if (!target) return;
-    setBusy(true);
-    try {
-      const input = {
-        ruleType,
-        pattern: rulePattern.trim(),
-        targetDomainId: target.domainId,
-        targetTopicId: target.id,
-        weight: ruleWeight,
-        priority: 0,
-        enabled: ruleEnabled,
-      };
-      if (ruleEditId) {
-        await repository.updateClassificationRule({ id: ruleEditId, ...input });
-      } else {
-        await repository.createClassificationRule(input);
-      }
-      setRuleEditId(null);
-      setRulePattern("");
-      setClassificationRules(await repository.listClassificationRules());
-      onNotify(ruleEditId ? "分类规则已更新" : "分类规则已创建");
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "分类规则保存失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const deleteAlias = async (id: number) => {
     if (!window.confirm("删除这个主题别名？主题和来源不会被删除。")) return;
     setBusy(true);
@@ -2431,21 +2675,6 @@ function KnowledgeWorkspaceView({
       onNotify("实体词典条目已删除");
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "实体词典删除失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const deleteRule = async (id: number) => {
-    if (!window.confirm("删除这条分类规则？历史分类结果不会被重写。")) return;
-    setBusy(true);
-    try {
-      const result = await repository.deleteClassificationRule(id);
-      if (!result.deleted) throw new Error("分类规则已经不存在");
-      setClassificationRules(await repository.listClassificationRules());
-      onNotify("分类规则已删除");
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "分类规则删除失败");
     } finally {
       setBusy(false);
     }
@@ -2688,78 +2917,18 @@ function KnowledgeWorkspaceView({
     }
   };
 
-  const generateSuggestions = async () => {
-    if (!selected || !topics.length) {
-      onNotify("请先在“主题管理”建立至少一个真实主题");
-      return;
-    }
-    setBusy(true);
-    try {
-      const persisted = await computeAndSaveSuggestions(selected.id);
-      await reload();
-      setSuggestions(persisted);
-      const persistedCandidates = persisted.filter((item) => item.suggestedTopicId !== null);
-      setSelectedTopicId(persistedCandidates[0]?.suggestedTopicId ?? null);
-      onNotify(
-        persistedCandidates.length
-          ? "已按可读正文重新计算并保存证据充分的分类建议"
-          : "没有找到证据充分的主题，已清除旧的不可靠建议；可手动选择或新建主题",
-        { durationMs: persistedCandidates.length ? 6_000 : 10_000 },
-      );
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "分类失败，来源仍保留在全部笔记中待确认");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const autoOrganizeLoadedInbox = async () => {
-    const pendingSourceIds = inbox
-      .filter((item) => item.organizationState === "inbox")
-      .map((item) => item.id);
-    if (!pendingSourceIds.length) return;
-    setBusy(true);
-    onNotify(`正在自动整理 ${pendingSourceIds.length} 条待归类来源；原文不会被改写`);
-    try {
-      const result = await autoOrganizeImportedSources(
-        pendingSourceIds,
-        repository,
-      );
-      await reload();
-      onNotify(
-        `自动整理完成：分析 ${result.analyzedCount} 条，自动归类 ${result.autoClassifiedCount} 条，待确认 ${result.awaitingConfirmationCount} 条，无充分证据 ${result.unmatchedCount} 条${result.failures.length ? `，${result.failures.length} 条处理失败并保留` : ""}`,
-        {
-          durationMs: 12_000,
-          actionLabel: result.operationIds.length ? "撤销自动归类" : undefined,
-          onAction: result.operationIds.length
-            ? async () => {
-              await undoAutoOrganization(result.operationIds, repository);
-              await reload();
-              onNotify("本批自动归类已撤销");
-            }
-            : undefined,
-        },
-      );
-    } catch (error) {
-      onNotify(error instanceof Error ? error.message : "自动整理失败；来源仍保留在全部笔记中待确认");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const acceptClassification = async () => {
     if (!selected || selectedTopicId === null) {
       onNotify("请选择一个主题");
       return;
     }
-    const suggestion = suggestions.find((item) => item.suggestedTopicId === selectedTopicId);
     setBusy(true);
     try {
       const result = await repository.confirmClassification({
         sourceItemId: selected.id,
         topicId: selectedTopicId,
-        suggestionId: suggestion?.id ?? null,
-        confidence: suggestion?.score ?? 100,
+        suggestionId: null,
+        confidence: 100,
       });
       await reload();
       onNotify("来源已进入主题，操作可撤销", {
@@ -2781,26 +2950,30 @@ function KnowledgeWorkspaceView({
   const currentModeReady = loadedModes.current.has(mode)
     || workspaceSession.loadedModes.has(mode);
   if (loading || !currentModeReady) {
-    return <div className="page-loading"><span className="save-spinner" />正在读取正式知识结构…</div>;
+    return <div className="page-loading"><span className="save-spinner" />{LOADING_LABEL}</div>;
   }
 
   if (mode === "knowledge") {
     return (
       <main className="knowledge-page knowledge-reading-page">
         <KnowledgeReadingWorkspace
-          domains={domains}
-          topics={topics}
+          taxonomyHierarchy={appliedAiTaxonomyHierarchy}
           topicDetail={topicDetail}
           relatedTopicDetails={relatedTopicDetails}
           selectedTopicId={browserTopicId}
           onOpenSource={onNavigateToSource}
           navigationTarget={knowledgeNavigationTarget}
           aiInsight={aiInsight}
+          appliedAiRevision={appliedAiTaxonomyRevision}
           aiRunning={aiRunning}
+          aiRunningTopicName={aiRunningTopicName}
+          aiSingleResult={aiSingleResult}
           aiBatchProgress={aiBatchProgress}
           aiBatchResult={aiBatchResult}
           onRunAiInsight={() => void runAiInsight()}
+          onCloseAiSingleResult={() => setAiSingleResult(null)}
           onRunAllAiInsights={() => void runAllAiInsights()}
+          onRunPendingAiInsights={() => void runPendingAiInsights()}
           onRetryFailedAiInsights={() => void retryFailedAiInsights()}
           onCloseAiBatchResult={() => setAiBatchResult(null)}
           onSelectTopic={(topicId) => {
@@ -3794,13 +3967,23 @@ function KnowledgeWorkspaceView({
       <>
       <main className="knowledge-page topic-reading-page">
         <TopicStructureReadingWorkspace
-          domains={domains}
-          topics={topics}
+          taxonomyHierarchy={appliedAiTaxonomyHierarchy}
           topicDetail={topicDetail}
           selectedTopicId={browserTopicId}
           aliases={topicAliases}
-          rules={classificationRules}
           relationSuggestions={relationSuggestions}
+          aiRevision={aiTaxonomyRevision}
+          appliedAiRevision={appliedAiTaxonomyRevision}
+          aiResume={aiTaxonomyResume}
+          aiContinuing={aiTaxonomyContinuing}
+          aiRunning={aiTaxonomyRunning}
+          aiResult={aiTaxonomyResult}
+          onGenerateAiRevision={() => void runAiTaxonomyRevision()}
+          onGenerateIncrementalAiRevision={() => void runIncrementalAiTaxonomyRevision()}
+          onContinueAiRevision={(taskPublicId) => void runAiTaxonomyRevision(taskPublicId)}
+          onDiscardAndGenerateAiRevision={() => void discardAndRestartAiTaxonomyRevision()}
+          onCloseAiResult={() => setAiTaxonomyResult(null)}
+          onApplyAiRevision={() => void applyAiTaxonomyRevision()}
           onSelectTopic={(topicId) => {
             setBrowserTopicId(topicId);
             setEditTopicId(topicId);
@@ -3931,7 +4114,7 @@ function KnowledgeWorkspaceView({
                           {detail && !detail.notes.length && !detail.sources.length ? (
                             <p>当前主题尚无笔记或来源。</p>
                           ) : null}
-                          {!detail ? <p>正在读取主题整合…</p> : null}
+                          {!detail ? <p>{LOADING_LABEL}</p> : null}
                         </div>
                       ) : null}
                     </div>
@@ -3951,7 +4134,7 @@ function KnowledgeWorkspaceView({
           open={topicAdvancedMaintenanceOpen}
           onToggle={(event) => setTopicAdvancedMaintenanceOpen(event.currentTarget.open)}
         >
-          <summary>高级结构维护：别名、实体、分类规则、合并、拆分与关系</summary>
+          <summary>高级结构维护：别名、实体、合并、拆分与关系</summary>
           <div className="knowledge-advanced-maintenance-body">
         <section className="knowledge-metrics">
           <div className="knowledge-card"><strong>{inbox.length}</strong><span>待归类来源</span></div>
@@ -4031,48 +4214,6 @@ function KnowledgeWorkspaceView({
             </div>
           </article>
 
-          <article className="knowledge-card knowledge-governance-panel" data-topic-maintenance="rules">
-            <div className="knowledge-panel-title"><Sparkles size={19} /><div><h2>分类规则</h2><p>显式规则可启用、停用和修正，不覆盖原始资料。</p></div></div>
-            <div className="knowledge-governance-controls">
-              <label>目标主题<select value={ruleTopicId ?? ""} onChange={(event) => setRuleTopicId(event.target.value ? Number(event.target.value) : null)}>
-                <option value="">请选择</option>
-                {activeTopics.map((topic) => <option key={topic.id} value={topic.id}>{topicPath(topic, topics).join(" / ")}</option>)}
-              </select></label>
-              <label>规则类型<select value={ruleType} onChange={(event) => setRuleType(event.target.value as KnowledgeClassificationRuleRow["ruleType"])}>
-                <option value="keyword">关键词</option>
-                <option value="exact_alias">别名</option>
-                <option value="negative_keyword">排除关键词</option>
-                <option value="file_path">文件路径</option>
-                <option value="entity">实体</option>
-                <option value="source">来源平台</option>
-                <option value="legacy_tag">旧标签</option>
-                <option value="domain_hint">领域提示</option>
-              </select></label>
-              <label>匹配内容<input value={rulePattern} onChange={(event) => setRulePattern(event.target.value)} placeholder="例如：资本开支" /></label>
-              <label>强度<input type="number" min="0" max="1" step="0.05" value={ruleWeight} onChange={(event) => setRuleWeight(Number(event.target.value))} /></label>
-              <label className="knowledge-confirm-check"><input type="checkbox" checked={ruleEnabled} onChange={(event) => setRuleEnabled(event.target.checked)} />启用规则</label>
-              <button disabled={busy || !ruleTopicId || !rulePattern.trim()} onClick={() => void saveRule()}>
-                {ruleEditId ? "保存修改" : "添加规则"}
-              </button>
-            </div>
-            <div className="knowledge-management-list">
-              {classificationRules.slice(0, 12).map((rule) => (
-                <div key={rule.id}>
-                  <span><strong>{rule.pattern}</strong><small>{rule.ruleType} · {rule.enabled ? "启用" : "停用"} · {Math.round(rule.weight * 100)}%</small></span>
-                  <button onClick={() => {
-                    setRuleEditId(rule.id);
-                    setRuleTopicId(rule.targetTopicId);
-                    setRuleType(rule.ruleType);
-                    setRulePattern(rule.pattern);
-                    setRuleWeight(rule.weight);
-                    setRuleEnabled(rule.enabled);
-                  }}>编辑</button>
-                  <button disabled={busy} onClick={() => void deleteRule(rule.id)}>删除</button>
-                </div>
-              ))}
-              {!classificationRules.length ? <p className="knowledge-empty">尚无正式分类规则。</p> : null}
-            </div>
-          </article>
         </section>
         <section className="knowledge-governance-grid">
           <article className="knowledge-card knowledge-governance-panel">
@@ -4229,7 +4370,7 @@ function KnowledgeWorkspaceView({
     <>
     <main className="knowledge-page knowledge-inbox-page">
       <section
-        className="knowledge-inbox-layout"
+        className="knowledge-inbox-layout core-workspace-grid"
         ref={sourceLayoutRef}
         style={sourceConnector ? ({
           "--source-connector-y": `${sourceConnector.top}px`,
@@ -4238,7 +4379,7 @@ function KnowledgeWorkspaceView({
         } as CSSProperties) : undefined}
       >
         <UnifiedNoteListPanel
-          className="knowledge-card knowledge-inbox-list"
+          className="knowledge-card knowledge-inbox-list core-workspace-card-two"
           data-hover-wheel-panel=""
         >
           <UnifiedNoteListSearchRow className="knowledge-source-search-row">
@@ -4307,7 +4448,7 @@ function KnowledgeWorkspaceView({
                       onOpenCategory={(category) => {
                         if (category === "text") return;
                         setSourceSearchHistoryOpen(false);
-                        setAttachmentTimelineCategory(category);
+                        openAttachmentTimeline(category);
                       }}
                     />
                     {sourceSearchHistory.length ? (
@@ -4514,7 +4655,7 @@ function KnowledgeWorkspaceView({
                   )}
                   title={item.title}
                   theme={item.primaryTopicName
-                    ?? (item.organizationState === "inbox" ? "等待自动归类" : "已整理")}
+                    ?? (item.organizationState === "inbox" ? "等待 AI 分类" : "已整理")}
                   source={sourceOriginLabel(item)}
                   date={item.originalAt ?? item.importedAt}
                   actions={
@@ -4577,7 +4718,10 @@ function KnowledgeWorkspaceView({
                         setSourceListMenuRecordId(null);
                         runSourceRecordAction(item, async (record) => {
                           const moved = await onMoveRecordToTrash(record.id);
-                          if (moved) void reload();
+                          if (moved) {
+                            removeTrashedSourceFromSession(item.id);
+                            void reload();
+                          }
                         });
                       }}
                     >
@@ -4619,7 +4763,7 @@ function KnowledgeWorkspaceView({
           <span className="source-final-connector" aria-hidden="true"><i /><b /></span>
         ) : null}
         <div
-          className="knowledge-card knowledge-inbox-detail association-link-target"
+          className="knowledge-card knowledge-inbox-detail association-link-target core-workspace-card-three"
           ref={sourceDetailRef}
           data-hover-wheel-panel=""
         >
@@ -4671,20 +4815,10 @@ function KnowledgeWorkspaceView({
                     <span>{sourceKnowledgeDomain?.name ?? "领域待定"}</span>
                     <span>{sourceKnowledgeTopic?.name ?? selected.primaryTopicName ?? "主题待定"}</span>
                     <span>来源：{sourceOriginLabel(selected)}</span>
-                    <span>{selectedSuggestion ? `${Math.round(selectedSuggestion.score)}% 匹配` : "已按现有结构归档"}</span>
+                    <span>{selected.organizationState === "inbox" ? "等待 AI 全库分类" : "AI/人工已确认归属"}</span>
                   </div>
                 </div>
                 <div className="knowledge-detail-actions">
-                  <button
-                    type="button"
-                    className="source-auto-organize-action"
-                    disabled={busy || !inbox.some((item) => item.organizationState === "inbox")}
-                    onClick={() => void autoOrganizeLoadedInbox()}
-                    aria-label="自动整理待归类来源"
-                    title="自动整理待归类来源"
-                  >
-                    <Sparkles size={16} />自动整理
-                  </button>
                   {sourceReturnTopicId !== null || canReturnFromSource ? (
                     <button onClick={() => onReturnFromSource({
                       topicId: sourceReturnTopicId,
@@ -4699,18 +4833,6 @@ function KnowledgeWorkspaceView({
                   >
                     <Maximize2 size={16} />查看详情
                   </button>
-                  {selected.organizationState === "inbox" ? (
-                    <button onClick={() => void generateSuggestions()} disabled={busy || autoSuggestingSourceId === selected.id || !topics.length}>
-                      <Sparkles size={16} />
-                      {autoSuggestingSourceId === selected.id
-                        ? "自动整理中…"
-                        : hasCurrentClassificationRun
-                          ? "重新计算建议"
-                          : hasStalePendingSuggestions
-                            ? "按新版重新计算"
-                            : "生成分类建议"}
-                    </button>
-                  ) : null}
                 </div>
               </div>
 
@@ -4778,7 +4900,10 @@ function KnowledgeWorkspaceView({
                   </div>
                   <div className="knowledge-source-preview" ref={sourceBodyRef} data-hover-wheel-scroll="">
                     {selectedReadableContent === null
-                      ? <div className="page-loading"><span className="save-spinner" />正在读取当前来源正文…</div>
+                      ? <div className="source-body-loading" role="status" aria-live="polite">
+                        <span className="save-spinner" />
+                        <span>{LOADING_LABEL}</span>
+                      </div>
                       : <>
                         {visibleSourceMessages.length ? (
                           <div className="knowledge-conversation-reader">
@@ -4846,20 +4971,7 @@ function KnowledgeWorkspaceView({
                     <details className="source-final-exception">
                       <summary>异常时调整归属</summary>
                       <div>
-                        {currentPendingSuggestions.map((suggestion) => {
-                          const topic = topics.find((candidate) => candidate.id === suggestion.suggestedTopicId);
-                          if (!topic) return null;
-                          return (
-                            <label className={selectedTopicId === topic.id ? "active" : ""} key={suggestion.id}>
-                              <input type="radio" checked={selectedTopicId === topic.id} onChange={() => setSelectedTopicId(topic.id)} />
-                              <span>
-                                <strong>{topicPath(topic, topics).join(" / ")}</strong>
-                                <small>{suggestion.reasons[0] ?? "本地确定性评分"}</small>
-                              </span>
-                              <em>{Math.round(suggestion.score)}%</em>
-                            </label>
-                          );
-                        })}
+                        <p>这里仅用于人工纠正 AI 归属，不再生成本地关键词候选或本地评分。</p>
                         <label className="knowledge-manual-topic">
                           <span>手动选择主题</span>
                           <select value={selectedTopicId ?? ""} onChange={(event) => setSelectedTopicId(event.target.value ? Number(event.target.value) : null)}>
@@ -4905,6 +5017,7 @@ function KnowledgeWorkspaceView({
         category={attachmentTimelineCategory}
         hits={attachmentTimelineHits}
         busy={attachmentTimelineBusy}
+        coveredByPreview={attachmentPreviewOpen}
         onSearch={searchAttachmentTimeline}
         onOpenHit={(hit) => {
           void openSourceAttachmentCatalogHit(hit);

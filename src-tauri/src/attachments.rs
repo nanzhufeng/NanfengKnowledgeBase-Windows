@@ -8,6 +8,7 @@ use encoding_rs::GBK;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
@@ -22,6 +23,46 @@ const MAX_ATTACHMENT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const COPY_BUFFER_BYTES: usize = 256 * 1024;
 const MAX_LEGACY_RECOVERY_SCAN_FILES: usize = 50_000;
 const MAX_TEXT_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 资源协议只允许已经由数据库记录并完成受控路径校验的单个附件文件。
+/// 不把整个 `attachments` 目录递归交给 WebView，避免页面脚本凭猜测路径读取
+/// 未关联、待清理或刚写入的其它文件。
+pub fn allow_known_attachment_assets<R: Runtime>(
+    app: &AppHandle<R>,
+    connection: &Connection,
+    paths: &AppPaths,
+) -> AppResult<()> {
+    let mut statement = connection.prepare("SELECT stored_path FROM attachments")?;
+    for row in statement.query_map([], |row| row.get::<_, String>(0))? {
+        allow_attachment_asset_path(app, paths, &row?);
+    }
+    Ok(())
+}
+
+pub fn allow_attachment_assets<'a, R: Runtime>(
+    app: &AppHandle<R>,
+    paths: &AppPaths,
+    attachments: impl IntoIterator<Item = &'a AttachmentItem>,
+) -> AppResult<()> {
+    for attachment in attachments {
+        allow_attachment_asset_path(app, paths, &attachment.stored_path);
+    }
+    Ok(())
+}
+
+fn allow_attachment_asset_path<R: Runtime>(
+    app: &AppHandle<R>,
+    paths: &AppPaths,
+    stored_path: &str,
+) {
+    // 失效的历史记录仍可在元数据列表中提示恢复，但不能借此扩大资源协议权限。
+    let Ok(path) = controlled_attachment_file(paths, stored_path) else {
+        return;
+    };
+    if let Err(error) = app.asset_protocol_scope().allow_file(&path) {
+        log::warn!("未能授予受控附件的资源预览权限：{error}");
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct LegacySourceAsset {
@@ -113,7 +154,8 @@ pub fn list_source_attachments(
         "SELECT DISTINCT attachment.id, attachment.record_id, attachment.file_name,
                 attachment.stored_path, attachment.original_path, attachment.mime_type,
                 attachment.size_bytes, attachment.sha256, attachment.created_at
-         FROM source_items source
+         FROM visible_source_items source
+         LEFT JOIN records record ON record.id = source.legacy_record_id
          JOIN attachments attachment
            ON attachment.record_id = source.legacy_record_id
            OR EXISTS (
@@ -127,6 +169,56 @@ pub fn list_source_attachments(
     )?;
     let rows = statement.query_map([source_item_id], row_to_attachment)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// 为时间线目录一次取回全部来源的受控附件，避免资料窗口打开时按来源执行 N 次查询。
+/// 这只是元数据读取；原始导出包和附件文件均不会在此处打开。
+fn list_catalog_source_attachments(
+    connection: &Connection,
+) -> AppResult<HashMap<i64, Vec<AttachmentItem>>> {
+    let mut statement = connection.prepare(
+        "SELECT source.id, attachment.id, attachment.record_id, attachment.file_name,
+                attachment.stored_path, attachment.original_path, attachment.mime_type,
+                attachment.size_bytes, attachment.sha256, attachment.created_at
+         FROM visible_source_items source
+         JOIN attachments attachment ON attachment.record_id = source.legacy_record_id
+         UNION ALL
+         SELECT link.source_item_id, attachment.id, attachment.record_id, attachment.file_name,
+                attachment.stored_path, attachment.original_path, attachment.mime_type,
+                attachment.size_bytes, attachment.sha256, attachment.created_at
+         FROM attachment_links link
+         JOIN visible_source_items source ON source.id = link.source_item_id
+         JOIN attachments attachment ON attachment.id = link.attachment_id
+         ",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            AttachmentItem {
+                id: row.get(1)?,
+                record_id: row.get(2)?,
+                file_name: row.get(3)?,
+                stored_path: row.get(4)?,
+                original_path: row.get(5)?,
+                mime_type: row.get(6)?,
+                size_bytes: row.get(7)?,
+                sha256: row.get(8)?,
+                created_at: row.get(9)?,
+            },
+        ))
+    })?;
+    let mut attachments_by_source = HashMap::<i64, Vec<AttachmentItem>>::new();
+    for row in rows {
+        let (source_item_id, attachment) = row?;
+        let attachments = attachments_by_source.entry(source_item_id).or_default();
+        if !attachments
+            .iter()
+            .any(|candidate| candidate.id == attachment.id)
+        {
+            attachments.push(attachment);
+        }
+    }
+    Ok(attachments_by_source)
 }
 
 /// 历史资料筛选的事实来源是“正文声明目录 + 已受控实体”，而不是仅有 attachments 表。
@@ -152,9 +244,8 @@ pub fn search_source_attachment_catalog(
         "SELECT source.id, source.legacy_record_id, source.title, source.original_text,
                 COALESCE(source.original_at, record.original_at, source.imported_at),
                 COALESCE(record.summary, '')
-         FROM source_items source
+         FROM visible_source_items source
          LEFT JOIN records record ON record.id = source.legacy_record_id
-         WHERE source.status = 'active' AND (record.id IS NULL OR record.is_deleted = 0)
          ORDER BY COALESCE(source.original_at, record.original_at, source.imported_at) DESC,
                   source.id DESC",
     )?;
@@ -170,10 +261,14 @@ pub fn search_source_attachment_catalog(
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    let attachments_by_source = list_catalog_source_attachments(connection)?;
 
     let mut hits = Vec::new();
     for (source_item_id, record_id, title, original_text, original_at, summary) in sources {
-        let attachments = list_source_attachments(connection, source_item_id)?;
+        let attachments = attachments_by_source
+            .get(&source_item_id)
+            .cloned()
+            .unwrap_or_default();
         let mut matched_attachment_ids = HashSet::new();
         let declarations = serde_json::from_str::<Value>(&original_text)
             .map(|value| collect_declared_attachments(&value))
@@ -472,7 +567,9 @@ pub fn read_attachment_text(
 ) -> AppResult<String> {
     let attachment = get_attachment(connection, attachment_id)?;
     if !is_text_attachment(&attachment) {
-        return Err(AppError::Validation("该附件不是可读取的文本格式".to_string()));
+        return Err(AppError::Validation(
+            "该附件不是可读取的文本格式".to_string(),
+        ));
     }
     let path = controlled_attachment_file(paths, &attachment.stored_path)?;
     let size = path.metadata()?.len();
@@ -569,8 +666,9 @@ pub fn inspect_legacy_attachment_recovery(
     })
 }
 
-/// 仅由用户在设置中确认后执行。ChatGPT ZIP 会再次物化已有素材；其他历史导入会
-/// 从用户明确选择的文件夹按原文件名精确匹配。不会删除原文件、已有附件或笔记正文。
+/// 仅由用户在设置中确认后执行。ChatGPT ZIP 只作为临时恢复源，成功关联的文件会
+/// 进入受控附件路径，未关联的解包文件立即清除；避免一次恢复留下整套无引用副本。
+/// 其它历史导入从用户明确选择的文件夹按原文件名精确匹配。不会删除原文件、已有附件或笔记正文。
 pub fn recover_legacy_attachments(
     connection: &Connection,
     paths: &AppPaths,
@@ -588,6 +686,7 @@ pub fn recover_legacy_attachments(
         let mut statement = connection.prepare(
             "SELECT s.external_id, s.record_id FROM sources s JOIN records r ON r.id = s.record_id
              WHERE s.external_id IS NOT NULL AND trim(s.external_id) <> ''
+               AND r.is_deleted = 0
                AND (r.source_text LIKE '%file-service://%' OR r.source_text LIKE '%sediment://%')",
         )?;
         for row in statement.query_map([], |row| {
@@ -612,31 +711,34 @@ pub fn recover_legacy_attachments(
                 .map_err(|error| {
                     AppError::Validation(format!("无法读取历史 ChatGPT 附件包：{error}"))
                 })?;
-        for asset in materialization.assets {
-            let record_ids = asset
-                .message_links
-                .iter()
-                .filter_map(|link| conversation_records.get(&link.conversation_id).copied())
-                .collect::<std::collections::BTreeSet<_>>();
-            for record_id in record_ids {
-                let exists = connection.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM attachments WHERE record_id = ?1 AND sha256 = ?2)",
-                    params![record_id, asset.sha256.to_ascii_lowercase()],
-                    |row| row.get::<_, i64>(0),
-                )? != 0;
-                if exists {
-                    continue;
+        let archive_recovery = (|| -> AppResult<()> {
+            for asset in materialization.assets {
+                let record_ids = asset
+                    .message_links
+                    .iter()
+                    .filter_map(|link| conversation_records.get(&link.conversation_id).copied())
+                    .collect::<std::collections::BTreeSet<_>>();
+                for record_id in record_ids {
+                    let exists = connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM attachments WHERE record_id = ?1 AND sha256 = ?2)",
+                        params![record_id, asset.sha256.to_ascii_lowercase()],
+                        |row| row.get::<_, i64>(0),
+                    )? != 0;
+                    if exists {
+                        continue;
+                    }
+                    let prepared = prepare_attachment(paths, record_id, &asset.stored_file_path)?;
+                    commit_attachment(connection, record_id, prepared)?;
+                    recovered += 1;
                 }
-                connection.execute(
-                    "INSERT INTO attachments(record_id, file_name, stored_path, original_path, mime_type, size_bytes, sha256, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![record_id, asset.original_file_name.as_deref().unwrap_or(&asset.stored_file_name), asset.stored_file_path,
-                        format!("{}#{}", archived_zip.to_string_lossy(), asset.original_dat_entry_name), asset.detected_mime,
-                        asset.size_bytes as i64, asset.sha256.to_ascii_lowercase(), Utc::now().to_rfc3339()],
-                )?;
-                recovered += 1;
             }
-        }
+            Ok(())
+        })();
+        // `materialize_chatgpt_assets`完整解出 ZIP 才能建立文件-ID映射，但它不是长期
+        // 存储所有者。无论映射成功或失败，都不能留下这一批临时副本。
+        let cleanup_result = fs::remove_dir_all(&output);
+        archive_recovery?;
+        cleanup_result?;
     }
     let mut failed = 0_i64;
     let mut unresolved = 0_i64;
@@ -677,7 +779,9 @@ pub fn recover_source_attachment(
     let attachment_id = normalize_requested_attachment_id(requested_attachment_id)?;
     let (record_id, original_text) = connection
         .query_row(
-            "SELECT legacy_record_id, original_text FROM source_items WHERE id = ?1 AND status = 'active'",
+            "SELECT source.legacy_record_id, source.original_text
+             FROM visible_source_items source
+             WHERE source.id = ?1",
             [source_item_id],
             |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, String>(1)?)),
         )
@@ -1607,7 +1711,10 @@ mod tests {
 
     #[test]
     fn text_attachment_preview_preserves_utf8_and_decodes_windows_gbk() {
-        assert_eq!(decode_attachment_text("# 中文标题\n正文".as_bytes()), "# 中文标题\n正文");
+        assert_eq!(
+            decode_attachment_text("# 中文标题\n正文".as_bytes()),
+            "# 中文标题\n正文"
+        );
         let (gbk, _, _) = GBK.encode("# 中文标题\n正文");
         assert_eq!(decode_attachment_text(&gbk), "# 中文标题\n正文");
     }

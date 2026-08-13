@@ -271,7 +271,7 @@ export function AttachmentPreview({
               onRevealAttachment={onRevealAttachment}
               compact={isVisualMedia}
             />
-            <button type="button" className="icon-button" onClick={onClose} aria-label="关闭预览">
+            <button type="button" className="icon-button" onClick={onClose} aria-label="关闭预览" autoFocus>
               <X size={18} />
             </button>
           </div>

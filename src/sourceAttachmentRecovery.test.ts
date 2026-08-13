@@ -17,12 +17,13 @@ const recordRepository = readProjectFile("src/services/recordRepository.ts");
 const commands = readProjectFile("src-tauri/src/commands.rs");
 const backend = readProjectFile("src-tauri/src/attachments.rs");
 const externalOpen = readProjectFile("src-tauri/src/external_open.rs");
+const transfer = readProjectFile("src-tauri/src/transfer.rs");
 const exportReader = readProjectFile("src-tauri/src/chatgpt_export.rs");
 
 describe("历史来源附件默认加载合同", () => {
   it("当前笔记自动加载全部声明附件，不再要求逐个点击确认", () => {
     expect(assetView).not.toContain("点击恢复并");
-    expect(assetView).toContain("正在自动加载");
+    expect(assetView).toContain("LOADING_LABEL");
     expect(assetView).toContain("onOpenAttachment(attachment)");
     expect(workspace).toContain("hydrateSourceAttachments(sourceItemId, missingIds)");
     expect(workspace).not.toContain("确认从这篇笔记的原始 ChatGPT 导出包恢复");
@@ -63,6 +64,83 @@ describe("历史来源附件默认加载合同", () => {
     expect(styles).toContain("object-fit: contain");
   });
 
+  it("资料卡预览保持时间线弹窗与卡三定位，关闭预览后回到原分类、查询和滚动上下文", () => {
+    expect(workspace).not.toContain("const openSourceAttachmentCatalogHit = useCallback(async (hit: SourceAttachmentCatalogHit) => {\n    setAttachmentTimelineCategory(null);");
+    expect(workspace).toContain("setSelectedId(hit.sourceItemId)");
+    expect(workspace).toContain("if (attachment) onOpenAttachment(attachment)");
+    expect(workspace).toContain("coveredByPreview={attachmentPreviewOpen}");
+    expect(workspace).toContain("if (coveredByPreview) return;");
+    expect(workspace).toContain("aria-hidden={coveredByPreview || undefined}");
+    expect(attachmentPreview).toContain('aria-label="关闭预览" autoFocus');
+  });
+
+  it("正文视频与可预览文档共用全屏预览动作，且不把文件名误写成按钮语义", () => {
+    expect(assetView).toContain("MonitorPlay");
+    expect(assetView).toContain("source-fullscreen-preview-action");
+    expect(assetView).toContain('"全屏预览并播放视频"');
+    expect(assetView.match(/<span>全屏预览<\/span>/g)).toHaveLength(2);
+    expect(assetView).toContain("{isVideo ? <button");
+    expect(assetView).toContain('title={`全屏预览文档：${asset.fileName}`}');
+    expect(assetView).toContain('aria-label={`全屏预览文档：${asset.fileName}`}');
+    expect(assetView).not.toContain('<FileText size={16} /><span>{asset.fileName}</span>');
+    expect(assetView).not.toContain("打开音频预览");
+    expect(assetView).not.toContain('<PlayCircle size={16} /><span>{asset.fileName}</span>');
+    expect(styles).toContain(".source-asset-actions .source-file-chip.source-fullscreen-preview-action");
+  });
+
+  it("音频和文件与图片视频共用按月多列卡片，音频保留原生播放进度与文件预览入口", () => {
+    expect(workspace).toContain('className="attachment-timeline-media-grid"');
+    expect(workspace).toContain("category === \"audio\"");
+    expect(timelineMediaCard).toContain('data-media-kind={resolvedCategory}');
+    expect(timelineMediaCard).toContain("attachmentPreviewKind(attachment)");
+    expect(timelineMediaCard).toContain("<audio");
+    expect(timelineMediaCard).toContain("controls");
+    expect(timelineMediaCard).toContain('preload="metadata"');
+    expect(timelineMediaCard).toContain("展开播放");
+    expect(timelineMediaCard).toContain("查看预览");
+    expect(styles).toContain(".attachment-timeline-audio-player");
+    expect(styles).toContain(".attachment-timeline-media-footer");
+  });
+
+  it("历史资料时间线默认占应用约八成，并将竖向尺寸交给弹窗而不是固定列表", () => {
+    expect(styles).toContain("width: min(80vw, calc(100vw - 42px))");
+    expect(styles).toContain("height: min(80dvh, calc(100dvh - 48px))");
+    expect(styles).toContain("grid-template-rows: auto auto auto minmax(0, 1fr)");
+    expect(styles).toContain(".prototype-dialog,\n.knowledge-overview-dialog,\n.attachment-preview");
+    expect(styles).toContain("resize: both");
+  });
+
+  it("资料时间线首次只绘制可视批次，分类结果命中缓存后立即显示并后台刷新", () => {
+    expect(workspace).toContain("ATTACHMENT_TIMELINE_INITIAL_VISIBLE_COUNT = 120");
+    expect(workspace).toContain("attachmentTimelineCatalogCache");
+    expect(workspace).toContain("继续显示");
+    expect(styles).toContain(".attachment-timeline-load-more");
+    expect(backend).toContain("list_catalog_source_attachments");
+    expect(backend).toContain("避免资料窗口打开时按来源执行 N 次查询");
+  });
+
+  it("移入回收站会同步失效来源搜索与附件时间线缓存，旧请求不能把资料带回界面", () => {
+    expect(workspace).toContain("removeTrashedSourceFromSession");
+    expect(workspace).toContain("sourceAttachmentSearchRequestSequence.current += 1");
+    expect(workspace).toContain("attachmentTimelineRequestSequence.current += 1");
+    expect(workspace).toContain("sourceAttachmentSessionCache.current.delete(sourceItemId)");
+    expect(workspace).toContain("attachmentTimelineCatalogCache.current.forEach");
+    expect(workspace).toContain("setSourceAttachmentHits(withoutTrashedAttachment)");
+    expect(workspace).toContain("setAttachmentTimelineHits(withoutTrashedAttachment)");
+  });
+
+  it("切换全部笔记时先同步复用近期正文和附件，并只在空闲期预取相邻笔记", () => {
+    expect(repository).toContain("SOURCE_TEXT_CACHE_MAX_ENTRIES = 32");
+    expect(repository).toContain("SOURCE_TEXT_CACHE_MAX_BYTES");
+    expect(repository).toContain("peekSourceOriginalText(sourceItemId");
+    expect(workspace).toContain("SOURCE_TEXT_PREFETCH_RADIUS = 2");
+    expect(workspace).toContain("repository.peekSourceOriginalText(selectedId)");
+    expect(workspace).toContain("repository.getSourceOriginalText(sourceId).catch(() => null)");
+    expect(workspace).toContain("sourceAttachmentSessionCache");
+    expect(workspace).toContain("LOADING_LABEL");
+    expect(styles).toContain(".source-body-loading");
+  });
+
   it("Markdown附件走受控解码与统一阅读视图，不再交给iframe猜系统代码页", () => {
     expect(commands).toContain("pub fn read_attachment_text");
     expect(backend).toContain("pub fn read_attachment_text");
@@ -76,15 +154,28 @@ describe("历史来源附件默认加载合同", () => {
     expect(styles).toContain("white-space: pre-wrap");
   });
 
-  it("所有已受控附件共用资源管理器定位能力，前端只提交附件ID", () => {
+  it("所有已受控附件和导出文件共用Windows Shell定位能力", () => {
     expect(commands).toContain("pub fn reveal_attachment");
     expect(backend).toContain("pub fn reveal_attachment");
     expect(backend).toContain("controlled_attachment_file(paths, &attachment.stored_path)");
     expect(externalOpen).toContain("pub fn reveal_path");
-    expect(externalOpen).toContain('Command::new("explorer.exe")');
-    expect(externalOpen).toContain('format!("/select,{}"');
+    expect(externalOpen).toContain("CoInitializeEx");
+    expect(externalOpen).toContain("ILCreateFromPathW");
+    expect(externalOpen).toContain("SHOpenFolderAndSelectItems");
+    expect(externalOpen).toContain("VERBATIM_UNC_PREFIX");
+    expect(externalOpen).toContain("canonicalize 在 Windows 会返回");
+    expect(externalOpen).toContain("let parent_path = path");
+    expect(externalOpen).toContain("let selected = [item.0 as *const _]");
+    expect(externalOpen).toContain("SHOpenFolderAndSelectItems(parent.0, selected.len() as u32, selected.as_ptr(), 0)");
+    expect(externalOpen).not.toContain("SHOpenFolderAndSelectItems(item.0, 0, ptr::null(), 0)");
+    expect(externalOpen).not.toContain('Command::new("explorer.exe")');
+    expect(externalOpen).not.toContain("/select,");
     expect(recordRepository).toContain('invoke("reveal_attachment", { attachmentId })');
-    expect(locateButton).toContain("打开文件所在目录并选中此文件");
+    expect(transfer).toContain("pub fn reveal_exported_file");
+    expect(transfer).toContain("crate::external_open::reveal_path(&selected)");
+    expect(transfer).toContain("selected.starts_with(&export_root)");
+    expect(recordRepository).toContain('invoke("reveal_exported_file", { filePath })');
+    expect(locateButton).toContain("所在目录并选中此文件");
     expect(locateButton).toContain("定位文件");
     expect((assetView.match(/<AttachmentLocateButton/g) ?? []).length).toBeGreaterThanOrEqual(4);
     expect(attachmentPreview).toContain("<AttachmentLocateButton");

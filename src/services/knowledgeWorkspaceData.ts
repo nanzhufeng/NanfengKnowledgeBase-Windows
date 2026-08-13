@@ -1,12 +1,10 @@
 import type {
-  KnowledgeClassificationRuleRow,
   KnowledgeDomainRow,
   KnowledgeEntityRow,
   KnowledgeInboxItem,
   KnowledgeRepository,
   KnowledgeTopicAliasRow,
   KnowledgeTopicRow,
-  PersonalCatalogProposal,
   SourceCollection,
 } from "./knowledgeRepository";
 
@@ -16,10 +14,8 @@ type WorkspaceDataRepository = Pick<
   | "listSourceCollections"
   | "listDomains"
   | "listTopics"
-  | "getPersonalCatalogProposal"
   | "listTopicAliases"
   | "listEntities"
-  | "listClassificationRules"
 >;
 
 export type KnowledgeCatalogData = {
@@ -36,10 +32,8 @@ export type SourceSupportingData = KnowledgeCatalogData & {
 };
 
 export type TopicMaintenanceData = KnowledgeCatalogData & {
-  catalog: PersonalCatalogProposal | null;
   aliases: KnowledgeTopicAliasRow[];
   entities: KnowledgeEntityRow[];
-  rules: KnowledgeClassificationRuleRow[];
 };
 
 /** 全部笔记的点击关键路径只读取轻量列表，不能夹带主题维护或目录写入。 */
@@ -73,17 +67,15 @@ export async function loadKnowledgeEntryData(
   return { domains, topics };
 }
 
-/** 别名、实体和规则只属于主题管理入口。 */
+/** 别名和实体只属于主题管理入口；分类结构与笔记归属统一由 AI 修订提供。 */
 export async function loadTopicMaintenanceData(
   repository: WorkspaceDataRepository,
 ): Promise<TopicMaintenanceData> {
-  const [domains, topics, catalog, aliases, entities, rules] = await Promise.all([
+  const [domains, topics, aliases, entities] = await Promise.all([
     repository.listDomains(),
     repository.listTopics(),
-    repository.getPersonalCatalogProposal(),
     repository.listTopicAliases(),
     repository.listEntities(),
-    repository.listClassificationRules(),
   ]);
-  return { domains, topics, catalog, aliases, entities, rules };
+  return { domains, topics, aliases, entities };
 }

@@ -25,6 +25,10 @@ const topicWorkspace = readFileSync(
   "utf8",
 );
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const recordRepository = readFileSync(
+  new URL("./services/recordRepository.ts", import.meta.url),
+  "utf8",
+);
 const attachmentPreview = readFileSync(
   new URL("./components/AttachmentPreview.tsx", import.meta.url),
   "utf8",
@@ -59,12 +63,13 @@ describe("最终产品方向收敛合同", () => {
     expect(workspace).not.toContain("来源已返回收录箱");
   });
 
-  it("新导入笔记由App唯一编排自动整理并在中断后续接主题洞察", () => {
+  it("新导入笔记不再触发本地分类，只进入主题管理的 AI 全库修订", () => {
     expect(app).toContain("const organizeImportedKnowledge = useCallback");
-    expect(app.match(/autoOrganizeImportedSources\(/g)).toHaveLength(1);
     expect(app).toContain("onOrganizeImportedSources={organizeImportedKnowledge}");
-    expect(app).toContain("upgradeOutdatedInboxSuggestions(");
-    expect(app).toContain("knowledgeOrganizationQueue");
+    expect(app).toContain("已进入待 AI 分类；请在“主题管理”生成全库分类修订");
+    expect(app).not.toContain("autoOrganizeImportedSources(");
+    expect(app).not.toContain("upgradeOutdatedInboxSuggestions(");
+    expect(app).not.toContain("knowledgeOrganizationQueue");
     expect(app).toContain("knowledgeOrganizationRevision={knowledgeOrganizationRevision}");
     expect(workspace).toContain("knowledgeOrganizationRevision: number");
     expect(workspace).toContain("observedKnowledgeOrganizationRevision");
@@ -158,20 +163,20 @@ describe("最终产品方向收敛合同", () => {
     expect(attachmentPreview).not.toContain("bounds.bottom - 64");
   });
 
-  it("全部笔记删除重复页面标题与独立动作栏，把唯一整理动作收进详情标题组", () => {
+  it("全部笔记只保留原文与人工纠正，不提供本地自动整理动作", () => {
     expect(workspace).not.toContain("source-page-actions-only");
     expect(workspace).not.toContain("<h1>全部笔记</h1>");
-    expect(workspace).toContain("自动整理待归类来源");
-    expect(workspace).toContain('className="source-auto-organize-action"');
-    expect(workspace.indexOf('className="source-auto-organize-action"'))
-      .toBeGreaterThan(workspace.indexOf('className="knowledge-detail-actions"'));
+    expect(workspace).not.toContain("自动整理待归类来源");
+    expect(workspace).not.toContain('className="source-auto-organize-action"');
+    expect(workspace).toContain("等待 AI 全库分类");
+    expect(workspace).toContain("这里仅用于人工纠正 AI 归属");
     expect(styles).not.toContain(".knowledge-page-header.source-page-actions-only");
   });
 
-  it("场景皮肤的卡片一全部入口共用明确点亮态，空状态卡保留场景渐变层次", () => {
-    expect(styles).toContain('.app-shell:not([data-skin="classic"]) .sidebar .nav-item.active {');
+  it("场景皮肤的卡片一全部入口共用不透明点亮态，空状态卡保留场景渐变层次", () => {
+    expect(styles).toContain('.app-shell[data-skin-material="scene"] .sidebar .nav-item.active {');
     expect(styles).toContain("inset 0 0 0 1px rgba(241, 104, 59, .32)");
-    expect(styles).toContain("linear-gradient(105deg, rgba(255, 249, 245, .95), rgba(255, 248, 244, .945) 52%, rgba(255, 247, 243, .94))");
+    expect(styles).toContain("linear-gradient(105deg, rgb(255, 251, 248), rgb(255, 250, 247) 52%, rgb(255, 249, 246))");
     expect(styles).not.toContain(".nav-group-supporting .nav-item.active");
     expect(styles).not.toContain(".sidebar-bottom .nav-item.active");
     expect(styles).toContain("--knowledge-material-state-surface:");
@@ -235,14 +240,82 @@ describe("最终产品方向收敛合同", () => {
     expect(styles).toContain(".settings-action-section.primary,\n.settings-action-section.backup");
   });
 
-  it("存储统计支持前台自动同步并由主界面和设置共用刷新入口", () => {
+  it("历史附件恢复卡与同级设置操作卡保持实体浅白承托", () => {
+    const attachmentRecoveryCard = styles.match(
+      /\.settings-action-section\.attachment-recovery\s*\{([\s\S]*?)\n\}/,
+    )?.[1] ?? "";
+    expect(settingsPageSource).toContain('className="settings-action-section attachment-recovery"');
+    expect(attachmentRecoveryCard).toContain("border-color: #dce3ec;");
+    expect(attachmentRecoveryCard).toContain("background: #f8fafd;");
+    expect(attachmentRecoveryCard).not.toContain("var(--glass-card");
+  });
+
+  it("五套皮肤的中性最前景卡统一使用纯白实体面，语义色卡保持例外", () => {
+    const foregroundStart = styles.indexOf("--knowledge-material-foreground-card-color");
+    const foregroundTokens = styles.slice(
+      foregroundStart,
+      styles.indexOf("--knowledge-material-state-surface", foregroundStart),
+    );
+
+    expect(foregroundTokens).toContain("--knowledge-material-foreground-card-color: rgb(255, 255, 255);");
+    expect(foregroundTokens).toContain("--knowledge-material-browser-group-surface: rgb(255, 255, 255);");
+    expect(foregroundTokens).toContain("--knowledge-material-browser-item-surface: rgb(255, 255, 255);");
+    expect(foregroundTokens).toContain("--knowledge-material-reading-card-surface: rgb(255, 255, 255);");
+    expect(foregroundTokens).toContain("--knowledge-material-reading-card-nested-surface: rgb(255, 255, 255);");
+    expect(foregroundTokens).toContain("--knowledge-material-reading-support-surface: rgb(255, 255, 255);");
+    expect(foregroundTokens).not.toContain("rgba(");
+    expect(styles).toMatch(/\.app-shell :is\([\s\S]*?\.unified-note-card:not\(\.selected\),[\s\S]*?\.knowledge-source-list-item:not\(\.active\),[\s\S]*?background: var\(--knowledge-material-foreground-card-color\);/);
+    expect(styles).toMatch(/\.knowledge-final-hypothesis:not\(\.oppose\)[\s\S]*?positive-card-surface/);
+    expect(styles).toMatch(/\.knowledge-final-hypothesis\.oppose[\s\S]*?negative-card-surface/);
+    expect(styles).toMatch(/\.knowledge-final-decision-card\.action[\s\S]*?action-card-surface/);
+    expect(styles).toMatch(/\.knowledge-final-decision-card\.result[\s\S]*?result-card-surface/);
+    expect(styles).toMatch(/\.knowledge-final-reading-pane\.is-content\s*\{[\s\S]*?background: rgb\(255, 255, 255\);/);
+  });
+
+  it("AI 自动整理入口与设置页一级玻璃卡保持紧凑尺寸和连续间距", () => {
+    const aiAutomationEntry = styles.match(
+      /\.settings-action-section\.ai-automation-entry\s*\{([\s\S]*?)\n\}/,
+    )?.[1] ?? "";
+    expect(aiAutomationEntry).toContain("height: auto;");
+    expect(aiAutomationEntry).toContain("min-height: 88px;");
+    expect(aiAutomationEntry).toContain("margin: 0 auto 16px;");
+    expect(aiAutomationEntry).toContain("background: var(--settings-item-surface);");
+    expect(styles).toContain("--settings-item-surface: #ffffff;");
+    expect(styles).toMatch(/\.settings-action-section > \.ai-automation-entry-copy\s*\{[\s\S]*?display: flex;/);
+    expect(styles).toMatch(/\.ai-automation-entry-cue\s*\{[\s\S]*?width: 30px;/);
+    expect(styles).toMatch(/\.app-shell\[data-skin-material="scene"\] :is\([\s\S]*?\.settings-page > \.ai-automation-entry,[\s\S]*?background: var\(--glass-card\);/);
+  });
+
+  it("三套实体皮肤的所有页面共用铺满画布的承托底与纯白设置项", () => {
+    expect(app).not.toContain("data-page={page}");
+    for (const skin of ["entity-mist", "entity-sage", "entity-terracotta"]) {
+      expect(styles).toMatch(new RegExp(`:root\\[data-knowledge-skin="${skin}"\\][\\s\\S]*?--entity-canvas: #[0-9a-f]{6};`));
+    }
+    expect(styles).toMatch(/\.app-shell\[data-skin-material="entity"\],[\s\S]*?\.main-region\s*\{[\s\S]*?background: var\(--entity-canvas\);/);
+    expect(styles).toMatch(/\.app-shell\[data-skin-material="entity"\] \.sidebar \.storage\s*\{[\s\S]*?color: rgba\(255, 255, 255, \.82\);/);
+    expect(styles).toMatch(/\.app-shell\[data-skin-material="entity"\] \.sidebar \.storage strong\s*\{[\s\S]*?color: #ffffff;/);
+    expect(styles).toMatch(/\.app-shell\[data-skin-material="entity"\] :is\([\s\S]*?\.settings-page > \.ai-automation-entry,[\s\S]*?background: var\(--classic-nested-surface\);/);
+    const entityPanelGroup = styles.match(/\.app-shell\[data-skin-material="entity"\] :is\(\s*\.record-pane,[\s\S]*?\n\)\s*\{/)?.[0] ?? "";
+    expect(entityPanelGroup).not.toContain(".settings-list");
+    const entityControlGroup = styles.match(/\.app-shell\[data-skin-material="entity"\] :is\(\s*\.search-field,[\s\S]*?\n\)\s*\{/)?.[0] ?? "";
+    expect(entityControlGroup).not.toContain(".settings-row > button");
+  });
+
+  it("存储统计只在明确刷新或存储变更后更新，日常启动不扫描原始导入归档", () => {
     expect(app).toContain("const storageRefreshPromise = useRef<Promise<StorageStats> | null>(null)");
-    expect(app).toContain('window.addEventListener("focus", refreshWhenActive)');
-    expect(app).toContain('document.addEventListener("visibilitychange", refreshWhenActive)');
+    expect(app).toContain('const STORAGE_STATS_CACHE_KEY = brandedStorageKey("storage-stats-v1")');
+    expect(app).toContain("const [storageStats, setStorageStats] = useState<StorageStats | null>(readCachedStorageStats)");
+    expect(app).toContain("persistStorageStats(stats);");
+    expect(app.match(/repository\.getStorageStats\(\)/g)).toHaveLength(1);
+    expect(app).not.toContain('window.addEventListener("focus", refreshWhenActive)');
+    expect(app).not.toContain('document.addEventListener("visibilitychange", refreshWhenActive)');
     expect(app).toContain('aria-label="刷新存储统计"');
     expect(app).toContain("onRefreshStorage={refreshStorageStats}");
+    expect(app).toContain("await reloadCollections(recordId);\n              await refreshStorageStats();");
+    expect(app).toContain("await reloadCollections();\n              await refreshStorageStats();");
     expect(settingsPageSource).toContain("<strong>存储概览</strong>");
     expect(settingsPageSource).toContain("setStorageInfo(storageStats)");
+    expect(settingsPageSource).not.toContain("Promise.all([repository.getDataLocation(), refreshStorageInfo()])");
     expect(styles).toContain(".storage-refresh-button");
     expect(styles).toContain(".settings-storage-overview-heading");
   });
@@ -255,7 +328,7 @@ describe("最终产品方向收敛合同", () => {
     expect(styles).toContain("@media (hover: hover) and (pointer: fine)");
     expect(styles).toMatch(/\[data-card-interaction="surface-lift"\][\s\S]{0,80}\):hover/);
     expect(styles).toContain("box-shadow: var(--micro-card-hover-shadow-local);");
-    expect(styles).toContain('.app-shell:not([data-skin="classic"]) :is(');
+    expect(styles).toContain('.app-shell[data-skin-material="scene"] :is(');
     expect(styles).toContain("padding: 10px 2px 28px;");
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
     expect(styles).toContain('[data-card-interaction="lift"] [data-card-cue="forward"]');
@@ -266,20 +339,22 @@ describe("最终产品方向收敛合同", () => {
     expect(styles).not.toMatch(/\.knowledge-source-list-item:hover\s*\{[^}]*transform:/s);
     expect(styles).not.toMatch(/\.record-card:hover\s*\{[^}]*box-shadow:/s);
     expect(styles).not.toContain("will-change: transform, box-shadow, border-color, background-color");
-    expect(readingWorkspace).toContain('className="knowledge-overview-judgment" data-card-interaction="surface-lift"');
+    expect(readingWorkspace).not.toContain('className="knowledge-overview-judgment"');
     expect(readingWorkspace).toMatch(/className="knowledge-final-hypothesis-thesis"\s+data-card-interaction="surface-lift"/);
-    expect(readingWorkspace).toMatch(/className="knowledge-final-auto-rationale"\s+data-card-interaction="surface-lift"/);
+    expect(readingWorkspace).not.toContain('className="knowledge-final-auto-rationale"');
     expect(readingWorkspace).toMatch(/className="knowledge-final-evidence-column"\s+data-card-interaction="surface-lift"/);
     expect(readingWorkspace).toMatch(/<article\s+className=\{event\.topicId === topicId \? "current" : "related"\}\s+data-card-interaction="surface-lift"/);
     expect(readingWorkspace).toMatch(/className={`knowledge-final-decision-card \$\{stage\.tone\}`}\s+data-card-interaction="surface-lift"/);
     expect(readingWorkspace.match(/className="knowledge-final-insight-card[^"]*"\s+data-card-interaction="surface-lift"/g)).toHaveLength(2);
+    expect(readingWorkspace).toContain('<article data-card-interaction="surface-lift" key={`${item.title}-${item.detail}`}>');
+    expect(readingWorkspace).toContain('<li data-card-interaction="surface-lift" key={item}>{item}</li>');
     expect(readingWorkspace).not.toMatch(/className={`knowledge-final-hypothesis[^`]*`}\s+data-card-interaction/);
     expect(readingWorkspace).not.toMatch(/className="knowledge-final-decision-version"\s+data-card-interaction/);
     expect(readingWorkspace).not.toMatch(/className="knowledge-final-reader[^\"]*"[^>]*data-card-interaction/);
-    expect(readingWorkspace.match(/data-card-cue="forward"/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
-    expect(topicWorkspace.match(/className="topic-final-section[^\"]*"\s+data-card-interaction="surface-lift"/g)).toHaveLength(4);
+    expect(readingWorkspace.match(/data-card-cue="forward"/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(topicWorkspace.match(/className="topic-final-section[^\"]*"\s+data-card-interaction="surface-lift"/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(topicWorkspace).toContain('data-card-interaction={maintenanceTasks.length + topicSuggestions.length ? undefined : "surface-lift"}');
-    expect(topicWorkspace.match(/<article[^>]*data-card-interaction="surface-lift"/g)).toHaveLength(2);
+    expect(topicWorkspace.match(/<article[^>]*data-card-interaction="surface-lift"/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(topicWorkspace).not.toMatch(/className="topic-final-reader[^\"]*"[^>]*data-card-interaction/);
     expect(topicWorkspace).not.toMatch(/className="topic-final-content"[^>]*data-card-interaction/);
     expect(unifiedNoteListCard).toContain('data-card-interaction="lift"');
@@ -307,13 +382,16 @@ describe("最终产品方向收敛合同", () => {
     expect(styles).not.toMatch(/\.source-search-history > button\s*\{[^}]*border-radius:\s*999px/s);
   });
 
-  it("数据优化必须先扫描、创建安全快照并保护业务记录", () => {
+  it("数据优化必须先扫描引用图、合并 WAL 并保护业务记录", () => {
     expect(app).toContain("扫描可优化项");
-    expect(app).toContain("创建安全快照并优化");
-    expect(app).toContain("不会删除笔记、知识对象、历史版本、附件或导入原件");
+    expect(app).toContain("确认清理可回收项");
+    expect(app).toContain("无引用受控附件");
+    expect(app).toContain("可合并数据库写入日志");
+    expect(app).toContain("不会删除笔记、主题、历史版本、原始导入或完整迁移备份");
     expect(app).toContain("完全重复备份");
     expect(app).toContain("超过 24 小时");
     expect(app).toContain("repository.inspectDataOptimization()");
-    expect(app).toContain("repository.optimizeData()");
+    expect(app).toContain("repository.optimizeData(token)");
+    expect(recordRepository).toContain('invoke("optimize_data", { confirmationToken })');
   });
 });

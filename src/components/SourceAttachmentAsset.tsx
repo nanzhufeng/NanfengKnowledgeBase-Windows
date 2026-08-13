@@ -1,9 +1,10 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Archive, FileQuestion, FileText, Image as ImageIcon, Paperclip, PlayCircle } from "lucide-react";
+import { Archive, FileQuestion, FileText, Image as ImageIcon, MonitorPlay, Paperclip } from "lucide-react";
 import { useEffect, useState } from "react";
 import { attachmentPreviewKind } from "../attachments/attachmentPreview";
 import type { AttachmentItem } from "../domain/models";
 import type { ReadableSourceAsset } from "../domain/importedContent";
+import { LOADING_LABEL } from "../ui/loadingLabel";
 import { AttachmentTextPreview } from "./AttachmentTextPreview";
 import { AttachmentLocateButton } from "./AttachmentLocateButton";
 
@@ -61,12 +62,10 @@ export function SourceAttachmentAsset({
   if (!attachment) {
     const canAdd = Boolean(onAddAttachment);
     const kindLabel = asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "文件";
-    const status = recoveryState === "loading"
-      ? `正在自动加载${kindLabel}…`
-      : recoveryState === "failed"
+    const status = recoveryState === "failed"
         ? recoveryMessage ?? `原始导出包未携带可加载的${kindLabel}实体`
         : asset.fileUuid
-          ? `等待自动加载${kindLabel}…`
+          ? LOADING_LABEL
           : `${kindLabel}缺少唯一 ID，无法自动加载`;
     const missing = <>{asset.kind === "image" ? <ImageIcon size={19} /> : <Paperclip size={16} />}<span><strong>{asset.fileName}</strong><em>{status}</em></span></>;
     return canAdd ? <button className="source-image-placeholder" type="button" onClick={onAddAttachment} title="添加同名原文件后会自动关联">{missing}</button> : <span className="source-image-placeholder">{missing}</span>;
@@ -86,11 +85,21 @@ export function SourceAttachmentAsset({
   }
   if (kind === "audio" || kind === "video") {
     const Media = kind === "audio" ? "audio" : "video";
+    const isVideo = kind === "video";
     return <section ref={setBoundary} className={`source-media-attachment source-media-${kind}`}>
       {ready && !failed ? <Media src={source} controls preload="metadata" onError={() => setFailed(true)} /> : null}
       {!ready ? <DeferredAttachmentPreview label={asset.fileName} /> : null}
       <div className="source-asset-actions">
-        <button className="source-file-chip" type="button" onClick={() => onOpenAttachment(attachment)} title={`打开${kind === "audio" ? "音频" : "视频"}预览`}><PlayCircle size={16} /><span>{asset.fileName}</span></button>
+        {isVideo ? <button
+          className="source-file-chip source-fullscreen-preview-action"
+          type="button"
+          onClick={() => onOpenAttachment(attachment)}
+          title="全屏预览并播放视频"
+          aria-label="全屏预览并播放视频"
+        >
+          <MonitorPlay size={16} />
+          <span>全屏预览</span>
+        </button> : null}
         <AttachmentLocateButton attachment={attachment} onRevealAttachment={onRevealAttachment} />
       </div>
       {failed ? <span className="source-asset-failed"><FileQuestion size={16} />当前 WebView 无法解码，文件仍可安全打开</span> : null}
@@ -102,8 +111,14 @@ export function SourceAttachmentAsset({
         ? <iframe src={source} title={`${asset.fileName} 文档预览`} loading="lazy" />
         : <AttachmentTextPreview attachment={attachment} embedded />) : <DeferredAttachmentPreview label={asset.fileName} />}
       <div className="source-asset-actions">
-        <button className="source-file-chip" type="button" onClick={() => onOpenAttachment(attachment)} title={`放大预览${asset.fileName}`}>
-          <FileText size={16} /><span>{asset.fileName}</span>
+        <button
+          className="source-file-chip source-fullscreen-preview-action"
+          type="button"
+          onClick={() => onOpenAttachment(attachment)}
+          title={`全屏预览文档：${asset.fileName}`}
+          aria-label={`全屏预览文档：${asset.fileName}`}
+        >
+          <MonitorPlay size={16} /><span>全屏预览</span>
         </button>
         <AttachmentLocateButton attachment={attachment} onRevealAttachment={onRevealAttachment} />
       </div>

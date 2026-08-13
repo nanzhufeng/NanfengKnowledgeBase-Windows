@@ -1,26 +1,55 @@
-import desertLanternUrl from "../assets/skins/desert-lantern.jpg";
 import floristStudioUrl from "../assets/skins/florist-studio.jpeg";
 import goldenHorsesUrl from "../assets/skins/golden-horses.png";
 
 export const KNOWLEDGE_SKIN_STORAGE_KEY = "nanfeng-knowledge-base:appearance-skin";
+export const KNOWLEDGE_COLOR_MODE_STORAGE_KEY = "nanfeng-knowledge-base:appearance-color-mode";
+export const DEFAULT_KNOWLEDGE_COLOR_MODE = "light" as const;
 
 export const KNOWLEDGE_SKINS = [
   {
-    id: "desert-lantern",
-    name: "沙漠灯笼",
-    description: "晚霞、沙丘与暖光灯笼",
-    backgroundUrl: desertLanternUrl,
+    id: "entity-mist",
+    name: "实体工作台 · 雾蓝",
+    description: "雾蓝承托、深蓝侧栏与纯白前景",
+    material: "entity",
+    backgroundUrl: null,
     backgroundPosition: "center center",
     sceneText: "#12345f",
     sceneMuted: "#405b7c",
-    sceneSurface: "rgba(250, 252, 255, 0.88)",
+    sceneSurface: "#ffffff",
+    sceneTemperature: "cool",
+    sceneFallbackRgb: { red: 234, green: 241, blue: 247 },
+  },
+  {
+    id: "entity-sage",
+    name: "实体工作台 · 鼠尾草",
+    description: "鼠尾草承托、深绿侧栏与纯白前景",
+    material: "entity",
+    backgroundUrl: null,
+    backgroundPosition: "center center",
+    sceneText: "#243f38",
+    sceneMuted: "#60736c",
+    sceneSurface: "#ffffff",
+    sceneTemperature: "cool",
+    sceneFallbackRgb: { red: 238, green: 242, blue: 237 },
+  },
+  {
+    id: "entity-terracotta",
+    name: "实体工作台 · 暖陶",
+    description: "暖陶承托、深棕侧栏与纯白前景",
+    material: "entity",
+    backgroundUrl: null,
+    backgroundPosition: "center center",
+    sceneText: "#493830",
+    sceneMuted: "#76665e",
+    sceneSurface: "#ffffff",
     sceneTemperature: "warm",
-    sceneFallbackRgb: { red: 112, green: 78, blue: 67 },
+    sceneFallbackRgb: { red: 243, green: 238, blue: 234 },
   },
   {
     id: "florist-studio",
-    name: "花房",
+    name: "场景玻璃 · 花房",
     description: "绿墙、木架与自然花艺",
+    material: "scene",
     backgroundUrl: floristStudioUrl,
     backgroundPosition: "center center",
     sceneText: "#4c2d1f",
@@ -31,8 +60,9 @@ export const KNOWLEDGE_SKINS = [
   },
   {
     id: "golden-horses",
-    name: "奔马",
+    name: "场景玻璃 · 奔马",
     description: "金色逆光与扬尘马群",
+    material: "scene",
     backgroundUrl: goldenHorsesUrl,
     backgroundPosition: "center center",
     sceneText: "#0f315f",
@@ -41,22 +71,11 @@ export const KNOWLEDGE_SKINS = [
     sceneTemperature: "warm",
     sceneFallbackRgb: { red: 177, green: 135, blue: 82 },
   },
-  {
-    id: "classic",
-    name: "原版浅色",
-    description: "浅灰内容区与深蓝侧栏",
-    backgroundUrl: null,
-    backgroundPosition: "center center",
-    sceneText: "#14345f",
-    sceneMuted: "#66758a",
-    sceneSurface: "rgba(255, 255, 255, 0.96)",
-    sceneTemperature: "neutral",
-    sceneFallbackRgb: { red: 238, green: 241, blue: 245 },
-  },
 ] as const;
 
 export type KnowledgeSkinId = typeof KNOWLEDGE_SKINS[number]["id"];
 export type KnowledgeSkin = typeof KNOWLEDGE_SKINS[number];
+export type KnowledgeColorMode = "light" | "dark";
 export type SceneTemperature = "warm" | "cool" | "neutral";
 export type AdaptiveScenePalette = {
   text: string;
@@ -71,11 +90,20 @@ export type AdaptiveScenePalette = {
   temperature: SceneTemperature;
 };
 
-export const DEFAULT_KNOWLEDGE_SKIN: KnowledgeSkinId = "desert-lantern";
+export const DEFAULT_KNOWLEDGE_SKIN: KnowledgeSkinId = "entity-mist";
+
+const LEGACY_SKIN_MIGRATIONS: Record<string, KnowledgeSkinId> = {
+  classic: "entity-mist",
+  "desert-lantern": "entity-mist",
+};
 
 export function isKnowledgeSkinId(value: unknown): value is KnowledgeSkinId {
   return typeof value === "string"
     && KNOWLEDGE_SKINS.some((skin) => skin.id === value);
+}
+
+export function isKnowledgeColorMode(value: unknown): value is KnowledgeColorMode {
+  return value === "light" || value === "dark";
 }
 
 export function readKnowledgeSkin(
@@ -85,7 +113,10 @@ export function readKnowledgeSkin(
 ): KnowledgeSkinId {
   try {
     const saved = storage?.getItem(KNOWLEDGE_SKIN_STORAGE_KEY);
-    return isKnowledgeSkinId(saved) ? saved : DEFAULT_KNOWLEDGE_SKIN;
+    if (isKnowledgeSkinId(saved)) return saved;
+    return typeof saved === "string"
+      ? LEGACY_SKIN_MIGRATIONS[saved] ?? DEFAULT_KNOWLEDGE_SKIN
+      : DEFAULT_KNOWLEDGE_SKIN;
   } catch {
     return DEFAULT_KNOWLEDGE_SKIN;
   }
@@ -99,6 +130,32 @@ export function persistKnowledgeSkin(
 ): void {
   try {
     storage?.setItem(KNOWLEDGE_SKIN_STORAGE_KEY, skinId);
+  } catch {
+    // 外观偏好不可写时仅维持当前会话，不影响任何正式知识数据。
+  }
+}
+
+export function readKnowledgeColorMode(
+  storage: Pick<Storage, "getItem"> | null | undefined = typeof window === "undefined"
+    ? undefined
+    : window.localStorage,
+): KnowledgeColorMode {
+  try {
+    const saved = storage?.getItem(KNOWLEDGE_COLOR_MODE_STORAGE_KEY);
+    return isKnowledgeColorMode(saved) ? saved : DEFAULT_KNOWLEDGE_COLOR_MODE;
+  } catch {
+    return DEFAULT_KNOWLEDGE_COLOR_MODE;
+  }
+}
+
+export function persistKnowledgeColorMode(
+  colorMode: KnowledgeColorMode,
+  storage: Pick<Storage, "setItem"> | null | undefined = typeof window === "undefined"
+    ? undefined
+    : window.localStorage,
+): void {
+  try {
+    storage?.setItem(KNOWLEDGE_COLOR_MODE_STORAGE_KEY, colorMode);
   } catch {
     // 外观偏好不可写时仅维持当前会话，不影响任何正式知识数据。
   }
@@ -230,7 +287,7 @@ export function deriveAdaptiveScenePalette(color: RgbColor): AdaptiveScenePalett
 }
 
 export function getSkinFallbackPalette(skin: KnowledgeSkin): AdaptiveScenePalette {
-  if (skin.id === "classic") {
+  if (skin.material === "entity") {
     return {
       text: skin.sceneText,
       muted: skin.sceneMuted,

@@ -2,6 +2,8 @@
 
 > 历史设计说明：本文主体记录 migration v3 的建模和迁移依据，不作为 2026-07-30 当前 UI、BAT 或正式库状态入口。当前事实以`CURRENT_HANDOFF.md`、`core-workspace-acceptance-matrix.md`和 migration v4 代码为准。
 
+> 2026-08-10 替代说明：本文列出的确定性分类器、分类输入导出、legacy 分类预演和个人目录均已退出当前源码/生产入口；历史数据库表只为兼容旧数据保留，不构成可调用能力。现行方案见 `ai-semantic-pipeline.md`。
+
 ## 结论
 
 本文确认 migration v3 当时已经接入正式 Rust 仓库和 UI，901 条活动记录的真实数据库副本完成隔离迁移与幂等复跑。该段不能推断当前正式库状态；当前 migration v4 仍按最新交接的正式数据边界单独验收。

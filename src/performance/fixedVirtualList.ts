@@ -111,14 +111,23 @@ export function useFixedVirtualList({
   useLayoutEffect(() => {
     if (!enabled) return undefined;
     updateMetrics();
+    // WebView2 在页面切换后的前几帧才会完成父级 flex 高度分配。
+    // 分段复测可以避免 ref 首次为空或读到旧高度后一直只渲染保底 7 行。
+    const settleTimers = [0, 80, 240, 500, 900].map((delay) => window.setTimeout(
+      updateMetrics,
+      delay,
+    ));
     const element = scrollElementRef.current;
-    if (!element) return undefined;
+    if (!element) {
+      return () => settleTimers.forEach((timer) => window.clearTimeout(timer));
+    }
     const observer = typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(scheduleMetricsUpdate);
     observer?.observe(element);
     window.addEventListener("resize", scheduleMetricsUpdate);
     return () => {
+      settleTimers.forEach((timer) => window.clearTimeout(timer));
       observer?.disconnect();
       window.removeEventListener("resize", scheduleMetricsUpdate);
     };

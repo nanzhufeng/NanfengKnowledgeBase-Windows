@@ -157,11 +157,16 @@ impl AppPaths {
         }
     }
 
-    pub fn inspect_data_migration(&self, target_root: impl AsRef<Path>) -> AppResult<DataMigrationPreview> {
+    pub fn inspect_data_migration(
+        &self,
+        target_root: impl AsRef<Path>,
+    ) -> AppResult<DataMigrationPreview> {
         let target_root = normalize_root(target_root.as_ref())?;
         validate_migration_target(&self.root, &target_root)?;
         let (file_count, total_bytes) = directory_inventory(&self.root)?;
-        let required_bytes = total_bytes.saturating_add(total_bytes / 10).saturating_add(32 * 1024 * 1024);
+        let required_bytes = total_bytes
+            .saturating_add(total_bytes / 10)
+            .saturating_add(32 * 1024 * 1024);
         let available_bytes = fs2::available_space(target_root.parent().unwrap_or(&target_root))?;
         if available_bytes < required_bytes {
             return Err(AppError::Validation(format!(
@@ -189,7 +194,9 @@ impl AppPaths {
     ) -> AppResult<DataMigrationResult> {
         let preview = self.inspect_data_migration(target_root)?;
         let target_root = PathBuf::from(&preview.target_root);
-        let target_parent = target_root.parent().ok_or_else(|| AppError::Validation("目标数据目录缺少父目录".to_string()))?;
+        let target_parent = target_root
+            .parent()
+            .ok_or_else(|| AppError::Validation("目标数据目录缺少父目录".to_string()))?;
         fs::create_dir_all(target_parent)?;
         let stage = target_parent.join(format!(".南枫知识库-数据迁移中-{}", uuid::Uuid::new_v4()));
         let copy_result = (|| -> AppResult<()> {
@@ -198,17 +205,28 @@ impl AppPaths {
             fs::create_dir_all(database_path.parent().expect("database parent"))?;
             let mut target_connection = Connection::open(&database_path)?;
             database::copy_database(connection, &mut target_connection)?;
-            let integrity: String = target_connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+            let integrity: String =
+                target_connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
             if integrity != "ok" {
-                return Err(AppError::Conflict(format!("复制后的数据库完整性检查失败：{integrity}")));
+                return Err(AppError::Conflict(format!(
+                    "复制后的数据库完整性检查失败：{integrity}"
+                )));
             }
             drop(target_connection);
             copy_directory_verified_except_database(&self.root, &stage, &self.database)?;
-            let source_records: i64 = connection.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
-            let copied_connection = Connection::open_with_flags(&database_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-            let copied_records: i64 = copied_connection.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
+            let source_records: i64 =
+                connection.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
+            let copied_connection = Connection::open_with_flags(
+                &database_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            let copied_records: i64 =
+                copied_connection
+                    .query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
             if source_records != copied_records {
-                return Err(AppError::Conflict("复制后的数据库记录数与原库不一致".to_string()));
+                return Err(AppError::Conflict(
+                    "复制后的数据库记录数与原库不一致".to_string(),
+                ));
             }
             Ok(())
         })();
@@ -221,7 +239,10 @@ impl AppPaths {
         }
         fs::rename(&stage, &target_root)?;
         if let Err(error) = self.persist_next_root(&target_root) {
-            let rollback_stage = target_parent.join(format!(".南枫知识库-未切换迁移副本-{}", uuid::Uuid::new_v4()));
+            let rollback_stage = target_parent.join(format!(
+                ".南枫知识库-未切换迁移副本-{}",
+                uuid::Uuid::new_v4()
+            ));
             let _ = fs::rename(&target_root, &rollback_stage);
             return Err(error);
         }
@@ -236,30 +257,35 @@ impl AppPaths {
     }
 
     pub fn rollback_next_data_root(&self) -> AppResult<String> {
-        let config_path = self.location_config.as_ref().ok_or_else(|| AppError::Validation(
-            "当前运行环境使用临时数据目录，不能修改下次启动路径".to_string(),
-        ))?;
-        let config = read_location_config(config_path)?.ok_or_else(|| AppError::NotFound(
-            "没有可撤销的数据目录切换".to_string(),
-        ))?;
-        let previous_root = config.previous_root.ok_or_else(|| AppError::NotFound(
-            "没有可撤销的数据目录切换".to_string(),
-        ))?;
-        write_location_config(config_path, &DataLocationConfig {
-            active_root: previous_root.clone(),
-            previous_root: Some(config.active_root),
+        let config_path = self.location_config.as_ref().ok_or_else(|| {
+            AppError::Validation("当前运行环境使用临时数据目录，不能修改下次启动路径".to_string())
         })?;
+        let config = read_location_config(config_path)?
+            .ok_or_else(|| AppError::NotFound("没有可撤销的数据目录切换".to_string()))?;
+        let previous_root = config
+            .previous_root
+            .ok_or_else(|| AppError::NotFound("没有可撤销的数据目录切换".to_string()))?;
+        write_location_config(
+            config_path,
+            &DataLocationConfig {
+                active_root: previous_root.clone(),
+                previous_root: Some(config.active_root),
+            },
+        )?;
         Ok(previous_root)
     }
 
     fn persist_next_root(&self, target_root: &Path) -> AppResult<()> {
-        let config_path = self.location_config.as_ref().ok_or_else(|| AppError::Validation(
-            "当前运行环境使用临时数据目录，不能修改下次启动路径".to_string(),
-        ))?;
-        write_location_config(config_path, &DataLocationConfig {
-            active_root: target_root.to_string_lossy().into_owned(),
-            previous_root: Some(self.root.to_string_lossy().into_owned()),
-        })
+        let config_path = self.location_config.as_ref().ok_or_else(|| {
+            AppError::Validation("当前运行环境使用临时数据目录，不能修改下次启动路径".to_string())
+        })?;
+        write_location_config(
+            config_path,
+            &DataLocationConfig {
+                active_root: target_root.to_string_lossy().into_owned(),
+                previous_root: Some(self.root.to_string_lossy().into_owned()),
+            },
+        )
     }
 
     pub fn storage_stats(&self, connection: &Connection) -> AppResult<StorageStats> {
@@ -312,7 +338,9 @@ fn read_location_config(config_path: &Path) -> AppResult<Option<DataLocationConf
 }
 
 fn write_location_config(config_path: &Path, config: &DataLocationConfig) -> AppResult<()> {
-    let parent = config_path.parent().ok_or_else(|| AppError::Validation("数据目录配置缺少父目录".to_string()))?;
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| AppError::Validation("数据目录配置缺少父目录".to_string()))?;
     fs::create_dir_all(parent)?;
     let temporary = config_path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
     let mut file = fs::File::create(&temporary)?;
@@ -337,13 +365,19 @@ fn normalize_root(root: &Path) -> AppResult<PathBuf> {
 fn validate_migration_target(source_root: &Path, target_root: &Path) -> AppResult<()> {
     let source_root = normalize_root(source_root)?;
     if target_root == source_root {
-        return Err(AppError::Validation("目标目录与当前数据目录相同，无需迁移".to_string()));
+        return Err(AppError::Validation(
+            "目标目录与当前数据目录相同，无需迁移".to_string(),
+        ));
     }
     if target_root.starts_with(&source_root) || source_root.starts_with(target_root) {
-        return Err(AppError::Validation("新数据目录不能是当前目录的父目录或子目录".to_string()));
+        return Err(AppError::Validation(
+            "新数据目录不能是当前目录的父目录或子目录".to_string(),
+        ));
     }
     if !directory_is_missing_or_empty(target_root)? {
-        return Err(AppError::Conflict("目标数据目录已有内容。请新建或选择一个空目录，避免覆盖任何文件。".to_string()));
+        return Err(AppError::Conflict(
+            "目标数据目录已有内容。请新建或选择一个空目录，避免覆盖任何文件。".to_string(),
+        ));
     }
     Ok(())
 }
@@ -391,7 +425,11 @@ fn copy_directory_verified_except_database(
         let destination_path = destination.join(entry.file_name());
         let entry_type = entry.file_type()?;
         if entry_type.is_dir() {
-            copy_directory_verified_except_database(&source_path, &destination_path, database_path)?;
+            copy_directory_verified_except_database(
+                &source_path,
+                &destination_path,
+                database_path,
+            )?;
         } else if entry_type.is_file() {
             copy_file_verified(&source_path, &destination_path)?;
         }
@@ -408,7 +446,9 @@ fn copy_file_verified(source: &Path, destination: &Path) -> AppResult<()> {
         let mut source_hasher = Sha256::new();
         loop {
             let read = input.read(&mut buffer)?;
-            if read == 0 { break; }
+            if read == 0 {
+                break;
+            }
             source_hasher.update(&buffer[..read]);
             output.write_all(&buffer[..read])?;
         }
@@ -416,7 +456,10 @@ fn copy_file_verified(source: &Path, destination: &Path) -> AppResult<()> {
         drop(output);
         let copied_hash = sha256_file(&temporary)?;
         if hex::encode(source_hasher.finalize()) != copied_hash {
-            return Err(AppError::Conflict(format!("文件校验失败：{}", source.display())));
+            return Err(AppError::Conflict(format!(
+                "文件校验失败：{}",
+                source.display()
+            )));
         }
         fs::rename(&temporary, destination)?;
         Ok(())
@@ -433,7 +476,9 @@ fn sha256_file(path: &Path) -> AppResult<String> {
     let mut hasher = Sha256::new();
     loop {
         let read = file.read(&mut buffer)?;
-        if read == 0 { break; }
+        if read == 0 {
+            break;
+        }
         hasher.update(&buffer[..read]);
     }
     Ok(hex::encode(hasher.finalize()))
@@ -650,8 +695,17 @@ mod tests {
     fn data_directory_migration_copies_and_verifies_without_removing_the_source() {
         let directory = tempfile::tempdir().expect("temp dir");
         let mut paths = AppPaths::from_root(directory.path().join("source")).expect("paths");
-        paths.location_config = Some(directory.path().join("config").join(DATA_LOCATION_CONFIG_FILE));
-        fs::write(paths.attachments.join("evidence.bin"), b"attachment evidence").expect("attachment");
+        paths.location_config = Some(
+            directory
+                .path()
+                .join("config")
+                .join(DATA_LOCATION_CONFIG_FILE),
+        );
+        fs::write(
+            paths.attachments.join("evidence.bin"),
+            b"attachment evidence",
+        )
+        .expect("attachment");
         fs::write(paths.imports_raw.join("original.json"), b"original source").expect("import");
         let connection = database::open_database(&paths.database).expect("database");
         connection
@@ -661,16 +715,25 @@ mod tests {
 
         let preview = paths.inspect_data_migration(&target).expect("preview");
         assert!(preview.target_is_empty);
-        let result = paths.migrate_data_directory(&connection, &target).expect("migrate");
+        let result = paths
+            .migrate_data_directory(&connection, &target)
+            .expect("migrate");
 
         assert!(result.restart_required);
         assert!(paths.database.is_file());
-        assert_eq!(fs::read(paths.attachments.join("evidence.bin")).expect("source"), b"attachment evidence");
-        assert_eq!(fs::read(target.join("attachments").join("evidence.bin")).expect("copy"), b"attachment evidence");
+        assert_eq!(
+            fs::read(paths.attachments.join("evidence.bin")).expect("source"),
+            b"attachment evidence"
+        );
+        assert_eq!(
+            fs::read(target.join("attachments").join("evidence.bin")).expect("copy"),
+            b"attachment evidence"
+        );
         assert_eq!(
             Connection::open(target.join("data").join("app.db"))
                 .expect("copied db")
-                .query_row("SELECT value FROM migration_marker", [], |row| row.get::<_, String>(0))
+                .query_row("SELECT value FROM migration_marker", [], |row| row
+                    .get::<_, String>(0))
                 .expect("marker"),
             "kept"
         );
@@ -678,6 +741,9 @@ mod tests {
             .expect("read config")
             .expect("config exists");
         assert_eq!(configured.active_root, target.to_string_lossy());
-        assert_eq!(configured.previous_root.as_deref(), Some(paths.root.to_string_lossy().as_ref()));
+        assert_eq!(
+            configured.previous_root.as_deref(),
+            Some(paths.root.to_string_lossy().as_ref())
+        );
     }
 }

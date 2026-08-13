@@ -177,23 +177,35 @@ export const storageStatsSchema = z.object({
 export type StorageStats = z.infer<typeof storageStatsSchema>;
 
 export const dataOptimizationPreviewSchema = z.object({
+  confirmationToken: z.string().nullable(),
   databaseReclaimableBytes: z.number(),
+  databaseWalBytes: z.number(),
+  willVacuum: z.boolean(),
   duplicateBackupCount: z.number().int(),
   duplicateBackupBytes: z.number(),
   incompleteBackupCount: z.number().int(),
   incompleteBackupBytes: z.number(),
+  unreferencedAttachmentCount: z.number().int(),
+  unreferencedAttachmentBytes: z.number(),
+  referencedAttachmentBytes: z.number(),
+  protectedBackupBytes: z.number(),
+  protectedImportBytes: z.number(),
   estimatedReclaimableBytes: z.number(),
   protectedBusinessRecordCount: z.number().int(),
 });
 export type DataOptimizationPreview = z.infer<typeof dataOptimizationPreviewSchema>;
 
 export const dataOptimizationResultSchema = z.object({
-  safetyBackup: z.string(),
+  safetyBackup: z.string().nullable(),
   removedDuplicateBackupCount: z.number().int(),
   removedIncompleteBackupCount: z.number().int(),
+  removedUnreferencedAttachmentCount: z.number().int(),
   reclaimedBytes: z.number(),
   databaseBytesBefore: z.number(),
   databaseBytesAfter: z.number(),
+  databaseWalBytesBefore: z.number(),
+  databaseWalBytesAfter: z.number(),
+  performedVacuum: z.boolean(),
   integrityCheck: z.string(),
 });
 export type DataOptimizationResult = z.infer<typeof dataOptimizationResultSchema>;

@@ -108,6 +108,44 @@ test("主题洞察通过 Tauri 读取知识对象且不恢复首屏 CRUD 表单"
             }];
           }
           if (command === "list_knowledge_topics") return [topic, relatedTopic];
+          if (command === "get_latest_ai_taxonomy_revision") return null;
+          if (command === "get_applied_ai_taxonomy_revision") {
+            return {
+              publicId: "revision-vfx-applied",
+              taskPublicId: "task-vfx-taxonomy",
+              providerChannel: "deepseek_direct",
+              modelId: "deepseek-v3",
+              status: "applied",
+              domains: [{
+                key: "domain-production",
+                name: "影视制作",
+                description: "影视、动画与 VFX",
+              }],
+              topics: [{
+                key: "topic-vfx-delivery",
+                domainKey: "domain-production",
+                parentKey: null,
+                name: "VFX 交付",
+                description: "镜头交付与渲染策略",
+                integrationMarkdown: "由 AI 已归纳的交付主题。",
+                sourceItemIds: [12],
+              }],
+              assignments: [{
+                sourceItemId: 12,
+                topicKey: "topic-vfx-delivery",
+                confidence: 92,
+                reason: "交付复盘视频直接对应 VFX 交付。",
+                uncertain: false,
+              }],
+              sourceCount: 1,
+              assignedSourceCount: 1,
+              uncertainSourceCount: 0,
+              createdAt: now,
+              appliedAt: now,
+              undoneAt: null,
+            };
+          }
+          if (command === "get_resumable_ai_taxonomy_run") return null;
           if (command === "get_personal_topic_catalog_proposal") {
             return {
               version: "nanzhufeng-personal-catalog-v1",
@@ -198,6 +236,7 @@ test("主题洞察通过 Tauri 读取知识对象且不恢复首屏 CRUD 表单"
   await page.getByRole("button", { name: /主题洞察/ }).click();
   await page.getByRole("button", { name: /VFX 交付/ }).click();
   await expect(page.getByRole("heading", { name: "VFX 交付", exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: /判断演变/ }).click();
   await expect(page.getByText("当前采用离线渲染", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("维护与录入", { exact: true })).toBeHidden();
   await page.getByRole("tab", { name: /主题整合/ }).click();

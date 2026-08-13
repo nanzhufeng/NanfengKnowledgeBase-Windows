@@ -19,6 +19,7 @@ type KnowledgeTopicHierarchyProps = {
   activeTopicRef: Ref<HTMLButtonElement>;
   onSelectTopic: (topicId: number) => void;
   onScroll?: () => void;
+  emptyMessage?: string;
 };
 
 /**
@@ -34,6 +35,7 @@ export function KnowledgeTopicHierarchy({
   activeTopicRef,
   onSelectTopic,
   onScroll,
+  emptyMessage = "没有匹配的正式主题。",
 }: KnowledgeTopicHierarchyProps) {
   const [collapsedDomainIds, setCollapsedDomainIds] = useState<Set<number>>(new Set());
 
@@ -94,7 +96,7 @@ export function KnowledgeTopicHierarchy({
           );
         })}
         {!topics.length ? (
-          <p className="knowledge-final-empty">没有匹配的正式主题。</p>
+          <p className="knowledge-final-empty">{emptyMessage}</p>
         ) : null}
       </div>
     </div>

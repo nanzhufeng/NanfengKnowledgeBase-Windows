@@ -1,5 +1,5 @@
-mod attachments;
 pub mod ai;
+mod attachments;
 pub mod chatgpt_export;
 mod commands;
 mod data_optimization;
@@ -36,8 +36,11 @@ pub fn run() {
             };
             instance_guard.set_nonblocking(true)?;
             let paths = paths::AppPaths::from_app(app.handle())?;
-            app.asset_protocol_scope()
-                .allow_directory(&paths.attachments, true)?;
+            let connection = database::open_database(&paths.database)?;
+            let recovered_ai_tasks = ai::repository::recover_stale_ai_tasks(&connection)?;
+            // Asset protocol 采用“已登记附件逐文件授权”：拒绝把整个附件目录作为
+            // WebView 可读根目录，附件记录外的文件不能仅凭路径被页面加载。
+            attachments::allow_known_attachment_assets(app.handle(), &connection, &paths)?;
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .clear_targets()
@@ -50,8 +53,10 @@ pub fn run() {
             )?;
             install_panic_log(paths.logs.clone());
             log::info!("应用启动，数据目录：{}", paths.root.display());
+            if recovered_ai_tasks > 0 {
+                log::warn!("已安全中断 {} 个上次遗留的 AI 任务", recovered_ai_tasks);
+            }
 
-            let connection = database::open_database(&paths.database)?;
             app.manage(AppState::new(connection, paths, instance_guard));
             Ok(())
         })
@@ -63,6 +68,14 @@ pub fn run() {
             commands::refresh_ai_models,
             commands::get_ai_topic_insight,
             commands::run_ai_topic_insight,
+            commands::get_latest_ai_taxonomy_revision,
+            commands::get_applied_ai_taxonomy_revision,
+            commands::get_resumable_ai_taxonomy_run,
+            commands::discard_ai_taxonomy_run,
+            commands::run_ai_taxonomy_revision,
+            commands::run_ai_incremental_taxonomy_revision,
+            commands::apply_ai_taxonomy_revision,
+            commands::undo_ai_taxonomy_revision,
             commands::get_data_location,
             commands::inspect_data_migration,
             commands::migrate_data_directory,
@@ -87,8 +100,6 @@ pub fn run() {
             commands::hydrate_knowledge_source_attachments,
             commands::list_knowledge_domains,
             commands::list_knowledge_topics,
-            commands::get_personal_topic_catalog_proposal,
-            commands::apply_personal_topic_catalog,
             commands::list_knowledge_topic_aliases,
             commands::create_knowledge_topic_alias,
             commands::update_knowledge_topic_alias,
@@ -97,18 +108,10 @@ pub fn run() {
             commands::create_knowledge_entity,
             commands::update_knowledge_entity,
             commands::delete_knowledge_entity,
-            commands::list_knowledge_classification_rules,
-            commands::create_knowledge_classification_rule,
-            commands::update_knowledge_classification_rule,
-            commands::delete_knowledge_classification_rule,
-            commands::prepare_knowledge_classification_context,
             commands::create_knowledge_domain,
             commands::update_knowledge_domain,
             commands::create_knowledge_topic,
             commands::update_knowledge_topic,
-            commands::save_knowledge_classification_suggestions,
-            commands::list_knowledge_classification_suggestions,
-            commands::list_knowledge_classification_run_source_ids,
             commands::confirm_knowledge_classification,
             commands::undo_knowledge_classification,
             commands::get_knowledge_topic_detail,

@@ -91,6 +91,7 @@ import {
   type UnifiedNoteListSortMode,
   type HistoricalSearchCategory,
 } from "./components/UnifiedNoteListCard";
+import { LOADING_LABEL } from "./ui/loadingLabel";
 import type {
   KnowledgeSourceContext,
   KnowledgeSourceSearchTarget,
@@ -98,7 +99,7 @@ import type {
 import { AttachmentPreview } from "./components/AttachmentPreview";
 import { attachmentPreviewKind } from "./attachments/attachmentPreview";
 import { SourceAttachmentAsset } from "./components/SourceAttachmentAsset";
-import { AiAutomationSettings } from "./components/AiAutomationSettings";
+import { AiAutomationSettings, AiAutomationSettingsEntry } from "./components/AiAutomationSettings";
 import {
   recordToUpdate,
   recordToSummary,
@@ -122,6 +123,7 @@ import {
   type LegacyAttachmentRecoveryPreview,
   type RuntimeBuildInfo,
   type UpdateRecordInput,
+  storageStatsSchema,
 } from "./domain/models";
 import {
   getRecordRepository,
@@ -130,13 +132,6 @@ import {
 } from "./services/recordRepository";
 import { KnowledgeRepository } from "./services/knowledgeRepository";
 import { resolveSourceAssetAttachment } from "./knowledge/sourceAttachmentMatching";
-import {
-  autoOrganizeImportedSources,
-  type KnowledgeAutoOrganizationResult,
-  undoAutoOrganization,
-  upgradeOutdatedInboxSuggestions,
-} from "./services/knowledgeAutoOrganizer";
-import { scheduleIdleWork } from "./performance/interactionScheduler";
 import {
   readImportedContent,
   resolveImportedTitle,
@@ -157,9 +152,12 @@ import {
   getKnowledgeSkin,
   getSkinFallbackPalette,
   KNOWLEDGE_SKINS,
+  persistKnowledgeColorMode,
   persistKnowledgeSkin,
+  readKnowledgeColorMode,
   readKnowledgeSkin,
   type AdaptiveScenePalette,
+  type KnowledgeColorMode,
   type KnowledgeSkinId,
 } from "./theme/knowledgeSkins";
 
@@ -168,6 +166,30 @@ const LEGACY_STORAGE_PREFIX = "nanfeng-intelligence";
 
 function brandedStorageKey(suffix: string): string {
   return `${STORAGE_PREFIX}:${suffix}`;
+}
+
+const STORAGE_STATS_CACHE_KEY = brandedStorageKey("storage-stats-v1");
+
+function readCachedStorageStats(): StorageStats | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.localStorage.getItem(STORAGE_STATS_CACHE_KEY);
+    if (!value) return null;
+    const parsed = storageStatsSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    // 存储统计只是展示缓存，损坏或不可用时留空，不能阻断正式数据库启动。
+    return null;
+  }
+}
+
+function persistStorageStats(stats: StorageStats): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_STATS_CACHE_KEY, JSON.stringify(stats));
+  } catch {
+    // 缓存写入失败时不影响数据操作；下次用户主动刷新仍可重新获得统计。
+  }
 }
 
 function migrateLegacyPreferences(): void {
@@ -298,16 +320,6 @@ function formatImportJobStatus(status: ImportJobSummary["status"]): string {
   }[status] ?? status;
 }
 
-function autoOrganizationNotice(result: KnowledgeAutoOrganizationResult): string {
-  const parts = [
-    `已分析 ${result.analyzedCount} 条`,
-    `自动归类 ${result.autoClassifiedCount} 条`,
-    `待确认 ${result.awaitingConfirmationCount} 条`,
-  ];
-  if (result.catalogBootstrapped) parts.push("已建立可编辑默认目录");
-  if (result.failures.length) parts.push(`${result.failures.length} 条保留在全部笔记中待确认`);
-  return `自动整理完成：${parts.join("，")}`;
-}
 
 type RecordListItem = IntelligenceRecord | RecordSummary;
 
@@ -319,7 +331,7 @@ function recordSourceLabel(record: RecordListItem): string {
 
 function recordTopicLabel(record: RecordListItem): string {
   if ("primaryTopicName" in record && record.primaryTopicName) return record.primaryTopicName;
-  return record.tags[0] || "等待自动归类";
+  return record.tags[0] || "等待 AI 分类";
 }
 
 const recordDisplayTitleCache = new WeakMap<object, string>();
@@ -502,7 +514,7 @@ function PrototypeDialog({
   onClose,
   children,
   className = "",
-  resizable = false,
+  resizable = true,
   sizePreferenceKey,
 }: {
   eyebrow: string;
@@ -528,11 +540,6 @@ function PrototypeDialog({
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    // 完整内容始终以稳定的大阅读面打开；不读取旧的小尺寸偏好，避免打开后跳变。
-    if (
-      className.split(/\s+/).includes("source-content-dialog")
-      || className.split(/\s+/).includes("shortcut-settings-dialog")
-    ) return;
     const resolvedSizePreferenceKey = sizePreferenceKey ?? (className.split(/\s+/).includes("share-record-dialog")
       ? "share-record-dialog-v3"
       : className || "default");
@@ -1062,7 +1069,7 @@ function RecordList({
 
   return (
     <UnifiedNoteListPanel
-      className={`record-pane ${scope === "records" ? "" : "knowledge-card record-subview-list-card"}`}
+      className={`record-pane core-workspace-card-two ${scope === "records" ? "" : "knowledge-card record-subview-list-card"}`}
       data-hover-wheel-panel=""
     >
       <UnifiedNoteListSearchRow>
@@ -1369,7 +1376,7 @@ function DetailPanel({
 
   return (
     <article
-      className="detail-panel source-archive-detail elevated-card association-link-target"
+      className="detail-panel source-archive-detail elevated-card association-link-target core-workspace-card-three"
       tabIndex={-1}
       data-hover-wheel-panel=""
       data-hover-wheel-scroll=""
@@ -1601,7 +1608,7 @@ function RecordsWorkspace({
 
   return (
     <div
-      className={`records-workspace ${scope === "records" ? "" : "record-subview-workspace"}`}
+      className={`records-workspace core-workspace-grid ${scope === "records" ? "" : "record-subview-workspace"}`}
       data-record-scope={scope}
       style={connectionMetrics ? {
         "--connection-left": `${connectionMetrics.left}px`,
@@ -1652,9 +1659,9 @@ function RecordsWorkspace({
           sourceOpenRequest={sourceOpenRequest}
         />
       ) : (
-        <article className={`detail-panel elevated-card empty-detail ${selectedSummary ? "association-link-target" : ""}`}>
+        <article className={`detail-panel elevated-card empty-detail core-workspace-card-three ${selectedSummary ? "association-link-target" : ""}`}>
           {selectedSummary ? <span className="save-spinner" /> : <FileText size={36} />}
-          <strong>{selectedSummary ? "正在读取记录详情" : "还没有可显示的记录"}</strong>
+          <strong>{selectedSummary ? LOADING_LABEL : "还没有可显示的记录"}</strong>
           <span>{selectedSummary ? "列表保持可操作，长正文会按需加载。" : "新建一条记录，或调整左侧的筛选条件。"}</span>
         </article>
       )}
@@ -2883,6 +2890,8 @@ function TrashPage({
 
 function SettingsPage({
   repository,
+  colorMode,
+  onColorModeChange,
   skinId,
   onSkinChange,
   onOpenTransfer,
@@ -2895,6 +2904,8 @@ function SettingsPage({
   onSettingClosed,
 }: {
   repository: RecordRepository;
+  colorMode: KnowledgeColorMode;
+  onColorModeChange: (colorMode: KnowledgeColorMode) => void;
   skinId: KnowledgeSkinId;
   onSkinChange: (skinId: KnowledgeSkinId) => void;
   onOpenTransfer: () => void;
@@ -2906,7 +2917,7 @@ function SettingsPage({
   initialSetting?: string | null;
   onSettingClosed: () => void;
 }) {
-  const [dataLocation, setDataLocation] = useState("正在读取…");
+  const [dataLocation, setDataLocation] = useState(LOADING_LABEL);
   const [dataMigrationPreview, setDataMigrationPreview] = useState<DataMigrationPreview | null>(null);
   const [dataMigrationResult, setDataMigrationResult] = useState<DataMigrationResult | null>(null);
   const [dataMigrationInspecting, setDataMigrationInspecting] = useState(false);
@@ -2928,6 +2939,7 @@ function SettingsPage({
   const [legacyAttachmentDirectory, setLegacyAttachmentDirectory] = useState<string | null>(null);
   const [legacyAttachmentInspecting, setLegacyAttachmentInspecting] = useState(false);
   const [legacyAttachmentRecoveryConfirming, setLegacyAttachmentRecoveryConfirming] = useState(false);
+  const [aiAutomationSettingsOpen, setAiAutomationSettingsOpen] = useState(false);
   const [recoveringLegacyAttachments, setRecoveringLegacyAttachments] = useState(false);
   const [runtimeBuildInfo, setRuntimeBuildInfo] = useState<RuntimeBuildInfo | null>(null);
   const [runtimeBuildInfoError, setRuntimeBuildInfoError] = useState("");
@@ -2958,12 +2970,12 @@ function SettingsPage({
   }, [onRefreshStorage]);
 
   useEffect(() => {
-    void Promise.all([repository.getDataLocation(), refreshStorageInfo()])
-      .then(([location]) => {
+    void repository.getDataLocation()
+      .then((location) => {
         setDataLocation(location.root);
       })
       .catch((error) => setDataLocation(error instanceof Error ? error.message : "读取失败"));
-  }, [refreshStorageInfo, repository]);
+  }, [repository]);
 
   useEffect(() => {
     void repository.getRuntimeBuildInfo()
@@ -2989,9 +3001,26 @@ function SettingsPage({
           <div className="settings-icon"><Sparkles size={21} /></div>
           <div>
             <h2 id="skin-settings-title">外观与皮肤</h2>
-            <p>四套皮肤共用同一布局，切换时只改变颜色与材质。</p>
+            <p>五套皮肤共用同一布局，切换时只改变颜色与材质。</p>
           </div>
         </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={colorMode === "dark"}
+          className={`appearance-mode-toggle ${colorMode === "dark" ? "selected" : ""}`}
+          onClick={() => {
+            const nextColorMode = colorMode === "dark" ? "light" : "dark";
+            onColorModeChange(nextColorMode);
+            onNotify(nextColorMode === "dark" ? "已开启暗色皮肤" : "已切换回浅色皮肤");
+          }}
+        >
+          <span className="appearance-mode-toggle-copy">
+            <strong>暗色皮肤</strong>
+            <small>五套皮肤保留现有布局，仅切换对应暗色材质。</small>
+          </span>
+          <span className="appearance-mode-toggle-indicator" aria-hidden="true"><i /></span>
+        </button>
         <div className="skin-option-grid" role="radiogroup" aria-label="选择界面皮肤">
           {KNOWLEDGE_SKINS.map((skin) => (
             <button
@@ -3006,13 +3035,13 @@ function SettingsPage({
               }}
             >
               <span
-                className={`skin-preview ${skin.id === "classic" ? "classic" : ""}`}
+                className={`skin-preview ${skin.material} ${skin.id}`}
                 style={skin.backgroundUrl
                   ? { backgroundImage: `url("${skin.backgroundUrl}")` }
                   : undefined}
                 aria-hidden="true"
               >
-                {skin.id === "classic" ? <i /> : null}
+                {skin.material === "entity" ? <i /> : null}
               </span>
               <span className="skin-option-copy">
                 <strong>{skin.name}</strong>
@@ -3023,19 +3052,7 @@ function SettingsPage({
           ))}
         </div>
       </section>
-      <section className="runtime-build-card elevated-card" aria-labelledby="runtime-build-title">
-        <div className="settings-icon"><ShieldCheck size={21} /></div>
-        <div className="runtime-build-copy">
-          <h2 id="runtime-build-title">当前程序</h2>
-          {runtimeBuildInfo ? (
-            <>
-              <p>版本 {runtimeBuildInfo.version} · {runtimeBuildInfo.buildLabel} · {formatFileSize(runtimeBuildInfo.executableSizeBytes)}</p>
-              <code title={runtimeBuildInfo.executableSha256}>EXE SHA-256：{runtimeBuildInfo.executableSha256}</code>
-            </>
-          ) : <p>{runtimeBuildInfoError || "正在计算 EXE SHA-256…"}</p>}
-        </div>
-      </section>
-      <AiAutomationSettings onNotify={onNotify} />
+      <AiAutomationSettingsEntry onOpen={() => setAiAutomationSettingsOpen(true)} />
       <div className="settings-list">
         {groups.map((group) => {
           const Icon = group.icon;
@@ -3060,6 +3077,18 @@ function SettingsPage({
           );
         })}
       </div>
+      <section className="runtime-build-card elevated-card" aria-labelledby="runtime-build-title">
+        <div className="settings-icon"><ShieldCheck size={21} /></div>
+        <div className="runtime-build-copy">
+          <h2 id="runtime-build-title">当前程序</h2>
+          {runtimeBuildInfo ? (
+            <>
+              <p>版本 {runtimeBuildInfo.version} · {runtimeBuildInfo.buildLabel} · {formatFileSize(runtimeBuildInfo.executableSizeBytes)}</p>
+              <code title={runtimeBuildInfo.executableSha256}>EXE SHA-256：{runtimeBuildInfo.executableSha256}</code>
+            </>
+          ) : <p>{runtimeBuildInfoError || "正在计算 EXE SHA-256…"}</p>}
+        </div>
+      </section>
       {activeSetting && ActiveSettingIcon ? (
         <PrototypeDialog
           eyebrow="设置预览"
@@ -3233,7 +3262,7 @@ function SettingsPage({
                 <section className="settings-action-section optimization" data-card-interaction="surface-lift">
                   <div>
                     <strong>优化数据占用</strong>
-                    <p>先扫描可安全回收的数据库空页、完全重复备份和超时未完成备份。</p>
+                    <p>先盘点可安全回收的无引用附件、数据库写入日志和无效备份；原始资料与完整备份默认保留。</p>
                   </div>
                   <button
                     className="secondary-button settings-optimize-button"
@@ -3367,6 +3396,17 @@ function SettingsPage({
           )}
         </PrototypeDialog>
       ) : null}
+      {aiAutomationSettingsOpen ? (
+        <PrototypeDialog
+          eyebrow="自动化设置"
+          title="AI 自动整理"
+          className="ai-automation-dialog"
+          sizePreferenceKey="ai-automation-dialog-v2"
+          onClose={() => setAiAutomationSettingsOpen(false)}
+        >
+          <AiAutomationSettings onNotify={onNotify} />
+        </PrototypeDialog>
+      ) : null}
       {dataMigrationPreview ? (
         <PrototypeDialog
           eyebrow="数据目录迁移"
@@ -3420,18 +3460,20 @@ function SettingsPage({
           <div className="data-optimization-content">
             <div className="safe-callout">
               <ShieldCheck size={19} />
-              <span>执行前会创建数据库安全快照；不会删除笔记、知识对象、历史版本、附件或导入原件。</span>
+              <span>只处理没有任何数据库引用的受控附件，以及可安全合并的数据库写入日志；不会删除笔记、主题、历史版本、原始导入或完整迁移备份。</span>
             </div>
             <div className="data-optimization-grid">
-              <div><span>数据库可回收空页</span><strong>{formatFileSize(optimizationPreview.databaseReclaimableBytes)}</strong></div>
+              <div><span>无引用受控附件</span><strong>{optimizationPreview.unreferencedAttachmentCount} 项 · {formatFileSize(optimizationPreview.unreferencedAttachmentBytes)}</strong></div>
+              <div><span>可合并数据库写入日志</span><strong>{formatFileSize(optimizationPreview.databaseWalBytes)}</strong></div>
+              <div><span>数据库可回收空页</span><strong>{formatFileSize(optimizationPreview.databaseReclaimableBytes)}{optimizationPreview.willVacuum ? "（将压缩）" : "（低于压缩阈值）"}</strong></div>
               <div><span>完全重复备份</span><strong>{optimizationPreview.duplicateBackupCount} 项 · {formatFileSize(optimizationPreview.duplicateBackupBytes)}</strong></div>
               <div><span>超时未完成备份</span><strong>{optimizationPreview.incompleteBackupCount} 项 · {formatFileSize(optimizationPreview.incompleteBackupBytes)}</strong></div>
               <div className="total"><span>预计可释放</span><strong>{formatFileSize(optimizationPreview.estimatedReclaimableBytes)}</strong></div>
             </div>
             <ul className="data-optimization-rules">
-              <li>重复备份只在内容哈希完全一致时处理，并保留最新一份。</li>
-              <li>未完成备份必须带创建中标记且超过 24 小时，才列入清理。</li>
-              <li>{optimizationPreview.protectedBusinessRecordCount} 条业务记录全部受保护；“过期”内容不由系统擅自判断或删除。</li>
+              <li>无引用附件会再次对照所有附件记录和导入清单；仍被任一笔记使用的 {formatFileSize(optimizationPreview.referencedAttachmentBytes)} 附件不进入清理。</li>
+              <li>重复备份只在内容哈希完全一致时处理，并保留最新一份；未完成备份必须超过 24 小时。</li>
+              <li>完整备份 {formatFileSize(optimizationPreview.protectedBackupBytes)}、导入原件 {formatFileSize(optimizationPreview.protectedImportBytes)} 与 {optimizationPreview.protectedBusinessRecordCount} 条业务记录全部保留。语义相似不由模型自动删除。</li>
             </ul>
             <div className="dialog-actions">
               <button className="secondary-button" disabled={optimizingData} onClick={() => setOptimizationPreview(null)}>取消</button>
@@ -3441,11 +3483,15 @@ function SettingsPage({
                 onClick={async () => {
                   setOptimizingData(true);
                   try {
-                    const result = await repository.optimizeData();
+                    const token = optimizationPreview.confirmationToken;
+                    if (!token) {
+                      throw new Error("清理确认已失效，请重新扫描并确认");
+                    }
+                    const result = await repository.optimizeData(token);
                     await refreshStorageInfo();
                     setOptimizationPreview(null);
                     onNotify(
-                      `数据优化完成，释放 ${formatFileSize(result.reclaimedBytes)}；安全快照：${result.safetyBackup}`,
+                      `数据优化完成，释放 ${formatFileSize(result.reclaimedBytes)}；移除无引用附件 ${result.removedUnreferencedAttachmentCount} 项，数据库写入日志从 ${formatFileSize(result.databaseWalBytesBefore)} 缩至 ${formatFileSize(result.databaseWalBytesAfter)}${result.performedVacuum ? "，已压缩数据库" : ""}`,
                       { durationMs: 10_000 },
                     );
                   } catch (error) {
@@ -3455,7 +3501,7 @@ function SettingsPage({
                   }
                 }}
               >
-                <ShieldCheck size={17} />{optimizingData ? "正在安全优化…" : "创建安全快照并优化"}
+                <ShieldCheck size={17} />{optimizingData ? "正在安全优化…" : "确认清理可回收项"}
               </button>
             </div>
           </div>
@@ -3624,6 +3670,7 @@ export function App() {
   const repository = useMemo(() => getRecordRepository(), []);
   const knowledgeRepository = useMemo(() => new KnowledgeRepository(), []);
   const [skinId, setSkinId] = useState<KnowledgeSkinId>(() => readKnowledgeSkin());
+  const [colorMode, setColorMode] = useState<KnowledgeColorMode>(() => readKnowledgeColorMode());
   const [page, setPage] = useState<Page>("knowledge");
   const [settingsReturnTarget, setSettingsReturnTarget] = useState<"data-storage" | null>(null);
   const [knowledgeSourceTarget, setKnowledgeSourceTarget] = useState<
@@ -3640,12 +3687,13 @@ export function App() {
   const [catalogTopicValues, setCatalogTopicValues] = useState<string[]>([]);
   const [visibleRecords, setVisibleRecords] = useState<RecordSummary[]>([]);
   const [trashRecords, setTrashRecords] = useState<RecordSummary[]>([]);
-  const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [storageStats, setStorageStats] = useState<StorageStats | null>(readCachedStorageStats);
   const [storageRefreshing, setStorageRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<IntelligenceRecord | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<AttachmentItem | null>(null);
+  const previewReturnFocusRef = useRef<HTMLElement | null>(null);
   const [importStep, setImportStep] = useState<ImportStep>("empty");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [recordSearch, setRecordSearch] = useState("");
@@ -3670,7 +3718,6 @@ export function App() {
   const knowledgeSourceRequestSequence = useRef(0);
   const knowledgeSourceSearchRequestSequence = useRef(0);
   const storageRefreshPromise = useRef<Promise<StorageStats> | null>(null);
-  const knowledgeOrganizationQueue = useRef<Promise<void>>(Promise.resolve());
   const unifiedNoteTopicValues = useMemo(() => Array.from(new Set([
     ...catalogTopicValues,
     ...allRecords.map(recordTopicLabel),
@@ -3805,6 +3852,9 @@ export function App() {
   useEffect(() => {
     const root = document.documentElement;
     root.dataset.knowledgeSkin = skinId;
+    root.dataset.knowledgeSkinMaterial = activeSkin.material;
+    root.dataset.knowledgeColorMode = colorMode;
+    root.style.colorScheme = colorMode;
     root.style.setProperty("--skin-scene-text", adaptiveScene.text);
     root.style.setProperty("--skin-scene-muted", adaptiveScene.muted);
     root.style.setProperty("--skin-scene-accent", adaptiveScene.accent);
@@ -3814,6 +3864,9 @@ export function App() {
     root.style.setProperty("--skin-surface-muted", adaptiveScene.surfaceMuted);
     return () => {
       delete root.dataset.knowledgeSkin;
+      delete root.dataset.knowledgeSkinMaterial;
+      delete root.dataset.knowledgeColorMode;
+      root.style.removeProperty("color-scheme");
       root.style.removeProperty("--skin-scene-text");
       root.style.removeProperty("--skin-scene-muted");
       root.style.removeProperty("--skin-scene-accent");
@@ -3822,75 +3875,20 @@ export function App() {
       root.style.removeProperty("--skin-surface-text");
       root.style.removeProperty("--skin-surface-muted");
     };
-  }, [adaptiveScene, skinId]);
+  }, [adaptiveScene, colorMode, skinId]);
 
   const notify = useCallback<Notify>((message, options = {}) => {
     setNotice({ id: Date.now(), message, ...options });
   }, []);
 
-  const enqueueKnowledgeOrganization = useCallback(<T,>(work: () => Promise<T>): Promise<T> => {
-    const run = knowledgeOrganizationQueue.current.then(work, work);
-    knowledgeOrganizationQueue.current = run.then(() => undefined, () => undefined);
-    return run;
-  }, []);
-
   const organizeImportedKnowledge = useCallback(async (sourceItemIds: number[]) => {
     if (!sourceItemIds.length) return;
-    notify(`正在根据正文自动整理 ${sourceItemIds.length} 条新笔记`);
-    try {
-      const result = await enqueueKnowledgeOrganization(() => (
-        autoOrganizeImportedSources(sourceItemIds, knowledgeRepository)
-      ));
-      setKnowledgeOrganizationRevision((current) => current + 1);
-      notify(autoOrganizationNotice(result), {
-        durationMs: 12_000,
-        actionLabel: result.operationIds.length ? "撤销自动归类" : undefined,
-        onAction: result.operationIds.length
-          ? async () => {
-            await enqueueKnowledgeOrganization(() => (
-              undoAutoOrganization(result.operationIds, knowledgeRepository)
-            ));
-            setKnowledgeOrganizationRevision((current) => current + 1);
-            notify("本批自动归类已撤销，笔记已回到待整理状态");
-          }
-          : undefined,
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "自动整理暂未完成";
-      notify(
-        `${reason}；下次启动会自动续接`,
-        { durationMs: 9_000 },
-      );
-    }
-  }, [enqueueKnowledgeOrganization, knowledgeRepository, notify]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const cancel = scheduleIdleWork(() => {
-      void enqueueKnowledgeOrganization(() => upgradeOutdatedInboxSuggestions(
-        knowledgeRepository,
-        { signal: controller.signal },
-      ))
-        .then((progress) => {
-          if (controller.signal.aborted || !progress.completed) return;
-          setKnowledgeOrganizationRevision((current) => current + 1);
-          if (progress.failures) {
-            notify(`自动整理已续接 ${progress.completed} 条，${progress.failures} 条将在下次启动继续`, {
-              durationMs: 8_000,
-            });
-          }
-        })
-        .catch((error) => {
-          if (!controller.signal.aborted) {
-            console.warn("后台续接新笔记自动整理失败。", error);
-          }
-        });
-    }, { delayMs: 1_200, timeoutMs: 3_000 });
-    return () => {
-      cancel();
-      controller.abort();
-    };
-  }, [enqueueKnowledgeOrganization, knowledgeRepository, notify]);
+    setKnowledgeOrganizationRevision((current) => current + 1);
+    notify(
+      `${sourceItemIds.length} 条新笔记已进入待 AI 分类；请在“主题管理”生成全库分类修订`,
+      { durationMs: 10_000 },
+    );
+  }, [notify]);
 
   const refreshStorageStats = useCallback((): Promise<StorageStats> => {
     if (storageRefreshPromise.current) return storageRefreshPromise.current;
@@ -3898,6 +3896,7 @@ export function App() {
     const request = repository.getStorageStats()
       .then((stats) => {
         setStorageStats(stats);
+        persistStorageStats(stats);
         return stats;
       })
       .finally(() => {
@@ -3908,22 +3907,6 @@ export function App() {
     return request;
   }, [repository]);
 
-  useEffect(() => {
-    const refreshWhenActive = () => {
-      if (document.visibilityState === "visible") {
-        void refreshStorageStats().catch(() => {
-          // 自动同步失败时保留上一次统计；用户仍可点击刷新获得明确反馈。
-        });
-      }
-    };
-    window.addEventListener("focus", refreshWhenActive);
-    document.addEventListener("visibilitychange", refreshWhenActive);
-    return () => {
-      window.removeEventListener("focus", refreshWhenActive);
-      document.removeEventListener("visibilitychange", refreshWhenActive);
-    };
-  }, [refreshStorageStats]);
-
   const replaceRecord = useCallback((record: IntelligenceRecord) => {
     const summary = summaryFromRecord(record);
     setSelectedRecord((current) => current?.id === record.id ? record : current);
@@ -3933,14 +3916,12 @@ export function App() {
   }, []);
 
   const reloadCollections = useCallback(async (preferredId?: number) => {
-    const [active, deleted, currentStorageStats] = await Promise.all([
+    const [active, deleted] = await Promise.all([
       repository.listRecordSummaries(),
       repository.listRecordSummaries({ deletedOnly: true }),
-      refreshStorageStats(),
     ]);
     setAllRecords(active);
     setTrashRecords(deleted);
-    setStorageStats(currentStorageStats);
     const query = recordSearch.trim();
     const searched = query
       ? await repository.listRecordSummaries({ search: query })
@@ -3951,7 +3932,7 @@ export function App() {
       const nextId = preferredId ?? current;
       return active.some((record) => record.id === nextId) ? nextId! : active[0]?.id ?? null;
     });
-  }, [recordSearch, refreshStorageStats, repository]);
+  }, [recordSearch, repository]);
 
   useEffect(() => {
     void reloadCollections()
@@ -4031,6 +4012,7 @@ export function App() {
         if (window.confirm("确认将当前记录移入回收站吗？")) {
           void repository.moveToTrash(selectedId)
             .then(() => reloadCollections())
+            .then(() => setKnowledgeOrganizationRevision((current) => current + 1))
             .then(() => notify("记录已移入回收站"))
             .catch((error) => notify(error instanceof Error ? error.message : "移入回收站失败"));
         }
@@ -4118,6 +4100,7 @@ export function App() {
     try {
       await repository.moveToTrash(recordId);
       await reloadCollections();
+      setKnowledgeOrganizationRevision((current) => current + 1);
       notify("记录已移入回收站，可随时恢复");
       return true;
     } catch (error) {
@@ -4149,9 +4132,9 @@ export function App() {
           : await repository.exportRecord(selectedRecord.id, format);
         notify(`当前记录已导出：${result.filePath}`, {
           durationMs: 7_500,
-          actionLabel: "打开原路径",
-          onAction: () => repository.openExportDirectory()
-            .catch((error) => notify(error instanceof Error ? error.message : "无法打开导出目录")),
+          actionLabel: "定位导出文件",
+          onAction: () => repository.revealExportedFile(result.filePath)
+            .catch((error) => notify(error instanceof Error ? error.message : "无法定位导出文件")),
         });
       } catch (error) {
         notify(error instanceof Error ? error.message : "导出失败");
@@ -4207,7 +4190,17 @@ export function App() {
     }
   }, [handleNavigateToKnowledgeTopic, knowledgeSourceReturnTarget]);
   const handleOpenAttachment = useCallback((attachment: AttachmentItem) => {
+    previewReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setPreviewAttachment(attachment);
+  }, []);
+
+  const handleCloseAttachmentPreview = useCallback(() => {
+    const returnTarget = previewReturnFocusRef.current;
+    previewReturnFocusRef.current = null;
+    setPreviewAttachment(null);
+    window.requestAnimationFrame(() => returnTarget?.focus());
   }, []);
 
   const handleOpenOriginalAttachment = useCallback((attachment: AttachmentItem) => {
@@ -4248,6 +4241,11 @@ export function App() {
     record: IntelligenceRecord,
     primaryTopicName: string | null,
   ) => {
+    // 回收站记录绝不能因来源侧车复用而重新写回活动笔记列表。
+    if (record.isDeleted) {
+      detailCache.current.delete(record.id);
+      return;
+    }
     const summary = {
       ...summaryFromRecord(record),
       primaryTopicName,
@@ -4265,6 +4263,8 @@ export function App() {
     <div
       className={`app-shell ${coreWorkspaceActive ? "core-workspace-active" : ""}`}
       data-skin={skinId}
+      data-skin-material={activeSkin.material}
+      data-color-mode={colorMode}
       style={skinStyle}
     >
       <Sidebar
@@ -4291,7 +4291,7 @@ export function App() {
         data-note-context-menu={showRecords || page === "sources" ? "true" : undefined}
       >
         {showRecords ? (
-          loading ? <div className="page-loading"><span className="save-spinner" />正在读取本地记录…</div> : (
+          loading ? <div className="page-loading"><span className="save-spinner" />{LOADING_LABEL}</div> : (
             <RecordsWorkspace
               repository={repository}
               records={visibleRecords}
@@ -4330,7 +4330,7 @@ export function App() {
                       await repository.addAttachment(selectedId, path);
                     }
                     setAttachments(await repository.listAttachments(selectedId));
-                    setStorageStats(await repository.getStorageStats());
+                    await refreshStorageStats();
                     notify(`${paths.length} 个附件已复制到受控目录；同名会话图片会自动显示`);
                   } finally {
                     setAttachmentBusy(false);
@@ -4346,7 +4346,7 @@ export function App() {
                 void repository.removeAttachment(attachmentId)
                   .then(async () => {
                     if (selectedId !== null) setAttachments(await repository.listAttachments(selectedId));
-                    setStorageStats(await repository.getStorageStats());
+                    await refreshStorageStats();
                     notify("附件已从受控目录删除");
                   })
                   .catch((error) => notify(error instanceof Error ? error.message : "删除附件失败"));
@@ -4361,6 +4361,7 @@ export function App() {
             repository={repository}
             onImported={async (recordId) => {
               await reloadCollections(recordId);
+              await refreshStorageStats();
             }}
             onOrganizeImportedSources={organizeImportedKnowledge}
             onNotify={notify}
@@ -4373,7 +4374,7 @@ export function App() {
           />
         ) : null}
         {page === "sources" || page === "topics" || page === "knowledge" ? (
-          <Suspense fallback={<div className="page-loading"><span className="save-spinner" />正在加载知识工作台…</div>}>
+          <Suspense fallback={<div className="page-loading"><span className="save-spinner" />{LOADING_LABEL}</div>}>
             <LazyKnowledgeWorkspace
               repository={knowledgeRepository}
               mode={page}
@@ -4393,6 +4394,7 @@ export function App() {
               onMoveRecordToTrash={moveToTrash}
               onExportRecord={openShare}
               onOpenAttachment={handleOpenAttachment}
+              attachmentPreviewOpen={previewAttachment !== null}
               onRevealAttachment={handleRevealAttachment}
               onSourceTitleUpdated={handleSourceTitleUpdated}
               onSourceActionRecordCreated={handleSourceActionRecordCreated}
@@ -4413,11 +4415,13 @@ export function App() {
             onRestore={async (id) => {
               await repository.restoreRecord(id);
               await reloadCollections(id);
+              setKnowledgeOrganizationRevision((current) => current + 1);
               notify("记录已恢复");
             }}
             onPermanentDelete={async (id) => {
               await repository.permanentlyDeleteRecord(id);
               await reloadCollections();
+              setKnowledgeOrganizationRevision((current) => current + 1);
               notify("记录及其历史版本已永久删除");
             }}
             onPermanentDeleteAll={async () => {
@@ -4426,6 +4430,7 @@ export function App() {
                 await repository.permanentlyDeleteRecord(id);
               }
               await reloadCollections();
+              setKnowledgeOrganizationRevision((current) => current + 1);
               notify(`回收站已清空，共永久删除 ${ids.length} 条记录`);
             }}
           />
@@ -4434,6 +4439,11 @@ export function App() {
           <SettingsPage
             repository={repository}
             skinId={skinId}
+            colorMode={colorMode}
+            onColorModeChange={(nextColorMode) => {
+              persistKnowledgeColorMode(nextColorMode);
+              setColorMode(nextColorMode);
+            }}
             onSkinChange={(nextSkinId) => {
               persistKnowledgeSkin(nextSkinId);
               setSkinId(nextSkinId);
@@ -4447,6 +4457,7 @@ export function App() {
             onDataRestored={async () => {
               setRecordSearch("");
               await reloadCollections();
+              await refreshStorageStats();
             }}
             onNotify={notify}
             storageStats={storageStats}
@@ -4556,7 +4567,7 @@ export function App() {
       {previewAttachment ? (
         <AttachmentPreview
           attachment={previewAttachment}
-          onClose={() => setPreviewAttachment(null)}
+          onClose={handleCloseAttachmentPreview}
           onOpenOriginal={handleOpenOriginalAttachment}
           onRevealAttachment={handleRevealAttachment}
         />

@@ -15,7 +15,7 @@
 - `src-tauri/src/knowledge/legacy_preview.rs` 继续只负责只读 dry-run；生产写入统一由 `src-tauri/src/knowledge/repository.rs` 和 `database::apply_migrations` 负责。
 - 桌面技术栈为 Tauri 2 + React/TypeScript + Rust + SQLite；用户入口统一称为`主题洞察 / 全部笔记 / 主题管理`。`sources / knowledge / Record`等旧称只允许作为代码兼容标识，经 `src/services/recordRepository.ts` 与 `src/services/knowledgeRepository.ts` 接入；不得反向恢复为用户可见名称。
 - 允许修改：`src/`、`src-tauri/`、项目文档、测试、构建与安装配置。
-- 不引入云同步、遥测或未经确认的外部联网。模型 API 的唯一已授权范围是`OpenRouter + DeepSeek 直连`，只服务主题洞察和主题管理建议；OpenAI 与 Claude 不做直连，统一通过 OpenRouter。导入先归档原文件再解析，恢复前必须先保护当前数据库。
+- 不引入云同步、遥测或未经确认的外部联网。模型 API 的已授权产品范围是`OpenRouter + DeepSeek 直连 + 千问直连`，只服务主题洞察和主题管理；OpenAI 与 Claude 不做直连，统一通过 OpenRouter。实际请求仍须遵守当前任务授权、冻结路由、成本边界和可审计账本。导入先归档原文件再解析，恢复前必须先保护当前数据库。
 - AI 结果是可重新生成的派生层，不得直接覆盖人工判断、证据或主题身份；合并、删除、改名及覆盖人工确认内容仍需一次明确确认。API Key 只保存到 Windows 凭据库，不写 SQLite、日志或前端返回值。
 - 浏览器仓库只用于视觉与组件契约验证，不代表桌面生产数据真相。
 - 现有 `Record` 聚合保留为全部笔记的兼容层，不扩充为全部知识概念；新建和导入后由数据库唯一入口同步生成独立 `Source Item`。

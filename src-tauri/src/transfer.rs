@@ -935,7 +935,9 @@ pub fn reveal_exported_file(paths: &AppPaths, file_path: &str) -> AppResult<()> 
     let export_root = paths.exports.canonicalize()?;
     let selected = Path::new(file_path).canonicalize()?;
     if !selected.is_file() || !selected.starts_with(&export_root) {
-        return Err(AppError::Validation("只能定位南枫知识库刚导出的文件".to_string()));
+        return Err(AppError::Validation(
+            "只能定位南枫知识库刚导出的文件".to_string(),
+        ));
     }
     crate::external_open::reveal_path(&selected)
 }
@@ -1474,5 +1476,17 @@ mod tests {
             markdown
         );
         assert!(write_markdown_export(&paths, "empty.md", "   ").is_err());
+    }
+
+    #[test]
+    fn reveal_exported_file_rejects_paths_outside_the_controlled_export_directory() {
+        let directory = tempdir().expect("tempdir");
+        let paths = AppPaths::from_root(directory.path().join("app")).expect("paths");
+        let outside = directory.path().join("outside.mp4");
+        fs::write(&outside, b"not a real video").expect("write outside fixture");
+
+        let error = reveal_exported_file(&paths, outside.to_string_lossy().as_ref())
+            .expect_err("outside file must not be revealed");
+        assert!(error.to_string().contains("只能定位南枫知识库刚导出的文件"));
     }
 }

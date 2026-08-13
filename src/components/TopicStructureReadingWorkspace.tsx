@@ -1,16 +1,18 @@
 import {
   ArrowRight,
   CircleAlert,
+  FileText,
   FolderTree,
   Network,
   Plus,
   Search,
+  ShieldCheck,
   Sparkles,
-  Tag,
-  Target,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import {
   useDeferredValue,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -26,32 +28,53 @@ import {
   collectTopicStructuralAttentionIds,
   topicHierarchyHasUsefulContent,
 } from "../knowledge/topicStructurePolicy";
+import {
+  findAppliedAiTaxonomyTopic,
+  getAiTaxonomyIntegrationCoverage,
+  type AppliedAiTaxonomyHierarchy,
+} from "../aiTaxonomyPresentation";
 import { KnowledgeTopicHierarchy } from "./KnowledgeTopicHierarchy";
+import MarkdownContent from "./MarkdownContent";
 import type {
-  KnowledgeClassificationRuleRow,
-  KnowledgeDomainRow,
   KnowledgeTopicAliasRow,
   KnowledgeTopicDetail,
-  KnowledgeTopicRow,
   TopicRelationSuggestion,
 } from "../services/knowledgeRepository";
+import type {
+  AiTaxonomyResume,
+  AiTaxonomyRevision,
+} from "../services/aiRepository";
 
 export type TopicMaintenanceTask =
   | "overview"
   | "new-topic"
   | "boundary"
   | "aliases"
-  | "rules"
   | "relations";
 
+export type AiTaxonomyRunResult = {
+  status: "success" | "failed";
+  message: string;
+};
+
 type TopicStructureReadingWorkspaceProps = {
-  domains: KnowledgeDomainRow[];
-  topics: KnowledgeTopicRow[];
+  taxonomyHierarchy: AppliedAiTaxonomyHierarchy;
   topicDetail: KnowledgeTopicDetail | null;
   selectedTopicId: number | null;
   aliases: KnowledgeTopicAliasRow[];
-  rules: KnowledgeClassificationRuleRow[];
   relationSuggestions: TopicRelationSuggestion[];
+  aiRevision: AiTaxonomyRevision | null;
+  appliedAiRevision: AiTaxonomyRevision | null;
+  aiResume: AiTaxonomyResume | null;
+  aiContinuing: boolean;
+  aiRunning: boolean;
+  aiResult: AiTaxonomyRunResult | null;
+  onGenerateAiRevision: () => void;
+  onGenerateIncrementalAiRevision: () => void;
+  onContinueAiRevision: (taskPublicId: string) => void;
+  onDiscardAndGenerateAiRevision: () => void;
+  onCloseAiResult: () => void;
+  onApplyAiRevision: () => void;
   onSelectTopic: (topicId: number) => void;
   onOpenMaintenance: (task: TopicMaintenanceTask, topicId?: number) => void;
   onApplyRelation: (suggestion: TopicRelationSuggestion) => Promise<void>;
@@ -60,13 +83,23 @@ type TopicStructureReadingWorkspaceProps = {
 };
 
 export function TopicStructureReadingWorkspace({
-  domains,
-  topics,
+  taxonomyHierarchy,
   topicDetail,
   selectedTopicId,
   aliases,
-  rules,
   relationSuggestions,
+  aiRevision,
+  appliedAiRevision,
+  aiResume,
+  aiContinuing,
+  aiRunning,
+  aiResult,
+  onGenerateAiRevision,
+  onGenerateIncrementalAiRevision,
+  onContinueAiRevision,
+  onDiscardAndGenerateAiRevision,
+  onCloseAiResult,
+  onApplyAiRevision,
   onSelectTopic,
   onOpenMaintenance,
   onApplyRelation,
@@ -75,6 +108,7 @@ export function TopicStructureReadingWorkspace({
 }: TopicStructureReadingWorkspaceProps) {
   const [search, setSearch] = useState("");
   const [topicFilter, setTopicFilter] = useState<"all" | "needs-attention">("all");
+  const [resumePromptOpen, setResumePromptOpen] = useState(false);
   const [connector, setConnector] = useState<{
     top: number;
     left: number;
@@ -84,6 +118,19 @@ export function TopicStructureReadingWorkspace({
   const activeTopicRef = useRef<HTMLButtonElement>(null);
   const readerRef = useRef<HTMLElement>(null);
   const deferredSearch = useDeferredValue(search);
+  const { domains, topics, hasAppliedRevision: hasAppliedAiClassification } = taxonomyHierarchy;
+  const aiIntegrationCoverage = useMemo(
+    () => getAiTaxonomyIntegrationCoverage(aiRevision),
+    [aiRevision],
+  );
+  const aiRevisionHasCompleteIntegrations = aiIntegrationCoverage.assignedTopicCount > 0
+    && aiIntegrationCoverage.incompleteTopicKeys.length === 0;
+  // 全库分类始终按设置页保存的通道和模型继续；断点本身已保存实际模型，不能由页面临时选择改写。
+  const selectedResume = Boolean(aiResume);
+
+  useEffect(() => {
+    if (aiResume && !aiRunning && !aiResult) setResumePromptOpen(true);
+  }, [aiResult, aiResume, aiRunning]);
 
   const attentionTopicIds = useMemo(
     () => collectTopicStructuralAttentionIds(topics, aliases, relationSuggestions),
@@ -91,9 +138,10 @@ export function TopicStructureReadingWorkspace({
   );
 
   const visibleTopics = useMemo(() => {
+    if (!hasAppliedAiClassification) return [];
     const query = deferredSearch.trim().toLocaleLowerCase("zh-CN");
     return topics.filter((topic) => {
-      if (topic.status === "merged") return false;
+      if (topic.status === "merged" || topic.status === "archived") return false;
       if (query && !`${topic.name} ${topic.description}`.toLocaleLowerCase("zh-CN").includes(query)) {
         return false;
       }
@@ -102,7 +150,7 @@ export function TopicStructureReadingWorkspace({
       }
       return true;
     });
-  }, [attentionTopicIds, deferredSearch, topicFilter, topics]);
+  }, [attentionTopicIds, deferredSearch, hasAppliedAiClassification, topicFilter, topics]);
 
   const updateConnector = () => {
     const shell = shellRef.current;
@@ -132,15 +180,20 @@ export function TopicStructureReadingWorkspace({
     return () => observer.disconnect();
   }, [deferredSearch, scheduleConnectorUpdate, selectedTopicId, topics]);
 
-  const topic = topicDetail?.topic ?? topics.find((item) => item.id === selectedTopicId) ?? null;
-  const selectedTopicDomainId = topics.find((item) => item.id === selectedTopicId)?.domainId ?? null;
+  const topic = hasAppliedAiClassification
+    ? topicDetail?.topic && taxonomyHierarchy.topicIds.has(topicDetail.topic.id)
+      ? topicDetail.topic
+      : topics.find((item) => item.id === selectedTopicId) ?? null
+    : null;
+  const selectedTopicDomainId = hasAppliedAiClassification
+    ? topics.find((item) => item.id === selectedTopicId)?.domainId ?? null
+    : null;
   const domain = topic ? domains.find((item) => item.id === topic.domainId) ?? null : null;
   const parent = topic?.parentTopicId
     ? topics.find((item) => item.id === topic.parentTopicId) ?? null
     : null;
   const children = topic ? topics.filter((item) => item.parentTopicId === topic.id) : [];
   const topicAliases = topic ? aliases.filter((item) => item.topicId === topic.id) : [];
-  const topicRules = topic ? rules.filter((item) => item.targetTopicId === topic.id && item.enabled) : [];
   const topicSuggestions = topic
     ? relationSuggestions.filter((item) => item.fromTopicId === topic.id || item.toTopicId === topic.id)
     : [];
@@ -156,7 +209,7 @@ export function TopicStructureReadingWorkspace({
           key: "boundary",
           task: "boundary" as const,
           title: "补充主题边界",
-          copy: "缺少明确的包含范围，自动归类难以稳定解释。",
+          copy: "缺少明确的包含范围，AI 分类难以稳定解释。",
         }
       : null,
     !topicAliases.length
@@ -173,10 +226,26 @@ export function TopicStructureReadingWorkspace({
     title: string;
     copy: string;
   }>) : [];
-  const negativeRules = topicRules.filter((item) =>
-    item.ruleType === "negative_keyword" || item.ruleType === "stopword");
-  const positiveRules = topicRules.filter((item) =>
-    item.ruleType !== "negative_keyword" && item.ruleType !== "stopword");
+  const assignmentBySourceId = useMemo(
+    () => new Map(appliedAiRevision?.assignments.map((item) => [item.sourceItemId, item]) ?? []),
+    [appliedAiRevision],
+  );
+  const appliedRevisionTopic = useMemo(
+    () => findAppliedAiTaxonomyTopic(
+      appliedAiRevision,
+      topic?.name ?? "",
+      (topicDetail?.sources ?? []).map((source) => source.id),
+    ),
+    [appliedAiRevision, topic?.name, topicDetail?.sources],
+  );
+  const integrationSources = useMemo(() => {
+    const sourceIds = new Set(appliedRevisionTopic?.sourceItemIds ?? []);
+    return (topicDetail?.sources ?? []).filter((source) => sourceIds.has(source.id));
+  }, [appliedRevisionTopic?.sourceItemIds, topicDetail?.sources]);
+  const activeTopicCount = hasAppliedAiClassification
+    ? topics.filter((item) => item.status !== "merged" && item.status !== "archived").length
+    : 0;
+  const attentionCount = hasAppliedAiClassification ? attentionTopicIds.size : 0;
 
   const shellStyle = connector === null
     ? undefined
@@ -187,8 +256,8 @@ export function TopicStructureReadingWorkspace({
       } as CSSProperties);
 
   return (
-    <section className="topic-final-shell" ref={shellRef} style={shellStyle}>
-      <aside className="topic-final-browser" aria-label="领域与主题管理">
+    <section className="topic-final-shell core-workspace-grid" ref={shellRef} style={shellStyle}>
+      <aside className="topic-final-browser knowledge-card core-workspace-card-two" aria-label="领域与主题管理">
         <div className="topic-final-toolbar">
           <label className="topic-final-search">
             <Search size={16} />
@@ -200,36 +269,119 @@ export function TopicStructureReadingWorkspace({
             />
           </label>
           <div className="topic-final-filter-row">
-            <button
-              className={topicFilter === "all" ? "active" : ""}
-              onClick={() => setTopicFilter("all")}
-            >
-              全部 {topics.filter((item) => item.status !== "merged").length}
-            </button>
-            <button
-              className={topicFilter === "needs-attention" ? "active" : ""}
-              onClick={() => setTopicFilter("needs-attention")}
-            >
-              待处理 {attentionTopicIds.size}
-            </button>
-            <button
-              className="topic-final-new"
-              onClick={() => onOpenMaintenance("new-topic", selectedTopicId ?? undefined)}
-            >
-              <Plus size={14} />新建主题
-            </button>
+            <div className="topic-final-filter-controls">
+              <button
+                className={topicFilter === "all" ? "active" : ""}
+                onClick={() => setTopicFilter("all")}
+              >
+                全部 {activeTopicCount}
+              </button>
+              <button
+                className={topicFilter === "needs-attention" ? "active" : ""}
+                onClick={() => setTopicFilter("needs-attention")}
+              >
+                待处理 {attentionCount}
+              </button>
+            </div>
+            <div className="topic-final-ai-actions">
+              <button
+                className="topic-final-new"
+                disabled={aiRunning}
+                onClick={() => selectedResume ? setResumePromptOpen(true) : onGenerateAiRevision()}
+              >
+                <Sparkles size={14} />{aiRunning ? "AI 生成中…" : selectedResume ? "继续上次生成" : "AI 全量重新整理"}
+              </button>
+              <button
+                className="topic-final-new topic-final-incremental"
+                disabled={aiRunning || !aiRevision}
+                title={aiRevision
+                  ? "只处理当前模型新增或正文已变化的笔记，沿用既有领域、主题及未受影响的整合内容。"
+                  : "当前模型需要先完成一次全量生成，才能增量补充新笔记。"}
+                onClick={onGenerateIncrementalAiRevision}
+              >
+                <Plus size={14} />AI 补充新增笔记
+              </button>
+              {aiRevision?.status === "draft" ? (
+              <button
+                className="topic-final-new"
+                disabled={aiRunning || !aiRevisionHasCompleteIntegrations}
+                title={aiRevisionHasCompleteIntegrations
+                  ? "应用领域、主题、笔记归属和主题整合"
+                  : "主题整合或自动关联来源不完整，不能应用"}
+                onClick={onApplyAiRevision}
+              >
+                应用修订
+              </button>
+              ) : null}
+            </div>
           </div>
+          {aiRevision ? (
+            <small>
+              AI 修订：{aiRevision.domains.length} 个领域 · {aiRevision.topics.length} 个主题 ·
+              {aiRevision.assignedSourceCount}/{aiRevision.sourceCount} 条笔记
+              {` · 主题整合 ${aiIntegrationCoverage.completeTopicCount}/${aiIntegrationCoverage.assignedTopicCount}`}
+              {aiRevision.uncertainSourceCount ? ` · ${aiRevision.uncertainSourceCount} 条待核对` : ""}
+              · {aiRevision.status === "draft" ? "待应用" : aiRevision.status === "applied" ? "已应用" : "历史版本"}
+            </small>
+          ) : <small>当前模型尚未生成分类；请先全量生成，之后可只补充新增笔记。</small>}
+          {aiRevision && appliedAiRevision?.publicId !== aiRevision.publicId ? (
+            <small>当前查看的是模型对比草稿，不会改变正式分类；点击“应用修订”后才会切换正式分类。</small>
+          ) : null}
+          {aiRevision?.status === "draft" && !aiRevisionHasCompleteIntegrations ? (
+            <small>当前草稿缺少 AI 主题整合或自动关联笔记来源，请重新生成后再应用。</small>
+          ) : null}
         </div>
-        <KnowledgeTopicHierarchy
-          domains={domains}
-          topics={visibleTopics}
-          selectedTopicId={selectedTopicId}
-          selectedTopicDomainId={selectedTopicDomainId}
-          searchActive={Boolean(deferredSearch.trim())}
-          activeTopicRef={activeTopicRef}
-          onSelectTopic={onSelectTopic}
-          onScroll={scheduleConnectorUpdate}
-        />
+        {aiRevision?.status === "draft" ? (
+          <div className="knowledge-final-tree-card knowledge-card" data-hover-wheel-panel="">
+            <div className="knowledge-final-tree" data-hover-wheel-scroll="">
+              {aiRevision.domains.map((draftDomain) => {
+                const query = deferredSearch.trim().toLocaleLowerCase("zh-CN");
+                const draftTopics = aiRevision.topics.filter((draftTopic) => (
+                  draftTopic.domainKey === draftDomain.key
+                  && (!query || `${draftDomain.name} ${draftTopic.name} ${draftTopic.description}`
+                    .toLocaleLowerCase("zh-CN").includes(query))
+                ));
+                if (!draftTopics.length && query) return null;
+                return (
+                  <section className="knowledge-final-domain" key={draftDomain.key}>
+                    <header>
+                      <strong>{draftDomain.name}</strong>
+                      <span>{draftTopics.length}</span>
+                    </header>
+                    {draftTopics.map((draftTopic) => (
+                      <button
+                        type="button"
+                        key={draftTopic.key}
+                        aria-label={`${draftTopic.name}，AI 分类草稿`}
+                        disabled
+                      >
+                        <Sparkles size={15} />
+                        <span>
+                          <strong>{draftTopic.name}</strong>
+                          <small>{draftTopic.description || "AI 主题边界待应用"}</small>
+                        </span>
+                        <em>{aiRevision.assignments.filter((item) => item.topicKey === draftTopic.key).length}</em>
+                      </button>
+                    ))}
+                  </section>
+                );
+              })}
+              {!aiRevision.topics.length ? <p className="knowledge-final-empty">AI 草稿没有生成主题。</p> : null}
+            </div>
+          </div>
+        ) : (
+          <KnowledgeTopicHierarchy
+            domains={domains}
+            topics={visibleTopics}
+            selectedTopicId={selectedTopicId}
+            selectedTopicDomainId={selectedTopicDomainId}
+            searchActive={Boolean(deferredSearch.trim())}
+            activeTopicRef={activeTopicRef}
+            onSelectTopic={onSelectTopic}
+            onScroll={scheduleConnectorUpdate}
+            emptyMessage={hasAppliedAiClassification ? "没有匹配的正式主题。" : "待 AI 生成全库分类"}
+          />
+        )}
       </aside>
 
       {connector && connector.width > 0 ? (
@@ -237,7 +389,7 @@ export function TopicStructureReadingWorkspace({
       ) : null}
 
       <article
-        className="topic-final-reader knowledge-card association-link-target"
+        className="topic-final-reader knowledge-card association-link-target core-workspace-card-three"
         ref={readerRef}
         data-hover-wheel-panel=""
       >
@@ -247,7 +399,7 @@ export function TopicStructureReadingWorkspace({
               <div>
                 <span>{domain?.name ?? "知识领域"}{parent ? ` / ${parent.name}` : ""}</span>
                 <h1>{topic.name}<em>{topic.status === "active" ? "已启用" : topic.status}</em></h1>
-                <p>{topic.description || "尚未记录主题范围和判断边界。"}</p>
+                <p>{appliedRevisionTopic?.description || "待 AI 生成主题边界"}</p>
               </div>
             </header>
 
@@ -258,35 +410,53 @@ export function TopicStructureReadingWorkspace({
                     className="topic-final-section topic-boundary"
                     data-card-interaction="surface-lift"
                   >
-                    <h2>主题边界</h2>
-                    <div className={negativeRules.length ? "has-system-exclusions" : undefined}>
-                      <article>
-                        <strong>包含范围</strong>
-                        <p>{topic.description || "尚未记录明确的包含范围。"}</p>
-                        {positiveRules.length ? (
-                          <ul>{positiveRules.slice(0, 5).map((item) => <li key={item.id}>{item.pattern}</li>)}</ul>
-                        ) : null}
-                        <small>当前有 {topic.sourceCount} 条来源进入这个主题。</small>
-                      </article>
-                      {negativeRules.length ? (
-                        <article className="exclude">
-                          <strong>自动排除</strong>
-                          <ul>{negativeRules.slice(0, 5).map((item) => <li key={item.id}>{item.pattern}</li>)}</ul>
-                          <small>
-                            系统用于避免相似关键词误归类，不会删除来源
-                            {negativeRules.length > 5 ? ` · 另有 ${negativeRules.length - 5} 项` : ""}
-                          </small>
-                        </article>
-                      ) : null}
-                    </div>
+                    <h2>AI 主题边界</h2>
+                    <article>
+                      <strong>包含范围</strong>
+                      <p>{appliedRevisionTopic?.description || "待 AI 生成主题边界"}</p>
+                      <small>AI 已归纳 {integrationSources.length} 条笔记。</small>
+                    </article>
+                  </section>
+
+                  <section className="topic-final-section topic-final-integration" data-card-interaction="surface-lift">
+                    <h2>AI 主题整合</h2>
+                    {appliedRevisionTopic?.integrationMarkdown.trim() ? (
+                      <>
+                        <MarkdownContent
+                          value={appliedRevisionTopic.integrationMarkdown}
+                          className="right-reading-copy right-reading-copy-11"
+                        />
+                        <div className="topic-final-integration-sources">
+                          <strong><FileText size={14} />自动关联笔记来源 {integrationSources.length} 条</strong>
+                          <div>
+                            {integrationSources.map((source) => <span key={source.id}>{source.title}</span>)}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="topic-final-empty">待主题管理 AI 生成全库分类并应用</p>
+                    )}
                   </section>
 
                   <section className="topic-final-section" data-card-interaction="surface-lift">
-                    <h2>自动归类依据</h2>
+                    <h2>归纳笔记</h2>
                     <div className="topic-final-basis">
-                      <p><Sparkles size={15} /><strong>归类信号</strong>{positiveRules.length ? positiveRules.slice(0, 5).map((item) => item.pattern).join("、") : "由主题边界、别名与正文证据自动判断"}</p>
-                      <p><Tag size={15} /><strong>别名命中</strong>{topicAliases.length ? topicAliases.map((item) => item.alias).join("、") : "暂无别名"}</p>
-                      <p><Target size={15} /><strong>正式对象</strong>{topicDetail ? `${topicDetail.propositions.length} 条命题、${topicDetail.evidence.length} 条证据、${topicDetail.sources.length} 条来源` : "正在读取主题详情"}</p>
+                      {integrationSources.map((source) => {
+                        const assignment = assignmentBySourceId.get(source.id);
+                        return (
+                          <article key={source.id}>
+                            <strong>{source.title}</strong>
+                            {assignment?.reason ? <p>{assignment.reason}</p> : null}
+                            {assignment ? (
+                              <small>
+                                AI 置信度 {Math.round(assignment.confidence)}%
+                                {assignment.uncertain ? " · 待核对" : ""}
+                              </small>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                      {!integrationSources.length ? <p>待 AI 生成归纳笔记</p> : null}
                     </div>
                   </section>
 
@@ -307,20 +477,9 @@ export function TopicStructureReadingWorkspace({
                     </section>
                   ) : null}
 
-                  <section className="topic-final-section" data-card-interaction="surface-lift">
-                    <h2>别名与术语</h2>
-                    <div className="topic-final-aliases">
-                      {topicAliases.map((item) => <span key={item.id}>{item.alias}</span>)}
-                      {!topicAliases.length ? <small>当前主题还没有正式别名。</small> : null}
-                      <button type="button" onClick={() => onOpenMaintenance("aliases", topic.id)}>
-                        <Plus size={13} />添加别名
-                      </button>
-                    </div>
-                  </section>
-
                   <div className="topic-final-auto-note">
                     <CircleAlert size={16} />
-                    最高候选超过 65% 时由本地规则自动进入现有主题；其余候选和冲突结果保留人工复核。
+                    领域、主题和归属由 AI 生成；低置信度项目标为待核对。原始笔记不会被改写，应用修订后仍可撤销。
                   </div>
                 </main>
 
@@ -384,11 +543,115 @@ export function TopicStructureReadingWorkspace({
         ) : (
           <div className="topic-final-no-selection">
             <FolderTree size={30} />
-            <h1>选择一个主题查看结构</h1>
-            <p>这里只读取正式领域、主题、规则和关系建议。</p>
+            <small>{aiRevision?.status === "draft" ? "AI 分类草稿已生成；应用修订后显示正式内容" : "待 AI 生成全库分类"}</small>
           </div>
         )}
       </article>
+      {aiRunning && !aiResult ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-taxonomy-progress-backdrop">
+          <section
+            aria-labelledby="ai-taxonomy-progress-title"
+            aria-modal="true"
+            className="knowledge-overview-dialog ai-taxonomy-progress-dialog"
+            role="dialog"
+          >
+            <header>
+              <span><Sparkles size={18} /></span>
+              <h2 id="ai-taxonomy-progress-title">AI 正在生成全库分类</h2>
+              <span className="save-spinner" aria-hidden="true" />
+            </header>
+            <div className="ai-single-dialog-body" aria-live="polite">
+              <strong>
+                {aiContinuing
+                  ? "正在从已保存断点继续"
+                  : aiResume ? "正在生成并保存当前进度" : "正在理解全部笔记"}
+              </strong>
+              <p>
+                {aiResume
+                  ? `已保留语义档案 ${aiResume.profiledSourceCount}/${aiResume.sourceCount} 条、笔记归属 ${aiResume.assignedSourceCount}/${aiResume.sourceCount} 条、主题整合 ${aiResume.integratedTopicCount}/${aiResume.totalTopicCount} 份；只继续未完成批次。`
+                  : "正在生成领域、主题、全部笔记归属和每个主题的整合内容；完成前不会修改正式分类。"}
+              </p>
+              <div className="ai-taxonomy-progress-track" aria-label="AI 全库分类生成中"><i /></div>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+      {resumePromptOpen && aiResume && !aiRunning && !aiResult ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-taxonomy-resume-backdrop">
+          <section
+            aria-labelledby="ai-taxonomy-resume-title"
+            aria-modal="true"
+            className="knowledge-overview-dialog ai-taxonomy-resume-dialog"
+            role="alertdialog"
+          >
+            <header>
+              <span><CircleAlert size={18} /></span>
+              <h2 id="ai-taxonomy-resume-title">发现未完成的 AI 全库分类</h2>
+            </header>
+            <div className="ai-single-dialog-body">
+              <strong>已完成结果可以继续使用</strong>
+              <p>
+                语义档案 {aiResume.profiledSourceCount}/{aiResume.sourceCount} 条 ·
+                笔记归属 {aiResume.assignedSourceCount}/{aiResume.sourceCount} 条 ·
+                主题整合 {aiResume.integratedTopicCount}/{aiResume.totalTopicCount} 份
+              </p>
+              <small>
+                已记录 {aiResume.totalTokens.toLocaleString("zh-CN")} tokens
+                {aiResume.costUsd !== null ? ` · $${aiResume.costUsd.toFixed(4)}` : ""}
+                {aiResume.lastError ? ` · 上次中断：${aiResume.lastError}` : ""}
+              </small>
+            </div>
+            <footer>
+              <button type="button" onClick={() => setResumePromptOpen(false)}>稍后处理</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setResumePromptOpen(false);
+                  onDiscardAndGenerateAiRevision();
+                }}
+              >
+                放弃上次并重新生成
+              </button>
+              <button
+                className="primary"
+                type="button"
+                onClick={() => {
+                  setResumePromptOpen(false);
+                  onContinueAiRevision(aiResume.taskPublicId);
+                }}
+              >
+                继续上次生成
+              </button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+      {aiResult ? createPortal(
+        <div className="knowledge-overview-dialog-backdrop ai-taxonomy-result-backdrop">
+          <section
+            aria-labelledby="ai-taxonomy-result-title"
+            aria-modal="true"
+            className={`knowledge-overview-dialog ai-taxonomy-result-dialog ${aiResult.status}`}
+            role="alertdialog"
+          >
+            <header>
+              <span>{aiResult.status === "success" ? <ShieldCheck size={18} /> : <CircleAlert size={18} />}</span>
+              <h2 id="ai-taxonomy-result-title">
+                {aiResult.status === "success" ? "AI 全库分类已生成" : "AI 全库分类生成失败"}
+              </h2>
+            </header>
+            <div className="ai-single-dialog-body"><p>{aiResult.message}</p></div>
+            <footer>
+              <button className="primary" type="button" onClick={onCloseAiResult}>
+                {aiResult.status === "success" ? "查看分类草稿" : "我知道了"}
+              </button>
+            </footer>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
     </section>
   );
 }

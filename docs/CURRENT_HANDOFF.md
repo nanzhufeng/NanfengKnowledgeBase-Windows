@@ -1,6 +1,82 @@
 # 南枫知识库当前交接
 
-更新时间：2026-08-10
+## Prompt Cache 后端合同与成本证据（2026-08-13）
+
+- 风险收口已完成：migration v15新增`nfkb-ai-execution-v1`，任务、断点、主题洞察、来源档案与分类修订按执行契约隔离；旧结果为`legacy`只读历史，不参与当前续跑、增量或复用。启动恢复会把上次遗留`running`转为`interrupted`并保留分类断点，主题洞察后台线程异常也会落为失败任务。
+- 正式v15已执行：迁移前备份`D:\南枫知识库\backups\AI执行契约 migration v15前备份_20260813-151531-161.db`，794,820,608 bytes，SHA-256=`9428e930bfcd7d7298f5c6d0526eace74ee14f8254a8e5643b722f23d6d19a7d`；schema`1–14 → 1–15`，293行历史契约回填，1条旧运行任务安全中断，完整性`ok`、外键0、重开幂等通过。回执为`D:\南枫知识库\logs\formal-ai-execution-contract-migration-v15-20260813-151556-291.json`。
+- 2条真实来源的完整分类链路已通过：任务`ai-task-taxonomy-e2e-acceptance-dceb172e-aa6e-4049-a9d2-6158a5b6221d`依次使用`qwen3.7-flash / qwen3.7-plus / qwen3.7-flash / qwen3.7-plus`完成档案、结构、归属、整合，产生1领域、1主题、2归属、1完整整合和4条阶段账本；只保存用量，不保存输出正文、来源档案或分类修订。回执为`D:\南枫知识库\logs\formal-taxonomy-e2e-acceptance-20260813-151803-389.json`。
+- 正式复核：226任务、12阶段账本、1个当前执行契约验收任务、225个legacy任务、1个已中断历史任务、0个running；895记录、901来源、68主题、0来源档案版本、0分类修订保持不变，WAL 0。千问未返回美元价，设置页现显示“成本/缓存节省不可核算”及未知数量，不再显示伪`$0.0000`。
+- 当前唯一Windows验收程序为v147：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,633,024 bytes，SHA-256=`E5C96CEA77789609139B8BE31BD0E7DBCECB5B10224C248980C6BF935D33D469`。元数据记录137文件源码指纹`FA6771CA625940ACE64002186F59796E6554B5E247DE72A276C43628BBA37FBC`、Git HEAD/分支/dirty；BAT启动前执行完整校验并清空数据目录覆盖变量。Codex没有启动该程序。
+- 自动验证：Rust 135/135（1项真实Shell测试按设计忽略）、前端213/213、TypeScript、examples编译、格式与diff检查、正式迁移前后只读预检和v147`--verify`通过。未执行901来源全库生成或应用修订；规模质量与真实WebView2观感仍须单独验收。
+
+- `src-tauri/src/ai/prompt_cache.rs`成为 Prompt 稳定前缀、缓存键和供应商请求结构的唯一所有者。固定指令、JSON Schema 与可复用 taxonomy 位于动态批次之前；缓存键只保存 SHA-256，不含标题、正文、用户标识或 Key。`assignments`将 taxonomy 拆为稳定块，当前40条画像批次保持动态；主题洞察共享固定 system/Schema。短前缀不为达到门槛填充无业务价值内容。
+- DeepSeek直连继续使用自动 Context Cache；千问官方显式缓存最低为1024 Token，本地估算为避免分词误差仅在达到1536时加入`cache_control: ephemeral`，否则保守使用隐式缓存。千问显式缓存的稳定块必须是独立消息，动态提问位于下一条消息；实测把两者放在同一消息的相邻内容块会反复写缓存而不命中。OpenRouter设置稳定`session_id / prompt_cache_key`，Anthropic长前缀按2048保守阈值使用显式缓存。未启用 OpenRouter 整响应缓存，强制重新生成仍会生成新输出，本地完成结果与断点仍先于 Provider Prompt Cache。
+- migration v14只扩展`ai_task_model_steps`逐阶段账本，记录缓存读、未命中、缓存写、模式、不可逆哈希、Prompt合同版本、请求时长、折扣、成本来源与价格快照；不保存原始Prompt。设置页用量摘要增加缓存读取Token。2026-08-13已按南烛枫明确授权应用到正式`D:\南枫知识库`：schema版本`1–13 → 1–14`，13个字段齐全，记录`895→895`、来源`901→901`、taxonomy修订`0→0`，完整性`ok`、外键0、重开幂等通过。
+- DeepSeek价格不再永久固定为单一常量：请求时按`2026-08-16T16:00:00Z`生效点及UTC峰谷时段生成价格快照；OpenRouter模型目录接入缓存读/写价格字段，实际返回成本仍优先于估算。
+- 隔离真实API已验证：DeepSeek V4 Flash三轮分别为`0 / 7040 / 7040`命中Token，热请求前缀命中率`98.52%`，成功三轮估算成本`$0.001079624`，相对无缓存基线节省`$0.001931776（64.15%）`；千问3.7 Flash修正消息边界后三轮为首轮写入`7107`、后两轮各命中`7107`，热请求前缀命中率`99.54%`。千问响应不返回美元成本，当前本地目录也没有其价格快照，因此只确认Token复用，不伪造金额。两家直连金丝雀均关闭默认思考。
+- OpenRouter经南烛枫继续授权后显式冻结仅供测试的`anthropic/claude-haiku-4.5`，没有读取或改写正式设置。三轮为首轮写入`12532`、后两轮各命中`12532`，热请求前缀命中率`99.79%`；实际成本`$0.015761 + $0.0013492 + $0.0013492 = $0.0184594`，相对同模型无缓存三轮基线`$0.037884`节省`$0.0194246（51.27%）`。耗时`6410 / 1864 / 2556ms`仅作三次样本的方向证据，不作为稳定延迟承诺。未启用OpenRouter整响应缓存。
+- 正式小批真实业务验收已完成：读取2条长度受控的可见来源和当前正式68主题，按正式设置`qwen_direct / qwen3.7-plus`解析并冻结批量模型为`qwen3.7-flash`；两条临时语义档案和两轮归属只把usage写入专用任务`ai-task-prompt-cache-acceptance-89b52257-c6aa-427c-b72f-1e0a9a7de597`，不保存模型正文、档案或归属，不生成/应用taxonomy修订。归属首轮写入`4119`、第二轮命中`4119`，第二轮稳定前缀命中率`98.66%`；两轮稳定前缀哈希、缓存键完全一致，正式逐阶段账本4/4与供应商usage一致。来源、主题和修订计数保持不变，复核后WAL为0。
+- 价值边界：千问没有返回美元成本，本地目录也没有价格快照，因此正式任务只核算Token，不伪造金额。按官方显式缓存写入125%、读取10%的规则，本次两轮归属输入相对无缓存约节省32.11%；单看第二轮热请求输入约节省88.79%。正式任务同时暴露千问Flash默认思考：四轮reasoning分别`1017 / 1377 / 1914 / 2269`，Prompt Cache只降低输入成本，不降低这部分输出推理成本。
+- 千问批量阶段现由`ai/client.rs`唯一应用推理策略：`source_profiles / taxonomy_assignments`使用顶层`enable_thinking:false`，`taxonomy_structure / topic_integrations / topic_insight`保持供应商默认思考；页面、设置和模型路由不取得该策略所有权。请求合同升级为`nfkb-prompt-cache-v2`，推理模式进入缓存键身份，避免不同推理语义共用同一审计键。合成金丝雀中档案与归属均完整返回且reasoning为0。
+- 2026-08-13正式小批思考开/关A/B已完成：同2条正式来源、同68主题、同`qwen3.7-flash`分别运行档案和归属。概念集合、候选主题集合、最终主题归属均`2/2`一致，待核对状态`2/2`一致，置信度平均绝对差为0；两种模式摘要均非空。思考开启共`3905` reasoning、`4177` completion、`36165ms`，关闭后为`0` reasoning、`293` completion、`2816ms`，completion减少`3884（92.99%）`、样本总耗时减少`33349ms（92.21%）`。关闭思考的归属请求同时命中`4119`缓存Token，因此归属耗时差不能全部归因于推理策略；无显式缓存的档案阶段仍从`17275ms`降至`1227ms`。该2条样本支持在高频强Schema阶段默认关闭思考，但不等于全库长期质量结论。
+- 可恢复证据：迁移前SQLite Online Backup为`D:\南枫知识库\backups\Prompt Cache migration v14前备份_20260813-141411-215.db`，794,820,608 bytes，SHA-256=`352ceb480d238a26a8b3c27343024384f7708af0274d614e2b319a7cdd994764`；迁移回执`D:\南枫知识库\logs\formal-prompt-cache-migration-v14-20260813-141436-356.json`，业务验收回执`D:\南枫知识库\logs\formal-prompt-cache-business-acceptance-20260813-141622-472.json`，思考策略A/B回执`D:\南枫知识库\logs\formal-qwen-reasoning-ab-20260813-143854-290.json`。
+- 验证边界：正式Prompt Cache验收与思考策略A/B各新增1条已完成专用任务和4条usage步骤；正式库当前任务`225`、阶段账本`8`。两轮均没有保存模型正文、档案或归属，没有改写原始资料、人工判断、主题、正式分类修订或界面设置；来源`901`、主题`68`、分类修订`0`保持不变，完整性`ok`、外键0、WAL 0。千问仍未返回美元成本，不能把Token下降写成已确认金额；未生成Windows验收程序。第一次DeepSeek探索轮仍有一条未返回用量但可能计费的历史请求，不能把成功金丝雀金额冒充全部历史账单。
+- 自动验证为Rust全量129项通过、1项真实Shell测试忽略，全部examples编译通过，前端此前全量213/213、TypeScript、Vite与Release check通过；缓存金丝雀位于`src-tauri/examples/prompt_cache_canary.rs`，推理策略金丝雀位于`src-tauri/examples/qwen_reasoning_policy_canary.rs`。实施契约：`plans/prompt-cache-implementation-20260813.md`。
+- v146仅保留为推理策略阶段历史证据；现行入口、EXE身份和验证结果以本节顶部v147条目为准，不得再启动或交付v146。
+
+## v145.1 暗色皮肤语义材质合同（2026-08-13）
+
+- 南烛枫以多轮真实截图确认，根因不是零散白卡，而是暗色模式同时有页面私有浅色材质、实体皮肤旧蓝灰常量和 Portal 样式各自抢所有权。现已在`src/styles.css`文件末尾建立唯一暗色语义材质总线：所有组件只消费`panel / raised / input / input-focus / subtle / selected / border / text`角色；五套皮肤分别提供这些角色的色相。暗色不再把全部皮肤压成纯黑，也不会让红棕、金棕皮肤回退为蓝灰。
+- 重点修复：红棕实体皮肤的列表面板、内容面和输入面均由暖陶令牌派生；搜索行恢复为透明布局容器，只有圆角搜索框和筛选按钮承担材质；空状态、搜索历史、组合筛选、来源消息卡、Markdown、附件、Portal 和图标底板统一消费当前皮肤暗色面与亮色文字。亮色分支没有变更。
+- 新增浏览器回归`tests/e2e/dark-material-contract.spec.ts`：三套实体皮肤逐一实算共享列表/搜索控件颜色，锁定雾蓝、墨绿、红棕不可串色；同时构造并验证空状态、搜索历史和消息卡无浅底。静态合同同步禁止`#20343a`旧蓝灰回写到实体皮肤的`classic-nested-surface`。
+- 已验证：定向 Chrome Playwright 4/4、TypeScript、前端单元测试（`npm run test`）和生产 Tauri 构建通过，`git diff --check`通过。已在固定`current-acceptance-build`缓存中原位完成`--prepare / --verify`；唯一当前EXE为`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,610,496 bytes，SHA-256=`F3AD180273FB3B8C70FF3A2F9D62362B6F5F4297324592F796A67384F3C01CD5`。未启动应用、未读取或写入正式SQLite、附件与真实AI；真实WebView2观感待南烛枫验收。
+
+- 基于 v144 的五入口双卡几何新增独立`light / dark`外观偏好；设置页增加唯一`暗色皮肤`开关，五套既有皮肤仍由`knowledgeSkins.ts`统一持有。切换只替换颜色与材质令牌，不改变`主题洞察 / 全部笔记 / 主题管理 / 我的收藏 / 持续跟踪`的导航、栏位、卡片、搜索框、滚动或业务交互。
+- 三套实体工作台在暗色下使用对应的雾蓝、鼠尾草、暖陶深色承托与深色实体前景；花房、奔马继续显示原场景背景和外层玻璃，内部中性阅读卡改为不透明深色实体面。暗色花房主导航、辅助导航、计数、底部容量、刷新及正文文字均已提亮；用户确认的原始问题图归档为`docs/screenshots/skin-previews/dark-mode-navigation-contrast-reference-20260813.png`，SHA-256=`35013E0BB82081F11479E21073AEFE6FDD9A558A2D7818759C9A901F72491A89`。
+- 根级`--dark-skin-*`现在是唯一皮肤派生层：`panel / raised / input / input-focus / subtle / selected / border / accent`分别由雾蓝、鼠尾草、暖陶、花房、奔马定义；`--dark-control-*`、列表、设置、正文消息、侧栏、弹窗、滑块、皮肤缩略预览和选中态只能消费该层，禁止再写花房绿、暖橙或浅色卡的固定值。暗色的主、辅助、三级文字也统一为亮色语义令牌。
+- 追加修复了真实WebView2反馈中遗留的浅色材质：所有Portal二级弹窗及其内层摘要/操作/统计/键帽/输入/选择器、模型选择、回收站动作、待分类空态、来源正文、Markdown引用与代码块现在统一消费深色语义表面和亮色文字；全局输入选区不再使用浏览器默认黑底。设置入口的图标底板改为当前皮肤深输入层，SVG使用同一皮肤强调色。问题参考图已归档为`docs/screenshots/skin-previews/dark-mode-markdown-light-block-reference-20260813.png`、`dark-mode-settings-icon-light-tile-reference-20260813.png`与`dark-mode-input-selection-reference-20260813.png`；本轮定向Chrome回归1/1和既有五皮肤亮暗几何契约1/1通过，TypeScript通过。已原位更新唯一当前验收程序：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,609,984 bytes，SHA-256=`93C8B49951997A344FB350AF3D515BB1BBAA78CD0CED8472FA412BD8DA90B607`；未启动程序、未读取或写入正式SQLite、附件与真实AI，真实WebView2最终观感仍待南烛枫确认。
+- 已验证：TypeScript 与1702×1066隔离Chrome Playwright 1/1通过。测试逐一重载五套暗色皮肤并核验其`panel / raised / selected / accent`，核验陶土已选皮肤卡与缩略图均为陶土深色而非白卡，花房的卡片、弹窗、文字与侧栏几何保持不变；证据为`.runtime-qa/knowledge-final-layout-evidence/dark-terracotta-settings-token-contract-1702x1066.png`。已在固定`current-acceptance-build`共享缓存中原位完成v145 `--prepare / --verify`，唯一当前程序为`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,609,472 bytes，SHA-256=`88B8C8B9CE420E289D0F6C4D90AFEAD7A2A3C6D615C146552EE3A5186248A87A`；未启动应用、未读取或写入正式SQLite、附件与真实AI。真实WebView2观感仍待南烛枫人工确认。
+
+## v144 五入口双卡工作区几何统一（2026-08-13）
+
+- `主题洞察 / 全部笔记 / 主题管理 / 我的收藏 / 持续跟踪`现共用显式`core-workspace-grid / core-workspace-card-two / core-workspace-card-three`结构角色。桌面标准视口沿用全部笔记的卡二规格：24%宽度、14px卡间距、24px/28px/34px页面外边距；卡三统一消费其余空间，两张主卡等高、四边对齐并保持14px圆角。入口切换不再由各页私有`clamp`、固定像素列宽或不同页面内边距推动卡片跳动。
+- 五入口卡二搜索框统一纵向位置和45px自身高度。主题洞察与主题管理原先分散在卡二外的搜索、筛选、AI操作、状态说明和主题层级已经收进同一张卡二承托面；只统一几何与承托，不改变功能、列表/树内容、卡三业务结构、滚动职责和五套皮肤材质。
+- 新增五入口逐页矩形回归：从主题管理依次切换主题洞察、全部笔记、我的收藏、持续跟踪，逐值比较卡二/卡三的`left/top/right/bottom/width/height`以及搜索框`top/height`；同时继续跑五套皮肤、四知识状态与横向溢出检查。此前决策版本内容在卡三加宽后暴露内在最小宽度，已在内容自身用`min-width:0 / width:100% / max-width:100%`收口，没有用隐藏溢出来掩盖问题。
+- 已验证：前端全量210/210、TypeScript、`git diff --check`、Vite生产构建、1702×1066五入口/五皮肤定向Playwright 1/1通过；主题管理可见样图为`.runtime-qa/knowledge-final-layout-evidence/topic-management-compact-toolbar-1702x1066.png`。南烛枫关闭v143后，已在固定`current-acceptance-build`共享缓存中原位完成v144 `--prepare / --verify`，根目录BAT `--path`与元数据一致；唯一当前EXE为29,605,376 bytes，SHA-256=`DF4791BE6889656FFCB6B25126468EF7C9D05C34FAEC6663C8E0CEE34085AE66`。未新增版本化构建缓存、未启动程序；正式SQLite、真实附件和真实AI未读取或调用，真实WebView2五入口切换待南烛枫验收。
+
+## v143 文档全屏预览与历史资料返回层级（2026-08-13）
+
+- PDF、Markdown、TXT等已支持软件内最高层阅读的正文附件，不再把文件名显示成操作按钮；现在与视频大预览入口共用`MonitorPlay + 全屏预览`语义，点击继续进入既有`AttachmentPreview`。文件名仍保留在原位预览内容与最高层预览标题中。
+- 视频保持`全屏预览并播放视频`无障碍语义；音频仍只有原位原生播放与`定位文件`；不支持软件内预览的普通文件/归档继续显示文件名入口。附件存储、定位、解码、预览器布局与数据链路均未改。
+- 全部附件、图片、视频、音频与文件时间线不再在点击资料卡时先行关闭。点击仍原样执行`setSelectedId(hit.sourceItemId)`让卡三后台同步定位所属笔记，再在时间线之上打开最高层附件预览；关闭预览返回原分类、搜索词、已展开批次、滚动位置和触发卡焦点。预览存在时，时间线暂停自己的`Escape`关闭监听，保证一次按键只退一层；再次明确关闭时间线后才显示已定位笔记。
+- 前端全量210/210、定向合同19/19、TypeScript、Vite生产构建与固定共享Cargo缓存中的v143 Tauri编译通过；南烛枫关闭旧程序后，已在固定`current-acceptance-build`缓存中原位完成`--prepare / --verify`，唯一当前应用为`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,603,328 bytes，SHA-256=`3C8166F362A3BB042DB77FA748482E8B6353A57F14ECBAFB0B6FCE4096F328F4`，根目录BAT `--path`与`build-info.json`一致。未新增版本化构建缓存，未启动应用、未读取正式SQLite、未调用真实AI或外部网络；真实附件返回层级待当前WebView2验收。
+
+## 验收构建缓存止增治理（2026-08-13）
+
+- 南烛枫确认先治理源头、不迁移到 E 盘。本机验收缓存继续位于项目 `.runtime-qa`；`scripts/launch-current-acceptance.ps1` 现只使用固定 `current-acceptance-build` 共享 Cargo 目标目录与固定 `current-acceptance-app` 程序目录，不再把版本号写入构建目录名。版本仍由构建标签、Git 提交、EXE SHA-256、测试结果和截图证据定位。
+- 已将未运行的 `current-acceptance-v142-build` 原地改为 `current-acceptance-build`，保留 1.93GB 可复用缓存；已复制同一 v142 EXE 到固定当前程序目录并生成 `build-info.json`。已在南烛枫确认后删除 57 个精确匹配的历史 `current-acceptance-v*-(app|build)` 目录，预审可回收 57.8GB；正在运行的 `current-acceptance-v141-app` 自动排除，未移动或替换。
+- 当前根目录 BAT 改为固定当前程序路径，并在已有南枫知识库窗口运行时拒绝再启动第二个实例。`scripts/cleanup-acceptance-artifacts.ps1` 改为默认预演：只列出精确匹配 `current-acceptance-v*-(app|build)` 的历史候选，排除运行中的应用、新固定缓存、当前程序、布局证据和构建日志；只有显式 `-Apply` 才尝试删除。不得在未复核候选清单并取得南烛枫“确认清理”前执行该参数。
+- 已验证：两个 PowerShell 脚本语法通过；`launch-current-acceptance.ps1 -Verify` 与当前 BAT `--path` 均指向固定 v142 EXE，大小 29,604,864 bytes、SHA-256 `8AD1F9308E22B0AE1E03F44816B675783136E65E366C1CF95D01B3E97DB64BCD`；清理脚本预演确认正在运行的 v141 应用不在可删列表。未执行 `--prepare`、未启动新 EXE、未打开或写入正式 SQLite、未调用真实 AI。
+- 清理后 `.runtime-qa` 为 2.04GB，C 盘可用空间为 87.43GB；固定缓存与当前应用仍可通过 `--verify`，当前 BAT `--path` 仍指向固定 v142 EXE。本轮曾开始但随南烛枫取消迁移而中止的 `E:\CodexData\NanfengKnowledgeBase` 不完整复制目录已删除。未执行 `--prepare`、未启动新 EXE、未打开或写入正式 SQLite、未调用真实 AI。实施计划见 `plans/2026-08-13-nanfeng-qa-artifact-retention-v1.md`。
+
+## v142 实体画布铺满与设置卡底层收口（2026-08-13）
+
+- 三套实体皮肤的应用画布与`.main-region`现在共同消费唯一`--entity-canvas`实体承托色，主题洞察、全部笔记、主题管理、收藏、跟踪、回收站和设置不再露出另一层外底，也不再呈现一张悬浮的大圆角灰底卡；两套场景玻璃未改。
+- 设置页同级设置卡已统一：`AI 自动整理`接入纯白`--settings-item-surface`，数据与存储、快捷键和当前程序继续使用纯白实体卡；`.settings-list`只负责排列和间距，不再套额外白色底板；路径与`查看全部`文字动作区恢复透明，不再误用搜索/缩略图的灰色渐变控件面。
+- 三套实体皮肤侧栏底部容量信息不再继承固定雾蓝字色：说明统一为82%中性白，数值与刷新图标为纯白；两套场景皮肤侧栏未改。
+- 保持不变：五个主要入口、全部笔记单一大内容卡、主题管理卡二/卡三、900px设置列、卡片圆角/尺寸/间距、点击范围、微交互、语义色与正式数据/AI链路。
+- 当前验证：前端全量209/209、定向合同63/63、TypeScript、Vite生产构建和1702×1066五皮肤核心Playwright 1/1通过。Playwright实算三套实体在主题洞察与设置页的应用画布/主区域`backgroundColor + backgroundImage`完全一致且无背景图，AI入口与设置项均为`rgb(255,255,255)`，卡内文字动作区为透明，侧栏容量说明为`rgba(255,255,255,.82)`、数值为`rgb(255,255,255)`；三套设置页证据位于`.runtime-qa/knowledge-final-layout-evidence/entity-*-settings.png`。Windows v142唯一当前隔离应用已完成`--prepare / --verify`，路径`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,604,864 bytes，SHA-256=`935895F516509FD03EA639A827837A7D6F916DD8FE84CD4E6919E02813723134`；根目录BAT的`--path`指向该单一当前应用。应用未启动、正式SQLite和真实AI未执行，真实WebView2观感待南烛枫从当前BAT确认。
+
+## v141 五套皮肤、纯白前景与模型入口收口（2026-08-13）
+
+- 南烛枫确认皮肤目录为`实体工作台 · 雾蓝 / 实体工作台 · 鼠尾草 / 实体工作台 · 暖陶 / 场景玻璃 · 花房 / 场景玻璃 · 奔马`。前三套没有背景素材和玻璃模糊，后两套继续使用清晰场景背景与苹果式浅玻璃。`沙漠灯笼 / 原版浅色`退出目录，旧本地偏好统一迁移到雾蓝。
+- 01/02/03预览只作为 D 色彩与材质参考，不取得页面结构所有权。全部笔记继续保留当前单一大内容卡，主题管理继续使用当前最新卡二/卡三，侧栏激活项几何与交互不变；没有恢复预览里的右侧小卡、旧复杂卡或苹果皮肤布局。
+- 新增明确`entity / scene`材质身份，消除旧代码“非 classic 都是场景玻璃”的错误假设。五套皮肤共享同一App与页面DOM，只按材质身份消费实体或场景Token。
+- 五套皮肤的普通最前景列表卡、内容卡、详情卡、判断卡与卡内中性白卡统一为完全不透明`#fff`；全部笔记卡二普通列表项已纳入共享规则。外层承托板继续保持各实体配色或场景玻璃，选中态与明确语义状态卡不漂白。
+- 主题洞察标题区模型选择已移除。设置页成为唯一模型配置层，单主题/批量洞察直接使用后端固定任务路由；主题管理既有无模型入口合同不变。
+- 当前验证：前端全量208/208、TypeScript、Vite生产构建与1702×1066三入口/五皮肤Playwright 1/1通过；E2E实算全部笔记卡二普通项和卡三正文表面均为`rgb(255, 255, 255)`，三套实体主工作区`backdrop-filter:none`，两套场景才消费玻璃模糊，主题洞察无模型选择入口。三套真实页面预览位于`docs/screenshots/skin-previews/implemented-v141/`。v141 Windows Tauri隔离应用完成`--prepare / --verify`，路径`.runtime-qa/current-acceptance-v141-app/release/nanfeng-knowledge-base.exe`，29,604,864 bytes，SHA-256=`F4841A7C06AF0EB10746E121F0FBCD454C290F5CE08DEA953401C4183BDBA94B`；根目录BAT的`--path`已确认只指向v141。未启动应用、未调用真实AI、未打开或写入正式知识库；真实WebView2观感仍待南烛枫人工验收。
+
+更新时间：2026-08-12
 
 仓库：`C:\Users\Administrator\Documents\软件开发\nanfeng-intelligence`
 
@@ -12,9 +88,172 @@
 
 > 这是下一轮开发者的动态事实入口。稳定规则看`AGENTS.md`，需求推导看`docs/core-workspace-requirements-traceability.md`，验收分层看`docs/core-workspace-acceptance-matrix.md`。
 >
-> 当前读取规则：以“当前结论、验证真相、唯一下一步”为动态权威；1–101号记录是按时间保留的历史证据，其中旧入口名、旧 BAT、旧隔离包和旧版本号均不得覆盖现行合同。现行用户可见名称只使用`主题洞察 / 全部笔记 / 主题管理`，内部兼容标识不改名。
+> 当前读取规则：以“当前结论、验证真相、唯一下一步”为动态权威；1–110号记录是按时间保留的历史证据，其中旧入口名、旧 BAT、旧隔离包和旧版本号均不得覆盖现行合同。现行用户可见名称只使用`主题洞察 / 全部笔记 / 主题管理`，内部兼容标识不改名。
 >
 > 其他项目需要“参考南枫知识库的开发文档”时，统一从`docs/design-system.md`进入；本交接只提供当前实现与验证状态，不是跨项目规则正文。
+
+> v140 全通道固定 AI 任务路由：南烛枫授权由系统按任务合理分配模型。设置页将“模型”明确为`任务路由基准`，后端成为唯一路线所有者：千问固定`Flash → Plus`，明确选 Max 才让主题洞察使用高难档；DeepSeek固定`V4 Flash → V4 Pro`，Pro承担跨文档整合和洞察；OpenRouter只在已选供应商家族内寻找轻量档（Flash/Mini/Haiku/Fast/Luna/Small）与均衡档（Terra/Sonnet/Plus/Pro/Medium），明确选 Sol/Opus/Max/Ultra 才在主题洞察用高难档。目录缺档保守沿用基准，绝不跨供应商自动替换。新增迁移v13：分类检查点保存`profile_model_id`，创建任务即冻结实际逐篇/跨文档模型，续跑和增量不再依赖当前设置或目录；历史断点保守沿用其旧分类模型。根级通用规范已固化为`docs/app-development/ai-task-routing-standard.md`并由根`AGENTS.md`路由。自动验证：前端208/208、TypeScript、Rust119/119（1项真实Shell测试显式忽略）、`git diff --check`与v140隔离`--prepare / --verify`通过。当前验收程序为`.runtime-qa/current-acceptance-v140-app/release/nanfeng-knowledge-base.exe`，38,901,760 bytes，SHA-256=`CD35BE08F2311C46F2B2814167999512EBF459D3094C87649298FBE762492BFC`；根目录 BAT 已指向 v140。未启动应用、未打开或写入正式SQLite、未调用真实AI；正式数据库迁移v13与真实 API/真实 WebView2仍由南烛枫人工验收。
+
+> v139 主题管理模型入口收口：南烛枫确认主题管理中的模型选择与设置页重复，且层级不如设置页。现已从`TopicStructureReadingWorkspace`删除模型标签、触发器、二级模型弹窗及全部临时选择 props；筛选行只保留等宽36px的`全部 / 待处理`。更重要的是，主题管理的全量、增量、应用/撤销后的草稿刷新均不再接收主题洞察的会话模型选择，统一交给后端使用设置页保存的通道与模型；已中断任务继续时保持断点记录的实际模型。主题洞察的会话模型选择与设置页大尺寸模型弹窗保留不变。定向合同7/7、TypeScript、Vite、`git diff --check`及1702×1066 Playwright样板均通过；样板实测主题管理无模型触发器且仅有两个34–38px筛选按钮。v139隔离`--prepare / --verify`通过，程序为`.runtime-qa/current-acceptance-v139-app/release/nanfeng-knowledge-base.exe`，38,875,648 bytes，SHA-256=`8A5D2DCF7C3FBF3E3C5BE5FA031BE1949B3A9B70F0798A0119BE079D37152350`；根目录BAT已指向v139。未启动v139、未打开或写入正式SQLite、未调用真实AI；v138仍由南烛枫运行，须先关闭它再双击当前BAT完成真实WebView2验证。
+
+> v138 千问直连与任务模型路由：新增独立`qwen_direct`通道，API Key仍只保存于 Windows 凭据库，设置与两处工作台均复用既有模型卡片选择器。千问目录不调用不保证支持的通用`GET /models`，而是直接呈现已核对的`qwen3.7-flash / qwen3.7-plus / qwen3.8-max-preview`；首次真实请求才验证 Key、地区和账户模型权限。全库整理按阶段固定：`profiles / assignments`用 Flash，`structure / integrations`用 Plus；单主题洞察默认 Plus，只有用户明确选择 Qwen3.8 Max（预览）才启用高难档。DeepSeek V4 Pro同样只能由用户明确选择，绝不自动跨通道回退或消耗高阶额度。迁移 v12 仅新增千问通道设置行与`ai_task_model_steps`阶段审计表；未打开正式数据库、未执行该迁移、未调用真实 AI。TypeScript、定向前端 Qwen 合同、Rust AI 13/13、Vite、`git diff --check`、v138隔离生成/校验均通过。前端全量有1项既有 Explorer 源码字符串断言失败，和本轮无关。当前验收程序为`.runtime-qa/current-acceptance-v138-app/release/nanfeng-knowledge-base.exe`，38,875,648 bytes，SHA-256=`61311262EE9559D0BA086A1FF4AD4D37F3771288B93EE535FF99EE3C1895B4CA`；根目录`启动南枫知识库-当前验收.bat`只启动它。南烛枫手动启动 v138 时才会对正式 SQLite 应用这项新增 schema migration；应先确认该正式数据写入边界。
+
+> v137 验收 BAT 误报收口：根目录 BAT 原来使用`-ExecutionPolicy Bypass`且隐藏 PowerShell 窗口，这一组合容易触发终端防护的行为式误报。现 BAT 只以可见、固定路径启动已构建的 v137 EXE；不再调用 PowerShell、不绕过策略、不隐藏窗口、不编译、不删除环境变量，批处理注释也只保留ASCII以避免`cmd.exe`代码页误解析。隔离构建/哈希校验仍由`launch-current-acceptance.ps1 -Prepare / -Verify`执行，且该脚本拒绝无参数启动应用。当前 EXE 的 Authenticode 状态是`NotSigned`；长期正式交付仍应使用受信任代码签名的安装包，本地透明 BAT只能降低误报，不能替代签名信誉。
+
+> v137 火绒企业版误报排查与签名门槛：Security Center 显示实际防护为`Huorong Enterprise Security Endpoint Daemon`，Defender处于未启用状态；火绒可读日志未留下本次BAT的规则名称或文件路径，因此具体规则未确证。只读证据确认当前EXE为`NotSigned`，当前用户和本机均没有带私钥的代码签名证书；Windows SDK的`signtool.exe`已存在。新增`scripts/sign-windows-artifact.ps1`：默认只验签，签名必须显式提供受信任代码签名证书指纹、HTTPS时间戳URL和输入文件；脚本拒绝自签名/无私钥/非代码签名用途证书，签后强制`signtool verify /pa /all`及`Get-AuthenticodeSignature=Valid`，最后输出SHA-256。证书采购、导入和实际签名均未执行，且需要南烛枫明确授权。
+
+> v137 主题管理工具栏密度平衡：南烛枫指出 v136 修复竖排后反向放大了模型、筛选与AI操作按钮，而搜索框又在实际 WebView2 中被压成过薄条。现把主题管理工具栏定为明确的紧凑基线：搜索、模型触发器、`全部 / 待处理`均为36px；AI 两个动作维持38px以承载图标和长操作语义；模型触发器的能力副标题在这个窄栏隐藏，完整能力说明只在独立模型弹窗呈现。模型标签不再有额外外框，只有真正可点击的模型选择框。1702×1066样板同时实测搜索和模型触发器均为36px。TypeScript、前端206/206、Vite生产构建、`git diff --check`、主题管理样板与v137隔离`--prepare / --verify`均通过。当前验收程序为`.runtime-qa/current-acceptance-v137-app/release/nanfeng-knowledge-base.exe`，38,840,320 bytes，SHA-256=`E053E7F2396825EB457E9E938C5679D8E0F4B221D1126CB5F2BC929B0DCE6DC8`。未启动应用、未访问正式数据或真实AI；真实 WebView2 待南烛枫从当前 BAT 验收。
+
+> v136 模型选择布局回归修复：南烛枫真实 WebView2 截图确认 v135 有两个不可接受的低级布局错误：模型列表容器默认`stretch`把两项模型拉成半屏大卡；主题管理把模型触发器塞进三等分筛选格，致使文字竖排。现模型列表只按内容高度排列，模型卡固定68px紧凑行，只有累计内容超过560px时列表才滚动；模型弹窗改为内容自适应、最大760px，不再无模型数量依据占满高度。主题管理的模型选择独占第一行，`全部 / 待处理`保留下一行双列；触发器必须有足够单行宽度，禁止文字折成竖排。静态合同和1702×1066四模型 Playwright样板同时锁定卡高64–88px与主题管理触发器宽度大于180px、高度不超过48px。TypeScript、前端206/206、Vite生产构建、`git diff --check`、1702×1066主题管理四模型样板与v136隔离`--prepare / --verify`均通过。当前验收程序为`.runtime-qa/current-acceptance-v136-app/release/nanfeng-knowledge-base.exe`，38,840,320 bytes，SHA-256=`5F34C2A653561BB924002A8C3E86B14DBA1676E3DF428537759ECEFC49239E45`。未启动应用、未访问正式数据库或真实AI；真实 WebView2 待南烛枫从当前 BAT 验收。
+
+> v135 大尺寸 AI 设置与共享模型选择：南烛枫明确 AI 自动整理主设置要在1702×1066下默认约`1366×872`，模型选择必须作为第二层独立弹窗，不能挤占设置窗口；主题洞察与主题管理也要遵循同一标准。现新增唯一`AiModelPicker`：`AiAutomationSettings`、`KnowledgeReadingWorkspace`与`TopicStructureReadingWorkspace`均复用其触发器、供应商色条、型号、保守能力定位、选中态、外部点击关闭与 Escape 行为。主设置的旧尺寸偏好升级为`ai-automation-dialog-v2`，避免旧窗口大小覆盖新的基线；模型弹窗默认`840×760`并在选项较多时仅列表滚动，主设置保持可见，连续两次 Escape 依次关闭模型层和设置层。自动验证：前端206/206、TypeScript、Vite生产构建、`git diff --check`、1702×1066主设置分层对话框 Playwright样板与主题管理四模型样板、v135隔离`--prepare / --verify`均通过。当前验收程序为`.runtime-qa/current-acceptance-v135-app/release/nanfeng-knowledge-base.exe`，38,840,320 bytes，SHA-256=`43D37C8D62A159871F99E0E6D1DE3EEDA7404F2BA427413CBC88D2BAF4FA770A`。未启动v135、未打开或写入`D:\南枫知识库`、未调用真实AI；真实 WebView2 的非空模型目录、保存选择仍待南烛枫从当前 BAT 验收。
+
+> v119 当前覆盖说明：南烛枫真实桌面反馈显示 v117 的所有“定位文件”统一报“Windows 文件管理器无法识别要定位的文件”。根因有两层：v117 把目标文件 PIDL 误作文件夹并传空选择列表；更关键的是，正式附件经安全 `canonicalize` 后成为 `\\?\` 长路径，Windows Shell 的 `ILCreateFromPathW` 不接受该路径形式。现唯一服务先保持原始受控路径校验，再仅为 Shell 移除 `\\?\` 或 `\\?\UNC\` 前缀；随后以“父目录 PIDL + 目标文件绝对 PIDL 选择列表”调用 `SHOpenFolderAndSelectItems`。附件正文、最高层预览、全部/图片/视频/音频/文件时间线与两处单篇导出均自动复用该服务。Rust 110/110（另1项真实打开测试默认忽略）、前端198/198、TypeScript、v119 隔离 `--prepare / --verify` 通过。EXE 38,735,872 bytes，SHA-256=`FD5398E24F125DA566FCE8AE5CC5B3BC464C517C83A635CB4B8E61943B91D24B`。未写入正式数据库、未调用 AI；最终“软件按钮点击后目标文件确实高亮”仍待南烛枫用当前 BAT 确认。
+
+> v130 正文视频全屏预览动作：南烛枫真实截图指出视频原位播放器下方左侧按钮错把`1000155089.mp4`等文件名作为主操作，未表达“打开大预览并播放”。现`SourceAttachmentAsset`仅在视频分支将该按钮替换为`MonitorPlay + 全屏预览`，固定为内容宽度，不再展示文件名；提示与无障碍名称为“全屏预览并播放视频”。点击仍只调用已有`onOpenAttachment → AttachmentPreview`，不改原位`<video controls>`、文件定位、文件存储或音频/其他格式操作。失败图已归档`docs/screenshots/qa/source-video-fullscreen-action-failure-reference-20260812.png`（SHA-256=`9EFCF900736FF19261075BDFD1E5904C414DFD62D3859576CC6390FDF84E7C7C`）。自动验证：前端205/205、TypeScript、Vite生产构建、`git diff --check`与v130隔离`--prepare / --verify`通过；EXE 38,838,784 bytes，SHA-256=`F2EB875416B48209C506E1EB837F51E200102D5CD4816459A0B97E48E88CD08B`。未启动v130、未打开或写入`D:\南枫知识库`；当前仍有v129验收程序运行，真实 WebView2 视频点击链路待南烛枫先关闭旧窗口后从当前 BAT 验收。
+
+> v131 AI 自动整理整卡入口：南烛枫确认 v129 的独立`进入设置`按钮违背“整张卡可进入”的交互，并显得突兀。现入口本身改为唯一原生`button`，图标、标题、说明与右侧区域均直接打开原有二级`PrototypeDialog`；右侧只保留低存在感的`ArrowRight`方向提示，卡片消费共享`lift`焦点/悬浮/按压反馈。模型、密钥、保存、用量与遮罩/Escape关闭逻辑未改。失败图已归档`docs/screenshots/qa/settings-ai-automation-entry-button-failure-reference-20260812.png`（SHA-256=`87D9839D9446B195ABBABFE80BC2FE79162F11F734161EB4D0852D2A984B9238`）。自动验证：前端205/205、TypeScript、1702×1066隔离浏览器样板确认在左侧图标区域点击可打开并由Escape关闭，几何/间距/场景玻璃保持；`git diff --check`通过。v131 隔离`--prepare / --verify`待生成；未启动应用、未打开或写入`D:\南枫知识库`。
+
+> v132 视频专属全屏预览：南烛枫确认音频不需要二级大预览，只有视频需要。现`SourceAttachmentAsset`只在`kind === video`时渲染并响应`MonitorPlay + 全屏预览`；音频不再提供任何大预览入口，仅保留已有原生音频控制和`定位文件`。视频原位控制、最高层`AttachmentPreview`、所有受控文件路径和定位服务不改。自动验证与v132隔离`--prepare / --verify`待生成；未启动应用、未打开或写入`D:\南枫知识库`。
+
+> v134 模型卡片选择与视频专属预览：南烛枫指出原生下拉把模型压成同质文本，不能判断供应商与能力，并明确参考卡片式模型服务选择作为后续软件候选模板。现`AiAutomationSettings`以自定义触发器和弹窗内可滚动`listbox`替代原生`select`：当前选择与每个选项均展示供应商色条、`供应商 · 型号`、文字能力定位和明确选中态；OpenAI/Anthropic/DeepSeek/Qwen固定青绿/暖陶橙/理性蓝/低饱和紫，未知来源中性化。能力定位仅根据目录型号关键词保守推导，不伪造性能/价格。模型触发器不再嵌套在`label`中，保持正确的按钮语义。与v132一起，音频二级大预览已移除，视频全屏预览保留。参考图分别归档`docs/screenshots/qa/ai-model-native-select-failure-reference-20260812.png`（SHA-256=`1AB93057DC62C1E6A4DBE5AFDDC75A7F02B4019EA7863BA8D0A3A579FE334D64`）和`docs/screenshots/qa/ai-model-provider-card-reference-20260812.png`（SHA-256=`79812FDEBEF3552177339423C4AB53A5CB72F62D9217678316F6D78A9E769C57`）。前端205/205、TypeScript、1702×1066浏览器样板、`git diff --check`与v134隔离`--prepare / --verify`通过；EXE 38,838,272 bytes，SHA-256=`EFFAC2C1FA1E923DEBB8838B7B705F00CDDD156DE2694739948129C4B38710C4`。未启动v134、未打开或写入`D:\南枫知识库`；真实WebView2下有模型目录时的卡片观感与选择保存待南烛枫确认。
+
+> v121 回收站“复活”防线：根因是 Source Item 与兼容 Record 的双对象关系没有在所有读取和操作路径上共同守住删除状态。已删除 Record 仍可能留在来源前端会话缓存；再次点来源操作时，旧实现会返回该已删除 Record，App 又无条件插回活动笔记列表。现将该路径设为硬拒绝，并在删除成功时立即清除来源会话缓存。迁移 v11 新建唯一只读入口`visible_source_items`，主题计数、主题详情、来源原文、附件/时间线、分类入口与 AI 全库取材均从此读取；历史回填也跳过已删除 Record。恢复操作是唯一重新可见路径。自动验证：Rust 110/110（另1项真实 Shell 测试默认忽略）、前端198/198、TypeScript、Vite 与 `git diff --check` 通过；v121 隔离 `--prepare / --verify` 通过，EXE 38,735,360 bytes，SHA-256=`F09E37D3F28F9400384B5BF4B926C03F114698DD70CADBF68A67954417856AD8`。未打开正式数据库或真实应用。
+
+> v122 删除可见性反向审计：在 v121 的统一读取模型之上，补齐三条剩余旁路：1）损坏的`legacy_record_id`不再被当作未关联来源而创建替代 Record；读取视图对“关联 Record 缺失”保守隐藏。2）AI 任务完成、应用和撤销都复核`visible_source_items`；运行中的旧草稿遇到已删除/归档来源会中断并保留已持久化进度，不能改写或重新归类该笔记。3）前端移入回收站会失效来源搜索、附件目录、时间线及操作请求缓存；所有删除、恢复、永久删除同步递增知识可见性修订，三个知识入口重新读取正式库。自动验证：Rust 111/111（另1项真实 Shell 测试默认忽略）、前端199/199、TypeScript、Vite、release 检查与`git diff --check`通过；v122 隔离`--prepare / --verify`通过，EXE 38,735,360 bytes，SHA-256=`A034938513005763A9E14958913DA36AE6DBFBF83BF2643F9BEA2B795D979FB1`。正式库和真实应用未打开。
+
+> v123 数据空间引用对账：旧优化只看 SQLite 空闲页、重复备份和失败备份，且执行前会新建永久“优化前安全备份”，导致大块未引用附件和 WAL 未被纳入、甚至抵消回收量。现以附件记录与导入清单建立受控附件引用图；执行前再次扫描，先进行完整性检查与 WAL checkpoint，仅删除无引用的受控附件、可证明重复备份和超时失败备份。完整迁移备份、导入原件、笔记/知识/历史版本及任何语义相似候选一律保留；模型不参与二进制删除裁决。优化器不再创建永久快照，仅在可证明空闲页达到32 MiB时才VACUUM。2026-08-12 对正式目录的只读盘点发现：附件目录中993个、1,769,428,284 bytes文件未被数据库引用，WAL为794,789,232 bytes；完整迁移备份和导入原件按恢复合同保留。本轮未执行清理、未写入正式数据。自动验证：前端199/199、数据优化Rust4/4、附件Rust10/10、设置页Playwright1/1、TypeScript与Vite通过；v123隔离`--prepare / --verify`通过，EXE 38,764,544 bytes，SHA-256=`853C7BDD57501728340F7B2E5A477113A943B41FCCCBB72D25178BA93D7EF76B`。未启动软件，正式桌面扫描与二次确认仍待南烛枫执行。
+
+> v124 历史附件恢复卡实体白底：场景皮肤下该卡错误地单独消费半透明`--glass-card`并参与色彩混合，导致外层场景承托色透入，视觉上丢失白底。现恢复为与同级设置操作卡一致的固定`#f8fafd`实体浅白底和`#dce3ec`边界；布局、按钮、文字和交互角色不变。加入静态合同，禁止该选择器再引用`--glass-card`。自动验证：定向前端20/20、TypeScript与生产构建通过；v124隔离`--prepare / --verify`通过，EXE 38,764,544 bytes，SHA-256=`2BA9DDB61C13DBE19FA0A24CEE11BB4F5F5F1E135515B1AD0CC4F9772184D239`。未启动软件或打开正式数据；正式WebView2效果待南烛枫关闭旧验收程序后启动当前BAT确认。
+
+> v125 数据优化确认与路径防护：修复安全复盘的两项P2风险。`inspect_data_optimization`现由后端保存扫描候选清单指纹并签发一次性、5分钟有效令牌；`optimize_data`只接收令牌，首次调用即消费，候选清单与扫描时不一致即拒绝执行，前端无法再用`confirmed: true`伪造确认。候选删除前会再次验证受控根目录、文件身份与Windows重解析点；备份目录采用逐层受控删除，空附件目录也拒绝穿越重解析点。清理范围、WAL处理、完整备份和原始导入保留规则不变。自动验证：Rust 116通过、1项显式忽略（Shell reveal真实系统动作）；前端200/200、TypeScript与生产构建通过；v125隔离`--prepare / --verify`通过，EXE 38,818,816 bytes，SHA-256=`39D4CB2E80CC1604D319B10676DA66604A5E22D5B328FDF722459D40CF4F8246`。未启动软件或打开正式数据；真实WebView2下的交互和正式库清理均待南烛枫手动确认。
+
+> v126 存储安全复盘全部闭环：复核后不把 v125 当作“风险清零”。① 后端单次、5分钟令牌仍是优化唯一执行凭据，令牌会在首次调用时消费。② 候选清单身份由路径、类型、时间、大小提升为实际文件 SHA-256 或完整目录内容指纹；删除备份目录前先全树验证受控根、普通文件类型和重解析点，任何异常在删除开始前停止。③ Tauri Asset 协议不再递归授权整个`attachments`目录；启动时与各附件查询/恢复/新增入口均只对数据库登记、重新校验仍位于受控根内的单个文件调用`allow_file`。未登记、失效、目录外、符号链接/Junction目标均不会被网页预览路径授权。自动验证：Rust 116通过、1项显式忽略（真实 Shell reveal）；前端201/201、TypeScript、生产构建、定向安全合同与`git diff --check`通过；v126隔离`--prepare / --verify`通过，EXE 38,836,736 bytes，SHA-256=`5187A11814E678A8FC781AE178438F04B9B8AAEEA581C7B310CCF7EC4E2BEEA3`。未启动软件、未扫描或写入`D:\南枫知识库`；真实 WebView2 多格式预览和经用户确认的正式清理仍待人工验收。
+
+> v127 AI 自动整理二级设置入口：设置首页不再展开供应商、API Key、模型与保存按钮，只保留与同页操作项一致、最大宽度900px的实体浅白入口卡；点击`进入设置`后才在统一`PrototypeDialog`中显示原有配置控件。对话框复用既有遮罩点击和 Escape 关闭、窗口尺寸偏好与可调大小能力；模型通道、Windows 凭据库密钥读取、保存、目录刷新和用量统计逻辑未改动。自动验证：定向合同38/38、前端全量202/202、TypeScript、Vite生产构建、`git diff --check`与v127隔离`--prepare / --verify`通过；EXE 38,838,784 bytes，SHA-256=`09258D05082038CD5B2F530139B628F5B44F2BCDA0ABAD158B77F44B7D887A28`。未启动新应用、未调用真实 AI 或打开正式数据库；真实WebView2路径待南烛枫关闭旧版后从当前BAT验收。
+
+> v128 原始导入归档日常读取边界：`imports/raw`仍只作为导入保真、完整备份/恢复和用户明确存储维护的原件区。日常启动、窗口重新获得焦点、可见性恢复、进入设置和普通笔记列表刷新不再递归枚举该目录；存储摘要先显示本地缓存，仅在导入、附件变更、备份/恢复、数据优化或用户明确点击刷新后调用后端统计并更新缓存。正文、搜索和 AI 继续从 SQLite 来源表读取，不以原始归档回退。自动验证：定向合同26/26、前端全量203/203、TypeScript、Vite生产构建、`git diff --check`与 v128 隔离`--prepare / --verify`通过；EXE 38,838,784 bytes，SHA-256=`1B8428B92C357563ADC3075331E848DD444CE40B5444DC1EA8DC377BB769D81F`。未启动软件、未打开或写入`D:\南枫知识库`；真实 WebView2 中首次无缓存空态、显式刷新和导入后统计更新仍待南烛枫按当前 BAT 验收。
+
+> v129 设置页 AI 自动整理入口回归：真实截图确认 v127 的入口卡错误继承了双列操作卡`height:100%`，在设置页面变成接近整页的实体白面；其子内容又被通用首子项规则堆成上下结构。现由入口专用选择器唯一修复为横向图标/文字/按钮、内容自适应的88px高卡；与皮肤区间距18px、与设置列表间距16px。场景皮肤把它纳入设置页一级玻璃承托，原版浅色继续是实体浅表面；二级弹窗、API Key 与模型功能不改。失败图已归档`docs/screenshots/qa/settings-ai-automation-entry-failure-reference-20260812.png`。自动验证：定向合同27/27、1702×1066浏览器几何/材质样板1/1、前端全量204/204、TypeScript、Vite生产构建、`git diff --check`与 v129 隔离`--prepare / --verify`通过；EXE 38,838,784 bytes，SHA-256=`99382763314B18C369199346FDA27DDEBB1814A24FE88D6504CCEF478671FBB3`。未启动软件、未打开或写入`D:\南枫知识库`；真实 WebView2 仍待南烛枫用当前 BAT 确认。
+
+### v121 回收站删除可见性统一边界
+
+- Source Item 不是独立的“复活入口”：其关联 Record 进入回收站后，任何收藏、跟踪、导出等来源侧车动作必须先提示恢复，绝不返回或重建活动 Record。
+- 前端删除成功同步移除 `inbox`、搜索结果与会话快照，避免当前页面遗留卡片再次触发操作。
+- 读取边界统一为 `source.status = active` 且关联 Record 未删除；主题来源数、正文、证据、附件目录和 AI 分类输入共用该约束。正式恢复后才重新出现。
+
+### v119 Shell 规范路径兼容与精确选择
+
+- 安全边界不变：附件仍只提交 ID 并由 Rust 重读受控归档文件；导出仍限制在规范化后的 `exports` 根目录内。
+- Shell 边界明确：只把已经校验通过的 Windows 长路径转换为 Shell 显示路径；普通路径保持原 Unicode/空格/井号字符，UNC 路径恢复为标准 `\\server\share` 形式。
+- 选择调用明确：`SHOpenFolderAndSelectItems` 的第一个 PIDL 必须为父目录，`cidl=1`，`apidl` 传入目标文件 PIDL；禁止恢复空选择列表、Explorer 命令行或页面私有实现。
+
+### v117 全软件原生文件定位标准
+
+- 唯一平台实现：`external_open::reveal_path`；Windows 使用 `CoInitializeEx / ILCreateFromPathW / SHOpenFolderAndSelectItems`，源码和合同测试禁止恢复 Explorer 命令行参数。
+- 安全输入：附件只接受 ID 并重新读取数据库受控路径；导出文件必须规范化后仍位于 `exports` 根内。不存在、目录外或伪造路径继续拒绝。
+- 统一消费者：正文资源、附件最高层预览、五类附件时间线、完整笔记导出和当前记录导出；文件类型不再拥有各自的定位实现。
+- 分层证据：真实 MP4 原生 API 调用成功仅证明普通路径接受；v119 额外覆盖正式库使用的长路径转换合同，最终“软件按钮点击后目标文件确实高亮”仍由南烛枫在 v119 当前 BAT 中确认。
+
+> v116 当前覆盖说明：南烛枫真实桌面反馈确认 v112 的“参数带引号”修复仍会让 Explorer 打开默认“文档”目录。只读核对正式库后，截图视频附件 ID `448` 的 `stored_path` 已确认是实际 `.mp4` 归档文件，不存在前端映射到文档的问题；根因是 Rust `Command::arg` 对 Explorer 专用 `/select,"路径"`片段再次转义。现改为 Windows `raw_arg` 原样传递受控、规范化后的 `/select,"实际 mp4 路径"`，使资源管理器直接选中该视频。未写入正式数据库、未启动程序或真实调用 AI；真实 Explorer 选中仍须由南烛枫双击当前 BAT 确认。
+
+### v116 Explorer 精确选中文件
+
+- 前端仍只提交附件 ID，后端仍仅从正式附件记录读取并校验受控 `stored_path`；任意本机路径不能从前端注入。
+- 本轮只读事实：视频文件位于 `D:\南枫知识库\attachments\source-attachment-876-d9190457-c699-492f-8601-1f5cd617c4d2\...mp4`，附件 ID `448`、MIME `video/mp4`，路径存在。
+- `external_open::reveal_path` 改为 `raw_arg`，保留原始 Explorer 参数格式；Rust 定向测试、TypeScript 与 v116 隔离 `--prepare / --verify` 通过。EXE 38,727,680 bytes，SHA-256=`6BD0340D2F703D36837A1064756B37699783290BC4C8F2256E6631C94BA2ACFF`。
+
+> v112 当前覆盖说明：AI结果已按供应商/模型与输入快照保存，主题洞察和主题管理使用同一模型选择入口。模型切换只读取该模型轨道，不会覆盖其他模型结果，也不自动改变正式分类；正式分类仍只能由用户应用某一`AI Taxonomy Revision`。主题洞察相同模型相同输入会复用既有结果；主题管理新增`AI 补充新增笔记`，以同模型最新完整分类为基线，只处理新增或正文变化笔记，并只重整受影响主题的主题整合及自动来源。`ai_source_profile_versions`禁止跨模型复用；新模型无分类基线、基线撤销或缺少可复用档案时明确要求先全量生成。全量和增量共用持久检查点与断点续跑。附件定位修复为 Explorer 的带引号精确受控文件路径。自动验证：`cargo check`、Rust定向6/6、前端194/194、TypeScript、核心Playwright1/1及定位视频参数单测通过；v112 Windows隔离`--prepare / --verify`通过，EXE 38,725,120 bytes，SHA-256=`1B8D216BA71C0680DF79E71CB6E8CFABEC01D0107BC76AE6722D5BB34127A80D`。未打开正式数据库、未调用真实AI或真实WebView2。
+
+### v112 多模型结果轨道、增量分类与媒体定位
+
+- `ai_topic_insight_versions`保存主题洞察历史；兼容表不再是唯一来源。主题洞察模型选择器只读取所选模型的最新结果。
+- `ai_source_profile_versions`以`sourceItemId + providerChannel + modelId + contentSha256`保存可复用档案；分类修订持续保存模型身份和来源快照。
+- `AI 补充新增笔记`保留同模型基线的领域/主题和未受影响整合，只请求新增/变更笔记、重新归属，并为受影响主题重新生成整合正文和确定性来源列表。
+- 附件“定位文件”修复为向 Explorer 传递带引号的`/select,"实际受控附件路径"`参数；含空格/中文的视频、图片和文档不会再退回默认“文档”目录。前端仍只提交附件ID，后端仍按受控`stored_path`解析实际文件。
+
+> v111 当前覆盖说明：主题洞察卡二与主题管理卡二不再分别读取原始`domains/topics`并各自做显示判断。`getAppliedAiTaxonomyHierarchy`成为两入口唯一共享的前端分类读模型：仅把已应用`AI Taxonomy Revision`中的领域/主题，映射到同一批正式持久化行并提供唯一`topicIds`选择范围；未应用、已撤销，或无法对应到该修订的遗留领域/主题时，两个入口都共同显示空态`待 AI 生成全库分类`，不得有任何一侧回退展示旧分类。主题详情、单主题AI整理与批量AI整理同样只允许作用于该共享范围，不能由旧主题绕过分类应用门禁。前端193/193、TypeScript、Vite、1702×1066核心Playwright 1/1及v111 Windows隔离`--prepare / --verify`通过；EXE 38,598,656 bytes，SHA-256=`C6B9C62C58C163D83512D9F3E12769FF7D82519602B63A0E7D5C4472C290A205`。程序、正式数据库、真实AI API和真实WebView2均未打开或执行。
+
+### v111 主题管理/主题洞察卡二统一已应用分类读模型
+
+- `src/aiTaxonomyPresentation.ts`唯一解释`AI Taxonomy Revision → Domain/Topic`的正式可展示树；两个工作区只接收`AppliedAiTaxonomyHierarchy`，不再接收原始分类列表。
+- 父级工作区以该读模型收敛选中主题、详情请求、主题洞察请求和批量AI整理范围；从空态到应用修订后自动选择首个正式主题，反向撤销或缺失映射时清空选择与详情。
+- 应用修订是领域/主题正式名称、层级与归属同步的原子边界；测试夹具不得把“已应用修订”和遗留的不同领域结构同时伪造为有效状态。
+
+> v110 当前覆盖说明：已修复真实全库分类在主题整合阶段因模型返回跨主题来源ID（截图为`ai-models`）而整次失败、此前批次全部丢失的问题。主题整合正文仍由AI生成，但来源清单改为由最终笔记归属确定性生成，模型ID误差不再毁掉长任务。新增migration v8检查点：语义档案每24条、归属每40条、主题整合每8个主题分别落盘，同时保存阶段、Token和已知费用；异常、关闭或网络中断后，主题管理自动提示`继续上次生成 / 放弃上次并重新生成 / 稍后处理`，续跑只执行未完成批次，运行弹窗按检查点更新数量与用量。旧v109及以前失败任务没有检查点，无法把已经只存在于进程内的半成品恢复成可续跑任务，不能误报可恢复。全部笔记卡二在WebView2父级flex高度稳定期间分段复测，首次打开不再停在7行保底窗口；设置页底部`当前程序`卡与上一卡保持16px间距。前端192/192、Rust106/106、TypeScript、Vite、1702×1066核心E2E1/1及v110 Windows隔离`--prepare / --verify`通过；EXE 38,598,144 bytes，SHA-256=`195074DE095F44529496E0A758789F31965BB271D12B59F9F11108DA2DBFA461`。程序、正式数据库和真实AI API均未打开或执行。
+
+### v110 AI 全库分类断点续跑与失败止损
+
+- `ai_taxonomy_run_checkpoints`持久化当前来源快照、语义档案、taxonomy、归属、三个offset、阶段和累计用量；正式revision成功后删除检查点，放弃任务时保留任务用量审计但删除可续跑内容。
+- 继续前会比对来源ID与正文哈希；笔记集合或正文已变化时拒绝直接续跑，避免把旧分类结果套到新材料或重复计费。
+- 中断任务的已完成批次Token/已知费用纳入设置页累计统计；无法从供应商错误响应取得的当前失败请求用量仍不能凭空补记。
+- 失败参考：`docs/screenshots/final-core-workspace/ai-taxonomy-integration-source-failure-reference-20260811.png`，SHA-256=`16CF6C5A44681B4B86730FA8DABE2C098F7F44BB2C27C3E3C9F5518DE6A2674C`；断点提示源码证据：`docs/screenshots/qa/ai-taxonomy-resume-prompt-v110-1702x1066.png`，SHA-256=`8F01C8ECA05C796D7C67C4C859575499868BFA22A3BEFBA8B652D67AA0ED4BED`。
+- 首次列表短截和设置底部间距参考分别为`source-list-initial-short-reference-20260811.png`（`38A14DA9222374FDECACBB7E34DC97C32D46B08C3979B793CBB07B2F807F83AB`）与`settings-runtime-card-spacing-reference-20260811.png`（`AE0D4C0204443792B2BFD0420EFD0EF91B7B75458AD9884D6CFE0F8512F6FEEE`）。
+
+> v109 当前覆盖说明：主题整合已成为 AI 全库分类修订的强制组成部分，不再只是可空字段。主题管理 AI 在领域、主题和全部有效笔记唯一归属确定后，为每个有归属笔记的主题生成整合正文，并完整绑定该主题全部笔记来源；正文为空、来源为空、遗漏来源、重复来源或跨主题引用都会在草稿持久化与应用两个阶段被拒绝。主题管理显示`主题整合 完成数/有归属主题数`，不完整草稿不能应用；生成成功弹窗明确报告整合数量及自动来源。主题洞察“主题整合”读取同一已应用修订，并只显示该整合绑定的来源。旧空修订显示`待主题管理 AI 生成全库分类并应用`，不会冒充已生成。前端192/192、Rust104/104、TypeScript/Vite、1702×1066核心E2E1/1及v109 Windows隔离`--prepare / --verify`通过；EXE 38,370,816 bytes，SHA-256=`6884CB3835B8540BCCC998D8B61CD399164E6AFF5F765252E5801D7C48ED28BA`。程序、正式数据库和真实AI API均未打开或执行。
+
+### v109 主题管理 AI 主题整合强制闭环
+
+- `run_ai_taxonomy_revision`继续按`语义档案 → 领域/主题 → 全部笔记归属 → 每主题整合`执行；整合`sourceItemIds`必须与该主题全部归属笔记集合完全一致。
+- `complete_taxonomy_revision_task`与`apply_taxonomy_revision`双重校验整合正文和自动来源；历史缺字段草稿不能继续应用，新修订不会再产生截图中的空整合状态。
+- 主题管理和主题洞察通过同一 applied taxonomy revision 读取唯一整合与唯一来源清单；主题洞察的`AI重新整理`仍不拥有或覆盖主题整合。
+- 用户失败证据为`docs/screenshots/final-core-workspace/topic-integration-empty-applied-reference-20260811.png`，SHA-256=`75BCB056DADC23B6ABC0DA7059FCAEE9EBAB5FE8F74D4E0BE7AD2AE9844441C8`。
+
+> v108 当前覆盖说明：AI单主题整理和AI全库分类进度弹窗右侧加载环已统一为正圆。根因是`.knowledge-overview-dialog > header > span`把头部所有直接子`span`都强制套成34×34、10px圆角方盒，覆盖了共享`.save-spinner`的14×14、50%圆形几何；现已收紧为仅首个语义图标`span:first-child`使用圆角方盒，所有`save-spinner`继续由共享圆形样式唯一持有。批量任务列表、页面加载、搜索、导入和附件等既有同类加载环不受方盒规则污染，保持正圆。前端190/190、1702×1066核心E2E1/1、TypeScript/Vite随v108隔离构建通过；v108 Windows隔离`--prepare / --verify`通过，EXE 38,237,696 bytes，SHA-256=`1D23B5405BED6A6DD08A8A83E4BD006BBFAB12B4953427754603C4089893E2F8`。程序、正式数据库和真实AI API均未打开或执行。
+
+### v108 进度加载环统一正圆
+
+- 共享圆形加载环仍由`.save-spinner`唯一持有；弹窗头部方形语义图标只匹配第一个直接子元素，不再影响右侧进度环。
+- 单主题AI整理与全库AI分类进度弹窗均以浏览器计算样式验证`border-radius:50%`；批量列表和页面加载继续复用同一圆形环。
+- 失败参考为`docs/screenshots/final-core-workspace/ai-progress-square-spinner-reference-20260811.png`，SHA-256=`8718D564757A0C5228063AE8FC7E04309F187C50582032559CF0EFD973DAA993`；当前源码证据为`docs/screenshots/qa/ai-progress-round-spinner-v108-1702x1066.png`，SHA-256=`E55647E79B2CDD225E7C5FD08E679840B5738361FAF9AABDC1E80F9DEF90067A`。
+
+> v107 当前覆盖说明：主题管理卡二、卡三只消费已审核并应用的 AI 全库分类修订；没有已应用修订时，领域/主题、笔记归属、主题边界、主题整合和归纳笔记全部为空，只显示小字`待 AI 生成全库分类`，不再展示旧主题、旧归属、`已归入当前主题`或其他本地兜底。点击`AI 生成全库分类`立即显示不可伪造百分比的持续过程弹窗，成功/失败结果持续到用户确认；成功只产生待审核草稿，应用后才进入正式卡片。主题洞察固定分屏改为上方 AI 成果 1/3、四知识 Tab、下方知识正文 2/3；完整成果弹窗默认约占应用 80%且可调宽高，全软件桌面弹窗默认可人工调整大小。竞争假设、判断演变、待验证问题、知识有效性和决策版本统一消费 AI 结构化结果；判断演变允许来源中的时间顺序、更新和前后证据差异形成来源绑定节点。单主题整理与全库分类均有持续过程和需确认结果弹窗。设置页`当前程序`移到最底部，AI设置卡补16px四角圆角；设置页主卡/设置行与回收站条目恢复场景一级透明磨砂玻璃，内容最前景卡继续不透明。前端189/189、Sites4/4、TypeScript、Vite、Rust103/103、完整Playwright18/18、最新定向核心E2E1/1及v107 Windows隔离`--prepare / --verify`通过；EXE 38,237,696 bytes，SHA-256=`45D93FCF64346BD0BC20485B1255109FF32C4C5B0DFA8D69C052882444466931`。程序、正式数据库和真实AI API均未打开或执行。
+
+### v107 AI 结果所有权、持续反馈与材质边界
+
+- `AI Taxonomy Revision`唯一拥有领域、主题、全部有效笔记唯一归属、每主题整合和整合自动关联的笔记来源；主题管理与主题洞察只读取同一已应用修订的正式整合。
+- 主题管理在未应用 AI 修订前保持真实空态；用户点击生成后先看持久过程，再看持久结果和待审核草稿，不能把生成成功直接冒充正式应用。
+- `AI Topic Insight`负责主题综述、竞争假设、判断演变、决策与行动、待验证问题和知识有效性；四知识 Tab 只切换下方内容，不改变上方成果或页面坐标。
+- `docs/screenshots/final-core-workspace/topic-management-legacy-fallback-reference-20260811.png`记录旧本地归属/无价值文案失败态，SHA-256=`6A6F77E9AB0B13BF2A7E2F3C5BC5983C6131A3599361604E266D577483B2A25B`；当前空态与回收站玻璃证据分别为`docs/screenshots/qa/topic-management-awaiting-ai-v107-1702x1066.png`、`docs/screenshots/qa/trash-glass-cards-v107-1702x1066.png`，SHA-256分别为`A434F771733F2D025345AB00994B74215DD29FB40497FB0250B2BE8D34A49873`、`6D2CDFC6734DDC23822ED8A7C0376B258468A5DF12FC6504B5EC0332AE3EC314`。
+
+> v106 当前覆盖说明：主题洞察卡三已改为固定三段分屏：AI主题洞察占上半区，四个知识Tab固定在中间，当前知识正文占下半区且只有下半区允许纵向滚动。AI成果默认不折叠，固定上半区能显示多少就显示多少；`查看全部`弹窗复用同一内容组件显示完整成果。切换四态时上半区、Tab、下半区和窗口坐标误差≤1px。AI成果内最深独立阅读卡使用共享`surface-lift`，悬停只提升自身。主题管理AI的主题整合同时显示同一次taxonomy revision自动关联的笔记来源。前端189/189、Sites4/4、TypeScript、Vite、Rust103/103、完整Playwright 18/18及v106 Windows隔离`--prepare / --verify`通过；EXE 38,236,160 bytes，SHA-256=`451770FB812832676DC21CEC96F4EF675814441A236DCBD7CB17B68AECD3BB9D`。程序、正式数据库和真实AI API均未打开或执行。
+
+### v106 固定洞察分屏、完整弹窗与来源归属
+
+- `KnowledgeReadingWorkspace.tsx`以`.knowledge-final-stage`唯一持有`1fr / tabs / 1fr`布局；上半区和Tab固定，`.knowledge-final-scroll`是唯一纵向滚动所有者。
+- `AiInsightBundleContent`同时服务固定预览与查看全部弹窗，避免两套AI正文漂移；弹窗支持关闭按钮、Escape、遮罩关闭、页面滚动锁定和焦点恢复。
+- AI关键洞察、假设、判断、决策、问题和建议卡使用共享卡片互动角色，禁止父子卡同时抬升。
+- 主题整合的`sourceItemIds`在主题管理卡三映射为`自动关联笔记来源`标题列表；这属于主题管理AI结果，不由主题洞察AI生成。
+- 本轮需求参考：`docs/screenshots/final-core-workspace/ai-insight-full-card-layout-reference-20260810.png`，SHA-256=`90BCF2393F5CDB04EABC1CF75158573218D49383401D39941333806C93F05D6B`；当前源码证据：`docs/screenshots/qa/ai-insight-fixed-split-v106-1702x1066.png`和`docs/screenshots/qa/ai-insight-full-dialog-v106-1702x1066.png`，SHA-256分别为`919CA867A4F7B37CE73D7B9F5C9811DA4A4B2E7CF36D10C7F232ACF76087B577`、`E5D25E2FE851FCA20774612DE1A340DD5ABEA5ACF1620935B505FBC187409341`。
+
+> v105 当前覆盖说明：主题整合的生成所有权已归主题管理 AI。全库分类先生成领域/主题和全部有效笔记唯一归属，再按最终归属为每个主题生成带来源 ID 的整合，一并进入 taxonomy revision；主题管理卡三与主题洞察“主题整合”读取同一当前已应用修订。新增 `get_applied_ai_taxonomy_revision`，使最新待审核草稿与当前正式结果分开读取，草稿不会让正式整合消失。主题洞察“AI 重新整理”只更新主题综述、竞争假设、判断演变和决策与行动；正式人工对象独立保留。截图中“当前正式归属；等待下一次 AI 修订补充解释。”竖排的根因是普通文本被放入18px网格列，现已改为横排流式段落并删除长占位。前端189/189、Sites4/4、TypeScript、Vite、Rust103/103、1702×1066核心E2E 1/1及v105 Windows隔离`--prepare / --verify`通过；EXE 38,234,624 bytes，SHA-256=`A12F2CE6F3E9C999BFF57E309AD0552D96219027972A0BB11AC78DDD127D5421`。程序、正式数据库和真实AI API均未打开或执行。
+
+### v105 主题整合归属与横排修复
+
+- `AI Taxonomy Revision`拥有领域、主题、全部笔记唯一归属和每主题整合；`AI Topic Insight`只拥有综述及三个条件面板。
+- 主题管理与主题洞察通过已应用 revision 共享唯一整合；待审核草稿只服务预览，不能覆盖正式内容。
+- 竞争假设、判断演变、决策版本直接消费 topic insight AI 结构化结果；材料不足时显示短原因，正式确认记录作为独立数据并列。
+- 失败截图：`docs/screenshots/final-core-workspace/topic-management-vertical-copy-reference-20260810.png`，SHA-256=`15821F981062CCE76F8703BEB8BBB1A91B0DF65ECB556C39CECC1E5CF7A02347`；当前源码证据：`docs/screenshots/qa/topic-management-ai-integration-horizontal-v105-1702x1066.png`，SHA-256=`C216808AE565D99148C77D0F8DAABC5C6C561DEC50579B6332ED1D14328CFC32`。
+
+> v104 当前覆盖说明：南烛枫真实WebView2截图确认四个知识面板切换时当前画面会乱跳。根因是`KnowledgeReadingWorkspace`为四态分别保存滚动位置，首次进入其他面板会恢复到0；短面板还会压缩滚动范围，使粘性Tab下坠。v104取消分面板滚动记忆，由右侧唯一滚动区在切换前记录共享视口锚点，并在React布局提交前恢复；面板正文按真实阅读视口维持最小高度，CSS关闭浏览器自动滚动锚定，外部来源返回定位仍由既有导航目标接管。失败回归先测得Tab下跳126px，修复后连续切换`判断演变 → 主题整合 → 决策版本 → 竞争假设`，Tab条、右卡与窗口位置误差均≤1px。前端187/187、TypeScript、Vite、Sites4/4、1702×1066完整核心E2E 1/1及v104 Windows隔离`--prepare / --verify`通过；EXE 38,254,592 bytes，SHA-256=`819E15815DFCAA48B7EA0E40E5340BA52D466C2F06938B075F0C95393C05F276`。程序和正式数据未打开，真实物理点击仍待南烛枫确认。
+
+### v104 四知识面板切换视口稳定
+
+- `knowledge-final-scroll`继续是唯一纵向滚动所有者；Tab切换不再读取目标面板的历史滚动值。
+- Tab尚未粘性固定时保留当前`scrollTop`；Tab已固定在视口顶部时保留Tab这一视觉锚点，让新面板从其下方稳定出现。
+- 短内容至少填满Tab下方剩余可视区，避免滚动上限收缩；不增加占位知识内容，不改变四态职责、AI结果或皮肤。
+
+> AI-only 语义流水线当前覆盖说明：南烛枫已明确替代此前“AI总览 + 本地分析/本地分类回退”方案。现行代码新增 migration v7：AI 分批逐篇生成语义档案，再生成全库领域/主题结构，最后分批为全部有效笔记生成唯一主主题归属；结果先进入可完整预览的 `taxonomy revision`，应用时事务写入并保存撤销快照。导入和来源页不再触发本地关键词分类；旧确定性分类器、65分阈值、个人目录、分类上下文/候选命令、本地语义生成器、dry-run、补充输入脚本、旧 examples 和原型已从生产入口及前端源码删除。主题洞察改为同一次 AI 调用生成综述及三个有证据才出现的条件面板。生产 Release 不编译旧本地分类/个人目录代码，仅在 `cfg(test)` 下保留历史迁移兼容合同。前端187/187、Sites4/4、TypeScript、Vite、Rust103/103、Release `cargo check`、1702×1066 AI-only核心E2E 1/1及v103 Windows隔离构建/校验通过；真实 API、正式 `D:\南枫知识库`和真实WebView2均未执行。完整合同见`docs/ai-semantic-pipeline.md`。
+
+> v103 当前覆盖说明：当前唯一BAT已切换到`v103-ai-only-semantic-pipeline`。AI未生成时，主题洞察只显示原始笔记、已确认记录和明确等待态，不再生成本地概览、竞争假设、判断演变或决策草案；主题管理只显示AI主题边界、归纳笔记和AI分类修订职责，不再显示自动排除、关键词权重或本地评分。核心E2E已覆盖等待态、卡二共用分类树、主题整合原文回溯、维护入口、四皮肤、单主题/批量AI模拟结果和无本地回退。Windows隔离EXE为38,254,592 bytes，SHA-256=`26C0AFBBAAE169B3A64B6ACA00762CF72C380761CAD892D00AC45222208CD101`；未启动应用、未打开正式数据、未调用真实AI。
+
+### v103 AI-only 语义流水线
+
+- `主题管理`拥有全库AI分类：逐篇语义档案 → 领域/主题体系 → 全来源唯一主归属 → 完整修订预览 → 一次事务应用/撤销。
+- `主题洞察`拥有主题成果包：必有主题综述；竞争假设、判断演变、决策与行动只有证据充分时出现；来源ID和原文回溯贯穿结论，不另造第五个知识面板。
+- 本地只保留原文解析、搜索、去重、附件、事务、审计、费用和撤销；离线时原文可读，AI区显示等待/失败，不生成替代内容。
+
+> v102 当前覆盖说明：南烛枫最新真实WebView2截图确认v87虽然已把前景RGB提到纯白，但主题树普通项、阅读卡、辅助卡、记录/设置卡及AI卡内白卡仍保留`0.72–0.94`透明度，暖色场景继续透入并导致整体发灰。最新视觉合同明确替代“前景卡保持既有alpha”：三套场景皮肤的所有最前景内容卡、列表卡、判断卡和卡内白卡改为完全不透明的高亮珍珠白；淡绿、淡红、淡紫等语义卡保留低色度色相但同样完全不透明。玻璃通透只由外层侧栏/工作区/内容承托面负责；布局、尺寸、圆角、边缘、模糊职责、AI功能、主题整合主要来源阅读卡及原版浅色不变。前端234/234、Sites4/4、TypeScript、Vite生产构建和1702×1066四皮肤/AI结果态E2E 1/1通过；当前源码证据为`docs/screenshots/qa/foreground-card-opaque-v102-1702x1066.png`与`docs/screenshots/qa/foreground-card-opaque-ai-v102-1702x1066.png`。v102 Windows隔离`--prepare / --verify`通过，EXE 38,298,624 bytes，SHA-256=`FC093F971E1A4D633C909CE902B21C03844B3644DA68E001CCE62F29719235EB`。程序、真实API和正式数据均未打开或执行；最终真实WebView2观感仍待南烛枫双击当前验收BAT确认。
 
 > v0.3.0 Windows 正式发布包：唯一安装资产为`NanfengKnowledgeBase-Windows-v0.3.0-Setup.exe`，大小22,141,639 bytes，SHA-256=`6B36FA596F8D211A984EAC630E4AC1157AE2D55E370E059933C2B0038AC66273`。`package.json`与Tauri版本均为`0.3.0`，NSIS正式安装包合同通过。安装包当前未做代码签名，Windows可能显示SmartScreen提示；这属于发布边界，不影响本地数据与AI功能。正式发布只上传这一份Setup EXE，当前可运行界面预览只保留在README。
 
@@ -80,6 +319,26 @@
 
 > v93 当前覆盖说明：根目录唯一验收入口为`启动南枫知识库-当前验收.bat`。设置页显示版本、构建标签、EXE大小和运行文件自身SHA-256；媒体明确复位、视频输入所有权、附件有界加载、右键作用域和完整E2E阻断均已修复。下文历史段落中的v92及更早入口、运行包和“完整E2E被遮罩阻断”只作历史证据，不再表示当前状态。
 > v93启动器独占锁已实测：第二个`--prepare`在编译前被拒绝并返回非零状态。当前没有第二个Codex开发任务写入仓库；旧v89程序PID29668仍在运行，因此只保留其`*-app`目录，关闭后可重跑`scripts/cleanup-acceptance-artifacts.ps1`删除。
+
+### v115 主题管理工具栏密度
+
+- 根因确认：窄栏工具区把模型筛选、两个状态筛选和两个长AI动作放入同一三列网格，第二行按钮被压缩为多行竖排文字。
+- 现改为两层：`模型 / 全部 / 待处理`首行等宽紧凑控制；`AI 全量重新整理 / AI 补充新增笔记`第二行等宽42px动作卡并强制单行；草稿的`应用修订`独占下一整行。功能、模型选择、全量/增量规则和生成范围未变。
+- 自动验证：TypeScript、前端198/198、生产构建及v115隔离`--prepare / --verify`通过；EXE 38,726,656 bytes，SHA-256=`8EF5AA2B05228795B9AF66EA1DF8EFF0BD969A2364CB8B06F40E9965A32E3669`。真实WebView2待南烛枫验收。
+
+### v114 全部笔记回看缓存与统一加载提示
+
+- 根因确认：全部笔记卡三为保障列表首屏轻量而按需读取正文，近期缓存仅8篇；附件状态也在切换来源时先清空，因此用户回看刚读过的笔记会重新显示加载占位。
+- 正文改为32篇/8MB双上限LRU缓存，命中时同步显示；当前正文稳定后才在交互空闲期预取前后各2篇。已物化附件按来源保存32篇会话缓存，返回刚读过的笔记不重新查询或显示占位；不扫描、预读或常驻全库。
+- 新增`src/ui/loadingLabel.ts`作为普通读取等待态唯一文案，统一为`正在加载中..`；AI生成任务仍保留可核对的阶段、模型、Token与费用进度。
+- 自动验证：TypeScript、前端198/198、正文/附件合同17/17、生产构建及v114隔离`--prepare / --verify`通过；EXE 38,726,656 bytes，SHA-256=`4E1B36CE4FFD470BA7E8DF3197E0DA8C76D6561960ECA33788A82B9361415EC9`。真实WebView2与正式库体感待南烛枫验收。
+
+### v113 历史资料时间线加载与全格式卡片
+
+- 根因确认：时间线每次打开都重新扫描所有来源的正文声明，并逐来源执行附件查询；随后一次挂载近千张卡片，导致全部附件、图片、视频、音频和文件的首次反馈共同变慢。
+- `attachments::list_catalog_source_attachments`现在一次批量读取受控附件元数据，目录扫描不再发生按来源N次查询；原始导出包和附件实体仍不在该读取路径打开。
+- 前端首次仅绘制120项，按月多列继续加载；已打开分类立即复用本地结果并后台刷新。时间线仍保留完整目录，不以截断伪装全部结果。音频卡提供原生播放、进度和音量；文件卡按真实格式进入统一软件内预览。
+- `AttachmentTimelineDialog`默认占应用约80%，高度由弹窗本身持有、月份列表只消费剩余空间滚动，因此可同时调整宽高。前端附件合同9/9、Rust附件10/10、TypeScript、Vite生产构建、v113隔离`--prepare / --verify`通过；程序、正式数据与真实WebView2未启动或验收。
 
 ## 1. 当前结论
 
@@ -389,58 +648,58 @@
 
 ### 4.2 正式数据与 Repository 边界
 
-- 未修改 migration v4 表结构或既有字段语义；
+- 未修改 migration v1–v6 的既有字段语义；新增 migration v7 只承载AI语义档案、分类修订、归属草稿和撤销快照；
 - Rust Repository 扩展主题详情、来源归属附件、全库正文搜索和标题修改；legacy record 回收站状态继续决定来源档案/收录查询可见性，恢复后来源重新出现；
 - 未新增假数据到生产组件；
 - 未后台打开正式`D:\南枫知识库`；
-- 未执行正式 migration v4/v5；
+- 未执行正式数据库截至 migration v7 的任何本轮迁移；
 - 未制作安装包或上传 GitHub。
 
 ## 5. 验证真相
 
 | 层级 | 当前结果 |
 |---|---|
-| 前端单元/领域合同 | 234/234 通过；覆盖全部主题串行执行、逐项状态、瞬时错误一次重试、认证错误不重试、失败原始错误保留、合并主题跳过和持久结果弹窗合同 |
+| 前端单元/领域合同 | 190/190 通过；覆盖AI全库分类修订、主题成果包、自动关联来源、固定分屏、完整弹窗、圆形进度加载环、无本地生成回退、仓库与展示合同 |
 | TypeScript | 通过 |
 | Vite 生产构建 | 通过 |
-| Playwright E2E | 本轮主题洞察专项1/1通过，覆盖点击即显示过程弹窗、当前/完整队列、瞬时错误重试状态、成功/失败结果等待4.5秒不消失、失败主题与真实错误可见、只重试失败主题；既有完整历史流程17/17与独立媒体专项3/3证据保留。Chrome结果不冒充WebView2真实观感 |
-| Windows Tauri `--no-bundle` | v101当前应用`.runtime-qa/current-acceptance-v101-app/release/nanfeng-knowledge-base.exe`由唯一BAT完成`--prepare / --verify`；最终大小与SHA见本节下方当前入口。未启动应用或正式数据 |
-| Rust 全量 | 103/103通过；新增AI批量连接复用合同，既有主题正文上下文、附件、来源、分类、备份恢复和知识数据合同继续通过 |
+| Playwright E2E | 完整18/18历史主回归继续有效；v108定向核心E2E1/1复跑通过，并实算单主题整理与全库分类进度弹窗加载环`border-radius:50%`。Chrome结果不冒充WebView2真实观感 |
+| Windows Tauri `--no-bundle` | v108当前应用`.runtime-qa/current-acceptance-v108-app/release/nanfeng-knowledge-base.exe`由唯一BAT完成`--prepare / --verify`；最终大小与SHA见本节下方当前入口。未启动应用、正式数据或真实AI |
+| Rust 全量 | 103/103通过；AI成果包、taxonomy revision应用/撤销、主题正文上下文、附件、来源、备份恢复和知识数据合同继续通过；旧本地分类兼容代码只在测试配置编译 |
 | Rust knowledge 定向测试 | 36/36 通过 |
 | Rust attachments 定向测试 | 9/9 通过；确认附件逐字节复制、来源对象跨legacy/v4关联读取、未物化多格式声明可检索，以及批量自动加载幂等/失败隔离 |
 | 1584×1000 既有隔离浏览器 | 通过；四个知识状态、来源↔知识双向定位与五套皮肤的上一轮证据仍保留 |
 | 内置浏览器视觉核对 | 导出提示在1280×720视口中心坐标(640,360)，2px橙框且显示在导出弹窗上层；截图`docs/screenshots/qa/export-toast-centered-v13.png`。知识仓库无桌面桥，四状态正式内容未冒充已验收 |
 | 本轮同视口视觉 QA | 1280×720仅作为明确的小窗口响应式专项：120条时操作组由`right:0`绝对贴右，按钮与工具栏右边缘重合，右间距0px，摘要/操作间距8px，无重叠或溢出；证据`docs/screenshots/qa/four-entry-toolbar-120-far-right-1280x720.png`。该专项不替代1702×1066正式桌面对比 |
 | 设置存储分层浏览器 QA | 1702×1066内置浏览器实测两卡等宽等高、操作底边一致、重复文案/范围节点为0；设置与主界面刷新按钮均可操作并同步同一状态，开发日志无error；前后同屏比较无P0/P1/P2。未执行正式Windows外部删除，不代表真实磁盘变化已验收 |
-| 新 BAT `--verify` | `启动南枫知识库-当前验收.bat`使用v101源码完成`--prepare / --verify`；未启动程序、未打开正式数据 |
+| 新 BAT `--verify` | `启动南枫知识库-当前验收.bat`使用v108源码完成`--prepare / --verify`；未启动程序、未打开正式数据、未调用真实AI |
 | 南烛枫真实桌面 | 唯一当前BAT待确认真实MP4声音/进度/音量/全屏、Explorer选中、正式Markdown和多格式长笔记压力；自动验证不得替代 |
-| 正式 migration v4/v5 | 未声明完成；本轮只读审计未写库 |
+| 正式 migration v7 | 未执行；本轮未打开、迁移或写入正式库 |
 
 隔离证据位于`.runtime-qa/knowledge-final-layout-evidence/`；生产组件没有使用这些夹具数据。
 
 ## 6. 当前 BAT 与正式数据边界
 
 - 当前且唯一根目录入口：`启动南枫知识库-当前验收.bat`
-- 当前界面程序：`.runtime-qa\current-acceptance-v101-app\release\nanfeng-knowledge-base.exe`
-- 当前界面程序大小与SHA-256：38,298,624 bytes，`8C75CF833E63515D9F1778DA49D909CEBE4486F1C6AE7975CF174921A4F4D054`；设置页“当前程序”卡计算同一运行文件，构建标签为`v101-ai-batch-live-progress`。
+- 当前界面程序：`.runtime-qa\current-acceptance-v119-app\release\nanfeng-knowledge-base.exe`
+- 当前界面程序大小与SHA-256：38,735,872 bytes，`FD5398E24F125DA566FCE8AE5CC5B3BC464C517C83A635CB4B8E61943B91D24B`；设置页最底部“当前程序”卡计算同一运行文件，构建标签为`v119-shell-verbatim-path-safe-locator`。
 - 历史验收BAT已移入`docs/archive/acceptance-entrypoints/`并改为不可执行扩展名；旧隔离程序除仍被现有进程占用者外清理。
 - BAT 按南烛枫要求默认使用正式数据，不再显示 1/2 选择；只有南烛枫双击才进入真实路径。
 - Codex 只执行`--prepare / --verify`；没有启动程序。
-- 南烛枫首次双击时可能由应用按既有迁移规则对正式库应用 migration v4/v5，并先创建迁移前备份；这一真实路径尚未授权和验收。
+- 南烛枫首次双击时可能由应用按既有迁移规则对正式库应用截至 migration v10 的迁移；这一真实路径尚未由本轮 Codex 执行或验收。
 - 旧苹果玻璃样板、旧皮肤、旧知识视图和旧图片专项隔离包均不得截图或作为当前场景材质证据；只有明确回归调查时才可引用并标注为旧证据。
 
 ## 7. 唯一下一步
 
-当前唯一下一步是由南烛枫关闭其他南枫知识库窗口，双击`启动南枫知识库-当前验收.bat`，点击`AI 整理全部主题`，确认过程弹窗立即出现并逐项推进；重点观察此前的握手EOF、连接中断、超时、解析和空总结是否经一次自动重试明显下降。最终失败仍应显示真实主题与原因，`重试失败主题`只重试失败项，并在设置页核对每次任务的Token和费用记录。该动作会真实调用模型并产生费用，只由南烛枫本人执行。不得把隔离构建或自动合同冒充真实 API、正式WebView2或正式数据通过：
+当前唯一下一步是由南烛枫关闭其他南枫知识库窗口，双击`启动南枫知识库-当前验收.bat`，依次从正文资源、最高层预览和附件时间线各选择一个视频、图片、音频、PDF/Markdown及普通文件点击`定位文件`，再导出一篇 Markdown 或 DOCX 并点击`定位导出文件`；每次都应打开真实父目录并高亮对应文件，不得只打开默认“文档”或导出根目录。该路径不要求调用 AI，但程序可能按既有启动合同升级正式库，因此必须由南烛枫本人执行。不得把自动合同或原生 API 返回成功冒充完整软件内点击验收：
 
 1. 三个入口是否真正符合文档职责，而非旧页面换名；
 2. 场景皮肤是否保持完整磨砂白底；
-3. 主题洞察四状态是否各司其职，正式对象为空时自动提取是否有实际内容；
+3. AI不可用或尚未生成时，是否只显示原始笔记、已确认记录和等待/失败态，完全没有本地分析、本地摘要或本地分类回退；
 4. 四入口每张卡是否只在鼠标悬停时于右侧中部显示收藏、完整导出和更多；仅选中卡片或让卡片自身获得焦点时必须隐藏，键盘实际聚焦操作按钮或菜单展开时保持显示；显示过程不改变卡片尺寸，更多菜单含查看详情并在空白点击或 Escape 时关闭；
 5. 来源列表定位是否只滚动不切换；任何方式打开或切换笔记时正文是否回顶部且不重放旧关键词；正文历史是否只回填，只有本次点击`搜索`才滚动正文；
-6. 主题管理的每个待处理事项是否进入对应真实操作；
+6. 主题管理是否能生成完整领域/主题体系并把全部有效笔记归入列表；低置信项是否明确待核对，应用前是否可完整预览，应用后是否可撤销；
 7. 设置内批量导入导出、弹窗和磁盘容量是否正确；奔马等三套场景皮肤的页面标题/说明/加载态是否随明暗与冷暖保持反差，回收站空状态是否由冷白磨砂稳定承托；
-8. 竞争假设是否只保留证据条目内唯一来源链接，不再显示重复来源锚点；
+8. 主题洞察是否由一次AI成果包生成主题综述；竞争假设、判断演变、决策与行动是否只在有证据时出现，空面板是否不以占位内容凑数；
 9. JPG/PNG 是否默认以全屏预览并完整显示；顶部百分比是否以原图像素为准、100%时能否达到与原文件一致的1:1细节；右下角能否人工调整窗口大小，Ctrl+鼠标滚轮能否以光标为中心缩放，左键能否拖动图片，中键能否恢复当前窗口适配；PDF、文本/Markdown/JSON、音频和视频是否仍在软件最上层预览，点击遮罩或 Escape 是否关闭；不支持格式是否只提供明确后备动作；
 10. 从知识证据进入全部笔记时是否只打开目标笔记而不自动定位正文；返回后原主题洞察面板和来源焦点是否仍能正确恢复。
 11. 普通记录、全部笔记、主题洞察和主题管理的关联线是否都从左卡边缘准确连到右卡边缘，且右侧关联卡始终显示完整橙色线框。
@@ -450,9 +709,10 @@
 15. 搜索一个只存在于未加载正文中的短语是否仍能命中；清空后是否显示可复用历史；`全部加载`是否只改变列表量；标题修改后来源列表、详情和兼容记录是否同步。
 16. 全部笔记、我的收藏、持续跟踪的卡片是否统一为语义图标、标题、主题、来源和右上日期；来源卡是否不再重复`0篇笔记`。
 17. 主题洞察与主题管理的父子层级是否只缩进图标/标题，右侧数量是否保持一列对齐。
-18. AI主题洞察生成后，鼠标停在右侧任意位置是否都能连续滚动到底；`本地分析`是否默认收起且可按需展开；关键洞察和主题管理建议是否默认收起，四个深读状态与来源证据是否仍完整可用。
+18. AI主题洞察生成后，鼠标停在右侧任意位置是否都能连续滚动到底；页面是否不再出现`本地分析`，而来源范围、原始笔记和结论引用仍可回溯。
+19. 把四个知识Tab滚到当前画面顶部后，连续点击`竞争假设 / 判断演变 / 主题整合 / 决策版本`，Tab条和右侧卡片是否始终停在原位置，不向上或向下乱跳。
 
-通过时只更新真实桌面验收状态；失败时只修复明确反馈范围。AI 只在已确认的 OpenRouter / DeepSeek 单主题整理边界内继续，不主动扩大更多供应商、AI Hub、RAG、云同步、安装包或发布。
+通过时只更新真实桌面验收状态；失败时只修复明确反馈范围。AI 只在已确认的 OpenRouter / DeepSeek、全库分类修订和主题成果包边界内继续，不主动扩大更多供应商、AI Hub、RAG、云同步、安装包或发布。
 
 ## 8. 停止条件与 Git 边界
 

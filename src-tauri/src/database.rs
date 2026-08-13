@@ -23,6 +23,16 @@ const KNOWLEDGE_MIGRATION_VERSION: i64 = 3;
 const KNOWLEDGE_REASONING_MIGRATION_VERSION: i64 = 4;
 const SOURCE_IDENTITY_MIGRATION_VERSION: i64 = 5;
 const AI_AUTOMATION_MIGRATION_VERSION: i64 = 6;
+const AI_SEMANTIC_PIPELINE_MIGRATION_VERSION: i64 = 7;
+const AI_TAXONOMY_RESUME_MIGRATION_VERSION: i64 = 8;
+const AI_MODEL_TRACKS_MIGRATION_VERSION: i64 = 9;
+const AI_INCREMENTAL_TAXONOMY_MIGRATION_VERSION: i64 = 10;
+const SOURCE_VISIBILITY_MIGRATION: &str = include_str!("../migrations/0011_source_visibility.sql");
+const SOURCE_VISIBILITY_MIGRATION_VERSION: i64 = 11;
+const AI_QWEN_DIRECT_MIGRATION_VERSION: i64 = 12;
+const AI_TASK_MODEL_ROUTE_MIGRATION_VERSION: i64 = 13;
+const AI_PROMPT_CACHE_MIGRATION_VERSION: i64 = 14;
+const AI_EXECUTION_CONTRACT_MIGRATION_VERSION: i64 = 15;
 const BACKUP_PAGES_PER_STEP: i32 = 512;
 const BACKUP_PAUSE: Duration = Duration::from_millis(1);
 
@@ -126,6 +136,51 @@ pub(crate) fn apply_migrations(connection: &mut Connection) -> AppResult<()> {
         connection,
         AI_AUTOMATION_MIGRATION_VERSION,
         crate::ai::AI_AUTOMATION_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_SEMANTIC_PIPELINE_MIGRATION_VERSION,
+        crate::ai::AI_SEMANTIC_PIPELINE_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_TAXONOMY_RESUME_MIGRATION_VERSION,
+        crate::ai::AI_TAXONOMY_RESUME_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_MODEL_TRACKS_MIGRATION_VERSION,
+        crate::ai::AI_MODEL_TRACKS_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_INCREMENTAL_TAXONOMY_MIGRATION_VERSION,
+        crate::ai::AI_INCREMENTAL_TAXONOMY_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        SOURCE_VISIBILITY_MIGRATION_VERSION,
+        SOURCE_VISIBILITY_MIGRATION,
+    )?;
+    apply_migration(
+        connection,
+        AI_QWEN_DIRECT_MIGRATION_VERSION,
+        crate::ai::AI_QWEN_DIRECT_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_TASK_MODEL_ROUTE_MIGRATION_VERSION,
+        crate::ai::AI_TASK_MODEL_ROUTE_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_PROMPT_CACHE_MIGRATION_VERSION,
+        crate::ai::AI_PROMPT_CACHE_SCHEMA_SQL,
+    )?;
+    apply_migration(
+        connection,
+        AI_EXECUTION_CONTRACT_MIGRATION_VERSION,
+        crate::ai::AI_EXECUTION_CONTRACT_SCHEMA_SQL,
     )?;
     knowledge::repository::backfill_legacy_records(connection)?;
     knowledge::repository::backfill_source_identity_and_collections(connection)?;
@@ -521,17 +576,33 @@ pub fn ensure_source_action_record(
     connection: &mut Connection,
     source_item_id: i64,
 ) -> AppResult<IntelligenceRecord> {
-    if let Some(record_id) = connection
+    let linked_record_id = connection
         .query_row(
-            "SELECT legacy_record_id
-             FROM source_items
-             WHERE id = ?1 AND status = 'active'",
+            "SELECT source.legacy_record_id
+             FROM source_items source
+             WHERE source.id = ?1 AND source.status = 'active'",
             [source_item_id],
             |row| row.get::<_, Option<i64>>(0),
         )
         .optional()?
-        .flatten()
-    {
+        .flatten();
+    if let Some(record_id) = linked_record_id {
+        let is_deleted = connection
+            .query_row(
+                "SELECT is_deleted FROM records WHERE id = ?1",
+                [record_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                AppError::NotFound("来源关联的笔记已不存在，不能重新建立操作记录".to_string())
+            })?
+            != 0;
+        if is_deleted {
+            return Err(AppError::Conflict(
+                "笔记已在回收站；请先恢复后再继续操作".to_string(),
+            ));
+        }
         return load_record(connection, record_id);
     }
 
@@ -548,8 +619,8 @@ pub fn ensure_source_action_record(
         .query_row(
             "SELECT title, original_text, source_type, platform, source_uri,
                     local_path, public_id, original_at
-             FROM source_items
-             WHERE id = ?1 AND status = 'active'",
+             FROM visible_source_items
+             WHERE id = ?1",
             [source_item_id],
             |row| {
                 Ok((
@@ -1815,6 +1886,99 @@ mod tests {
     }
 
     #[test]
+    fn execution_contract_migration_preserves_v14_rows_and_expands_profile_identity() {
+        let mut connection = Connection::open_in_memory().expect("memory database");
+        connection.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (14, '2026-08-13');
+             CREATE TABLE source_items(id INTEGER PRIMARY KEY);
+             INSERT INTO source_items(id) VALUES (1);
+             CREATE TABLE ai_task_runs(public_id TEXT PRIMARY KEY);
+             INSERT INTO ai_task_runs(public_id) VALUES ('task-v14');
+             CREATE TABLE ai_taxonomy_run_checkpoints(
+               task_public_id TEXT PRIMARY KEY REFERENCES ai_task_runs(public_id)
+             );
+             INSERT INTO ai_taxonomy_run_checkpoints(task_public_id) VALUES ('task-v14');
+             CREATE TABLE ai_topic_insight_versions(
+               id INTEGER PRIMARY KEY, task_public_id TEXT, topic_id INTEGER,
+               provider_channel TEXT, model_id TEXT, input_fingerprint TEXT, generated_at TEXT
+             );
+             INSERT INTO ai_topic_insight_versions(
+               id, task_public_id, topic_id, provider_channel, model_id, input_fingerprint, generated_at
+             ) VALUES (1, 'task-v14', 1, 'qwen_direct', 'qwen3.7-plus', 'fingerprint', '2026-08-13');
+             CREATE TABLE ai_taxonomy_revisions(
+               id INTEGER PRIMARY KEY, public_id TEXT, provider_channel TEXT, model_id TEXT
+             );
+             INSERT INTO ai_taxonomy_revisions(
+               id, public_id, provider_channel, model_id
+             ) VALUES (1, 'revision-v14', 'qwen_direct', 'qwen3.7-plus');
+             CREATE TABLE ai_source_profile_versions(
+               source_item_id INTEGER NOT NULL REFERENCES source_items(id) ON DELETE CASCADE,
+               provider_channel TEXT NOT NULL,
+               model_id TEXT NOT NULL,
+               content_sha256 TEXT NOT NULL DEFAULT '',
+               task_public_id TEXT NOT NULL,
+               profile_json TEXT NOT NULL,
+               generated_at TEXT NOT NULL,
+               PRIMARY KEY(source_item_id, provider_channel, model_id, content_sha256)
+             );
+             CREATE INDEX idx_ai_source_profile_versions_model_source
+               ON ai_source_profile_versions(provider_channel, model_id, source_item_id, generated_at DESC);
+             INSERT INTO ai_source_profile_versions(
+               source_item_id, provider_channel, model_id, content_sha256,
+               task_public_id, profile_json, generated_at
+             ) VALUES (1, 'qwen_direct', 'qwen3.7-flash', 'sha', 'task-v14', '{}', '2026-08-13');",
+        ).expect("v14 fixture");
+
+        assert!(apply_migration(
+            &mut connection,
+            AI_EXECUTION_CONTRACT_MIGRATION_VERSION,
+            crate::ai::AI_EXECUTION_CONTRACT_SCHEMA_SQL,
+        )
+        .expect("apply v15"));
+        assert!(!apply_migration(
+            &mut connection,
+            AI_EXECUTION_CONTRACT_MIGRATION_VERSION,
+            crate::ai::AI_EXECUTION_CONTRACT_SCHEMA_SQL,
+        )
+        .expect("repeat v15"));
+        let profile: (i64, String) = connection
+            .query_row(
+                "SELECT COUNT(*), MIN(execution_contract_version)
+             FROM ai_source_profile_versions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("profile preservation");
+        assert_eq!(profile, (1, "legacy".to_string()));
+        connection
+            .execute(
+                "INSERT INTO ai_source_profile_versions(
+               source_item_id, provider_channel, model_id, content_sha256,
+               execution_contract_version, task_public_id, profile_json, generated_at
+             ) VALUES (1, 'qwen_direct', 'qwen3.7-flash', 'sha',
+                       'nfkb-ai-execution-v1', 'task-v15', '{}', '2026-08-13')",
+                [],
+            )
+            .expect("same content under new contract");
+        let version_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM ai_source_profile_versions",
+                [],
+                |row| row.get(0),
+            )
+            .expect("version count");
+        assert_eq!(version_count, 2);
+        let foreign_key_errors: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign key check");
+        assert_eq!(foreign_key_errors, 0);
+    }
+
+    #[test]
     fn source_only_items_get_one_action_record_and_real_primary_topic_metadata() {
         let mut connection = open_memory_database().expect("open database");
         connection
@@ -1905,11 +2069,39 @@ mod tests {
         );
 
         move_to_trash(&connection, record.id).expect("move source action record to trash");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM visible_source_items WHERE id = ?1",
+                    [source_item_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("visible source count after trash"),
+            0,
+            "the shared visible-source entry must hide trashed records"
+        );
         assert!(knowledge::repository::list_source_archive(&connection, 20)
             .expect("source hidden in trash")
             .is_empty());
+        let error = ensure_source_action_record(&mut connection, source_item_id)
+            .expect_err("trashed source action record must never be reactivated");
+        assert!(error.to_string().contains("回收站"));
+        assert!(list_records(&connection, &RecordQuery::default())
+            .expect("active records after rejected source action")
+            .is_empty());
 
         restore_record(&connection, record.id).expect("restore source action record");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM visible_source_items WHERE id = ?1",
+                    [source_item_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("visible source count after restore"),
+            1,
+            "restore is the only path that makes the source visible again"
+        );
         assert_eq!(
             knowledge::repository::list_source_archive(&connection, 20)
                 .expect("source restored")
@@ -1941,6 +2133,49 @@ mod tests {
                 .is_empty(),
             "permanently deleted source must not reappear as an unlinked source item"
         );
+    }
+
+    #[test]
+    fn dangling_legacy_record_link_is_hidden_and_cannot_create_a_replacement_record() {
+        let mut connection = open_memory_database().expect("open database");
+        connection
+            .execute(
+                "INSERT INTO source_items(
+                   public_id, source_type, title, original_text, imported_at
+                 ) VALUES ('source-dangling-link', 'file', '损坏关联来源', '正文', '2026-08-12')",
+                [],
+            )
+            .expect("insert source");
+        let source_item_id = connection.last_insert_rowid();
+        connection
+            .execute_batch("PRAGMA foreign_keys = OFF;")
+            .expect("temporarily allow legacy corruption");
+        connection
+            .execute(
+                "UPDATE source_items SET legacy_record_id = 987654 WHERE id = ?1",
+                [source_item_id],
+            )
+            .expect("create dangling link");
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON;")
+            .expect("restore foreign keys");
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM visible_source_items WHERE id = ?1",
+                    [source_item_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("query visibility"),
+            0,
+        );
+        let error = ensure_source_action_record(&mut connection, source_item_id)
+            .expect_err("dangling link must not produce a replacement record");
+        assert!(error.to_string().contains("关联的笔记已不存在"));
+        assert!(list_records(&connection, &RecordQuery::default())
+            .expect("active records")
+            .is_empty());
     }
 
     #[test]
