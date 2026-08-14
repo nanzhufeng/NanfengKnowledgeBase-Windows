@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 
 use crate::ai::models::AiProviderChannel;
 
-pub const PROMPT_CONTRACT_VERSION: &str = "nfkb-prompt-cache-v2";
+pub const PROMPT_CONTRACT_VERSION: &str = "nfkb-prompt-cache-v3";
 /// 任何会改变 AI 结果语义、结构化输出或阶段推理策略的修改都必须升级此版本。
 pub const AI_EXECUTION_CONTRACT_VERSION: &str = "nfkb-ai-execution-v1";
 // 本地只做保守估算，不能冒充供应商分词结果。阈值留出安全余量，避免在

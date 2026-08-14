@@ -1,5 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
+const port = Number(process.env.PLAYWRIGHT_PORT ?? "4174");
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   testIgnore: "attachment-visual-media-preview.spec.ts",
@@ -8,7 +11,7 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:4174",
+    baseURL,
     headless: true,
     viewport: { width: 1702, height: 1066 },
     launchOptions: {
@@ -16,8 +19,8 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: "npm run build && npm run preview -- --host 127.0.0.1 --port 4174",
-    url: "http://127.0.0.1:4174",
+    command: `npm run build && npm run preview -- --host 127.0.0.1 --port ${port}`,
+    url: baseURL,
     reuseExistingServer: false,
     timeout: 60_000,
   },

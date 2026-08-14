@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { runAiTopicBatch, shouldRetryAiTopicError } from "./aiTopicBatch";
+import {
+  AiTopicBatchPaused,
+  runAiTopicBatch,
+  shouldRetryAiTopicError,
+} from "./aiTopicBatch";
 
 describe("一键 AI 整理全部主题", () => {
   it("按顺序逐个执行并让单主题失败保持隔离", async () => {
@@ -80,5 +84,52 @@ describe("一键 AI 整理全部主题", () => {
     expect(result.failedTopics[0]?.error).toContain("HTTP 401");
     expect(shouldRetryAiTopicError(new Error("operation timed out"))).toBe(true);
     expect(shouldRetryAiTopicError(new Error("HTTP 403"))).toBe(false);
+  });
+
+  it("当前主题保存后协作式暂停且只保留剩余队列", async () => {
+    const calls: number[] = [];
+    let pauseRequested = false;
+    const run = runAiTopicBatch(
+      [
+        { id: 1, name: "主题一", status: "active" },
+        { id: 2, name: "主题二", status: "active" },
+        { id: 3, name: "主题三", status: "active" },
+      ],
+      async (topic) => {
+        calls.push(topic.id);
+        pauseRequested = true;
+      },
+      vi.fn(),
+      { shouldPause: () => pauseRequested },
+    );
+
+    await expect(run).rejects.toBeInstanceOf(AiTopicBatchPaused);
+    try {
+      await run;
+    } catch (error) {
+      const paused = error as AiTopicBatchPaused<{ id: number; name: string; status: string }>;
+      expect(paused.remainingTopics.map((topic) => topic.id)).toEqual([2, 3]);
+      expect(paused.completedResult).toMatchObject({ total: 1, succeeded: 1, failed: 0 });
+    }
+    expect(calls).toEqual([1]);
+  });
+
+  it("重试等待前收到暂停时不再发起第二次请求", async () => {
+    let pauseRequested = false;
+    const runTopic = vi.fn(async () => {
+      pauseRequested = true;
+      throw new Error("operation timed out");
+    });
+    const run = runAiTopicBatch(
+      [{ id: 7, name: "待重试主题", status: "active" }],
+      runTopic,
+      vi.fn(),
+      { maxAttempts: 2, shouldPause: () => pauseRequested },
+    );
+
+    await expect(run).rejects.toMatchObject({
+      remainingTopics: [{ id: 7, name: "待重试主题", status: "active" }],
+    });
+    expect(runTopic).toHaveBeenCalledTimes(1);
   });
 });

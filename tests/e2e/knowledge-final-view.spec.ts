@@ -490,6 +490,14 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持五�
           if (command === "get_ai_settings") {
             return {
               activeChannel: "openrouter",
+              routingMode: "manual",
+              manualSelection: { channel: "openrouter", modelId: "deepseek/deepseek-v4-pro" },
+              routePreview: {
+                providerChannel: "openrouter",
+                profileModelId: "deepseek/deepseek-v4-pro",
+                synthesisModelId: "deepseek/deepseek-v4-pro",
+                topicInsightModelId: "deepseek/deepseek-v4-pro",
+              },
               providers: [{
                 channel: "openrouter",
                 configured: true,
@@ -1748,6 +1756,29 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持五�
   await page.mouse.wheel(0, 320);
   await expect.poll(() => sourcePreview.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
+  // Chromium 会把连续 wheel 事务锁定到旧 event.target；即使事件仍从卡二发出，
+  // 当前坐标已经进入卡三时也必须只滚动卡三，并取消卡二尚未落地的尾帧。
+  await sourceListPanel.evaluate((element) => { element.scrollTop = 0; });
+  await sourcePreview.evaluate((element) => { element.scrollTop = 0; });
+  const sourcePreviewBox = await sourcePreview.boundingBox();
+  expect(sourcePreviewBox).not.toBeNull();
+  await page.evaluate(({ x, y }) => {
+    const staleTarget = document.querySelector<HTMLElement>(".knowledge-source-list-scroll");
+    staleTarget?.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      deltaY: 320,
+    }));
+  }, {
+    x: sourcePreviewBox!.x + sourcePreviewBox!.width / 2,
+    y: sourcePreviewBox!.y + Math.min(120, sourcePreviewBox!.height / 2),
+  });
+  await expect.poll(() => sourcePreview.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await sourceListPanel.evaluate((element) => element.scrollTop)).toBe(0);
+  await sourceListPanel.evaluate((element, scrollTop) => { element.scrollTop = scrollTop; }, firstListScrollTop);
+
   // 再次不点击切回卡片二，验证滚轮归属会随悬浮立即切回。
   await page.mouse.move(listBox!.x + listBox!.width / 2, listBox!.y + 120);
   await page.mouse.wheel(0, 320);
@@ -1755,6 +1786,25 @@ test("主题洞察默认竞争假设，可稳定切换判断演变并保持五�
     .toBeGreaterThan(firstListScrollTop);
   await sourceListPanel.evaluate((element) => { element.scrollTop = 0; });
   await sourcePreview.evaluate((element) => { element.scrollTop = 0; });
+
+  const sourceListScrollBox = await sourceListPanel.boundingBox();
+  expect(sourceListScrollBox).not.toBeNull();
+  await page.evaluate(({ x, y }) => {
+    const staleTarget = document.querySelector<HTMLElement>(".knowledge-source-preview");
+    staleTarget?.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      deltaY: 320,
+    }));
+  }, {
+    x: sourceListScrollBox!.x + sourceListScrollBox!.width / 2,
+    y: sourceListScrollBox!.y + Math.min(120, sourceListScrollBox!.height / 2),
+  });
+  await expect.poll(() => sourceListPanel.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await sourcePreview.evaluate((element) => element.scrollTop)).toBe(0);
+  await sourceListPanel.evaluate((element) => { element.scrollTop = 0; });
 
   const sourceMaterial = await page.evaluate(() => {
     const workspace = document.querySelector(".knowledge-inbox-page");

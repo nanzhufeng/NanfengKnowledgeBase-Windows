@@ -25,7 +25,19 @@ const aiModelSchema = z.object({
 });
 
 const aiSettingsSchema = z.object({
-  activeChannel: aiProviderChannelSchema,
+  // 旧设置响应可能仍携带 activeChannel；自动规划时新响应为 null。
+  activeChannel: aiProviderChannelSchema.nullable().default(null),
+  routingMode: z.enum(["auto", "manual"]).default("auto"),
+  manualSelection: z.object({
+    channel: aiProviderChannelSchema,
+    modelId: z.string(),
+  }).nullable().default(null),
+  routePreview: z.object({
+    providerChannel: aiProviderChannelSchema,
+    profileModelId: z.string(),
+    synthesisModelId: z.string(),
+    topicInsightModelId: z.string(),
+  }).nullable().default(null),
   providers: z.array(z.object({
     channel: aiProviderChannelSchema,
     configured: z.boolean(),
@@ -47,6 +59,22 @@ const aiSettingsSchema = z.object({
     knownCacheSavingsRecordCount: z.number().int().default(0),
     unknownCacheSavingsRecordCount: z.number().int().default(0),
   }),
+});
+
+const aiCallHistoryEntrySchema = z.object({
+  taskPublicId: z.string(),
+  taskKind: z.string(),
+  stage: z.string().nullable(),
+  providerChannel: aiProviderChannelSchema,
+  modelId: z.string(),
+  status: z.enum(["running", "succeeded", "failed", "interrupted"]),
+  promptTokens: z.number().int().nonnegative(),
+  completionTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+  cachedTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  occurredAt: z.string(),
+  errorMessage: z.string().nullable(),
 });
 
 const aiTopicInsightSchema = z.object({
@@ -168,6 +196,7 @@ const aiTaxonomyResumeSchema = z.object({
 });
 
 export type AiSettings = z.infer<typeof aiSettingsSchema>;
+export type AiCallHistoryEntry = z.infer<typeof aiCallHistoryEntrySchema>;
 export type AiTopicInsight = z.infer<typeof aiTopicInsightSchema>;
 export type AiModelSelection = {
   channel: AiProviderChannel;
@@ -198,10 +227,13 @@ export class AiRepository {
     return aiSettingsSchema.parse(await invokeAi("get_ai_settings"));
   }
 
+  async listCallHistory(limit = 50): Promise<AiCallHistoryEntry[]> {
+    return z.array(aiCallHistoryEntrySchema).parse(await invokeAi("list_ai_call_history", { limit }));
+  }
+
   async saveSettings(input: {
-    activeChannel: AiProviderChannel;
-    selectedModelId: string | null;
-    apiKey?: string;
+    routingMode: "auto" | "manual";
+    manualSelection?: AiModelSelection | null;
   }): Promise<AiSettings> {
     return aiSettingsSchema.parse(await invokeAi("save_ai_settings", { input }));
   }
@@ -263,6 +295,10 @@ export class AiRepository {
 
   async discardTaxonomyRun(taskPublicId: string): Promise<void> {
     await invokeAi("discard_ai_taxonomy_run", { taskPublicId });
+  }
+
+  async pauseTaxonomyRevision(): Promise<void> {
+    await invokeAi("pause_ai_taxonomy_revision");
   }
 
   async runTaxonomyRevision(

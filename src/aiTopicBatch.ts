@@ -34,6 +34,18 @@ export type AiTopicBatchResult = {
   failedTopics: Array<{ id: number; name: string; error: string }>;
 };
 
+export class AiTopicBatchPaused<T extends AiBatchTopic> extends Error {
+  readonly remainingTopics: T[];
+  readonly completedResult: AiTopicBatchResult;
+
+  constructor(remainingTopics: T[], completedResult: AiTopicBatchResult) {
+    super("AI 主题批量整理已暂停");
+    this.name = "AiTopicBatchPaused";
+    this.remainingTopics = remainingTopics;
+    this.completedResult = completedResult;
+  }
+}
+
 function batchErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
   if (typeof error === "string" && error.trim()) return error.trim();
@@ -56,6 +68,7 @@ type AiTopicBatchOptions = {
   retryDelayMs?: number;
   betweenTopicsDelayMs?: number;
   shouldRetry?: (error: unknown) => boolean;
+  shouldPause?: () => boolean;
 };
 
 export async function runAiTopicBatch<T extends AiBatchTopic>(
@@ -69,6 +82,7 @@ export async function runAiTopicBatch<T extends AiBatchTopic>(
   const retryDelayMs = Math.max(0, options.retryDelayMs ?? 0);
   const betweenTopicsDelayMs = Math.max(0, options.betweenTopicsDelayMs ?? 0);
   const shouldRetry = options.shouldRetry ?? shouldRetryAiTopicError;
+  const shouldPause = options.shouldPause ?? (() => false);
   let succeeded = 0;
   let failed = 0;
   const failedTopics: Array<{ id: number; name: string; error: string }> = [];
@@ -97,7 +111,18 @@ export async function runAiTopicBatch<T extends AiBatchTopic>(
 
   report(0, 0);
 
+  const pauseWithRemaining = (remainingTopics: T[]) => {
+    throw new AiTopicBatchPaused(remainingTopics, {
+      total: succeeded + failed,
+      succeeded,
+      failed,
+      skipped: topics.length - candidates.length,
+      failedTopics,
+    });
+  };
+
   for (const [index, topic] of candidates.entries()) {
+    if (shouldPause()) pauseWithRemaining(candidates.slice(index));
     let completed = false;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       items = items.map((item) => item.id === topic.id ? {
@@ -125,6 +150,7 @@ export async function runAiTopicBatch<T extends AiBatchTopic>(
             error: errorMessage,
           } : item);
           report(index, index);
+          if (shouldPause()) pauseWithRemaining(candidates.slice(index));
           await wait(retryDelayMs * attempt);
           continue;
         }
@@ -140,6 +166,9 @@ export async function runAiTopicBatch<T extends AiBatchTopic>(
       }
     }
     if (completed) report(index, index + 1);
+    if (shouldPause() && index < candidates.length - 1) {
+      pauseWithRemaining(candidates.slice(index + 1));
+    }
     if (index < candidates.length - 1) await wait(betweenTopicsDelayMs);
   }
 

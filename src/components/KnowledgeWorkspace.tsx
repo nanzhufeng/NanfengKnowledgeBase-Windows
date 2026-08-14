@@ -70,15 +70,23 @@ import {
 } from "../services/knowledgeWorkspaceData";
 import {
   AiRepository,
+  type AiModelSelection,
   type AiTaxonomyRevision,
   type AiTaxonomyResume,
   type AiTopicInsight,
 } from "../services/aiRepository";
 import {
+  AiTopicBatchPaused,
   runAiTopicBatch,
   type AiTopicBatchProgress,
   type AiTopicBatchResult,
 } from "../aiTopicBatch";
+import {
+  clearAiTopicBatchResume,
+  mergeAiTopicBatchResults,
+  readAiTopicBatchResume,
+  saveAiTopicBatchResume,
+} from "../aiTopicBatchResume";
 import {
   getAiTaxonomyIntegrationCoverage,
   getAppliedAiTaxonomyHierarchy,
@@ -659,6 +667,14 @@ function AttachmentTimelineDialog({
   );
 }
 
+type AiTopicBatchResumeState = {
+  taxonomyRevisionPublicId: string | null;
+  topics: KnowledgeTopicRow[];
+  force: boolean;
+  completedResult: AiTopicBatchResult;
+  modelSelection: AiModelSelection;
+};
+
 function KnowledgeWorkspaceView({
   repository: providedRepository,
   mode,
@@ -841,6 +857,9 @@ function KnowledgeWorkspaceView({
   const [aiSingleResult, setAiSingleResult] = useState<AiSingleInsightResult | null>(null);
   const [aiBatchProgress, setAiBatchProgress] = useState<AiTopicBatchProgress | null>(null);
   const [aiBatchResult, setAiBatchResult] = useState<AiTopicBatchResult | null>(null);
+  const [aiBatchResume, setAiBatchResume] = useState<AiTopicBatchResumeState | null>(null);
+  const [aiBatchPauseRequested, setAiBatchPauseRequested] = useState(false);
+  const aiBatchPauseRequestedRef = useRef(false);
   const [aiTaxonomyRevision, setAiTaxonomyRevision] = useState<AiTaxonomyRevision | null>(null);
   const [appliedAiTaxonomyRevision, setAppliedAiTaxonomyRevision] =
     useState<AiTaxonomyRevision | null>(null);
@@ -848,6 +867,9 @@ function KnowledgeWorkspaceView({
   const [aiTaxonomyResult, setAiTaxonomyResult] = useState<AiTaxonomyRunResult | null>(null);
   const [aiTaxonomyResume, setAiTaxonomyResume] = useState<AiTaxonomyResume | null>(null);
   const [aiTaxonomyContinuing, setAiTaxonomyContinuing] = useState(false);
+  const [aiTaxonomyPauseRequested, setAiTaxonomyPauseRequested] = useState(false);
+  const [aiTaxonomyPausedByUser, setAiTaxonomyPausedByUser] = useState(false);
+  const aiTaxonomyPauseRequestedRef = useRef(false);
   const appliedAiTaxonomyHierarchy = useMemo(
     () => getAppliedAiTaxonomyHierarchy(appliedAiTaxonomyRevision, domains, topics),
     [appliedAiTaxonomyRevision, domains, topics],
@@ -2126,9 +2148,53 @@ function KnowledgeWorkspaceView({
     }
   };
 
+  useEffect(() => {
+    const revisionPublicId = appliedAiTaxonomyRevision?.publicId;
+    if (aiBatchResume) {
+      if (aiBatchResume.taxonomyRevisionPublicId !== (revisionPublicId ?? null)) {
+        setAiBatchResume(null);
+        clearAiTopicBatchResume();
+      }
+      return;
+    }
+    if (!revisionPublicId || aiBatchProgress) return;
+    const snapshot = readAiTopicBatchResume(revisionPublicId);
+    if (!snapshot) return;
+    const topicIds = new Set(snapshot.topicIds);
+    const resumeTopics = appliedAiTaxonomyHierarchy.topics.filter((topic) => topicIds.has(topic.id));
+    if (!resumeTopics.length) {
+      clearAiTopicBatchResume();
+      return;
+    }
+    setAiBatchResume({
+      taxonomyRevisionPublicId: revisionPublicId,
+      topics: resumeTopics,
+      force: snapshot.force,
+      completedResult: snapshot.completedResult,
+      modelSelection: snapshot.modelSelection,
+    });
+  }, [
+    aiBatchProgress,
+    aiBatchResume,
+    appliedAiTaxonomyHierarchy.topics,
+    appliedAiTaxonomyRevision?.publicId,
+  ]);
+
+  const resolveCurrentAiModelSelection = async (): Promise<AiModelSelection> => {
+    const settings = await aiRepository.getSettings();
+    const route = settings.routePreview;
+    if (!route) {
+      throw new Error("请先在 AI 自动整理中配置至少一个可用 API Key");
+    }
+    // 在批次开始前解析并冻结主题洞察模型；后续改设置不影响本批次和断点续跑。
+    return { channel: route.providerChannel, modelId: route.topicInsightModelId };
+  };
+
   const executeAiTopicBatch = async (
     batchTopics: KnowledgeTopicRow[],
     force = false,
+    frozenModelSelection?: AiModelSelection,
+    previousResult: AiTopicBatchResult | null = null,
   ) => {
     if (aiRunning || aiBatchProgress) return;
     const candidates = batchTopics.filter((topic) => topic.status !== "merged");
@@ -2138,15 +2204,23 @@ function KnowledgeWorkspaceView({
     }
 
     setAiBatchResult(null);
+    aiBatchPauseRequestedRef.current = false;
+    setAiBatchPauseRequested(false);
+    let activeModelSelection = frozenModelSelection ?? null;
     try {
+      activeModelSelection ??= await resolveCurrentAiModelSelection();
       const result = await runAiTopicBatch(
         batchTopics,
         async (topic) => {
           const insight = await aiRepository.runTopicInsight(
             topic.id,
-            undefined,
+            activeModelSelection ?? undefined,
             force,
           );
+          activeModelSelection = {
+            channel: insight.providerChannel,
+            modelId: insight.modelId,
+          };
           if (browserTopicIdRef.current === topic.id) setAiInsight(insight);
         },
         setAiBatchProgress,
@@ -2154,34 +2228,130 @@ function KnowledgeWorkspaceView({
           maxAttempts: 2,
           retryDelayMs: 1_500,
           betweenTopicsDelayMs: 650,
+          shouldPause: () => aiBatchPauseRequestedRef.current,
         },
       );
-      setAiBatchResult(result);
+      setAiBatchResult(mergeAiTopicBatchResults(previousResult, result));
+      setAiBatchResume(null);
+      clearAiTopicBatchResume();
     } catch (error) {
+      if (error instanceof AiTopicBatchPaused) {
+        const completedResult = mergeAiTopicBatchResults(previousResult, error.completedResult);
+        if (!activeModelSelection) {
+          setAiBatchResult({
+            total: completedResult.total + error.remainingTopics.length,
+            succeeded: completedResult.succeeded,
+            failed: completedResult.failed + error.remainingTopics.length,
+            skipped: completedResult.skipped,
+            failedTopics: [
+              ...completedResult.failedTopics,
+              ...error.remainingTopics.map((topic) => ({
+                id: topic.id,
+                name: topic.name,
+                error: "暂停时未能保留实际模型",
+              })),
+            ],
+          });
+          return;
+        }
+        const modelSelection = activeModelSelection;
+        const resumeState: AiTopicBatchResumeState = {
+          taxonomyRevisionPublicId: appliedAiTaxonomyRevision?.publicId ?? null,
+          topics: error.remainingTopics as KnowledgeTopicRow[],
+          force,
+          completedResult,
+          modelSelection,
+        };
+        setAiBatchResume(resumeState);
+        const revisionPublicId = appliedAiTaxonomyRevision?.publicId;
+        const persisted = revisionPublicId ? saveAiTopicBatchResume({
+          version: 1,
+          taxonomyRevisionPublicId: revisionPublicId,
+          topicIds: resumeState.topics.map((topic) => topic.id),
+          force,
+          completedResult,
+          modelSelection,
+          savedAt: new Date().toISOString(),
+        }) : false;
+        onNotify(
+          persisted
+            ? `AI 主题整理已暂停，剩余 ${resumeState.topics.length} 个主题可稍后继续`
+            : `AI 主题整理已暂停，剩余 ${resumeState.topics.length} 个主题可在本次打开期间继续`,
+        );
+        return;
+      }
       setAiBatchResult({
-        total: candidates.length,
-        succeeded: 0,
-        failed: candidates.length,
-        skipped: batchTopics.length - candidates.length,
-        failedTopics: candidates.map((topic) => ({
-          id: topic.id,
-          name: topic.name,
-          error: error instanceof Error && error.message.trim()
-            ? error.message.trim()
-            : "批量整理流程异常中断",
-        })),
+        ...mergeAiTopicBatchResults(previousResult, {
+          total: candidates.length,
+          succeeded: 0,
+          failed: candidates.length,
+          skipped: batchTopics.length - candidates.length,
+          failedTopics: candidates.map((topic) => ({
+            id: topic.id,
+            name: topic.name,
+            error: error instanceof Error && error.message.trim()
+              ? error.message.trim()
+              : "批量整理流程异常中断",
+          })),
+        }),
       });
     } finally {
+      aiBatchPauseRequestedRef.current = false;
+      setAiBatchPauseRequested(false);
       setAiBatchProgress(null);
     }
   };
 
   const runAllAiInsights = async () => {
+    setAiBatchResume(null);
+    clearAiTopicBatchResume();
     await executeAiTopicBatch(appliedAiTaxonomyHierarchy.topics, true);
   };
 
   const runPendingAiInsights = async () => {
+    setAiBatchResume(null);
+    clearAiTopicBatchResume();
     await executeAiTopicBatch(appliedAiTaxonomyHierarchy.topics);
+  };
+
+  const continueAiTopicBatch = async () => {
+    if (!aiBatchResume) return;
+    const currentTopicById = new Map(
+      appliedAiTaxonomyHierarchy.topics.map((topic) => [topic.id, topic]),
+    );
+    const currentTopics = aiBatchResume.topics
+      .map((topic) => currentTopicById.get(topic.id))
+      .filter((topic): topic is KnowledgeTopicRow => Boolean(topic));
+    const removedCount = aiBatchResume.topics.length - currentTopics.length;
+    const previousResult = removedCount > 0 ? {
+      ...aiBatchResume.completedResult,
+      skipped: aiBatchResume.completedResult.skipped + removedCount,
+    } : aiBatchResume.completedResult;
+    if (!currentTopics.length) {
+      setAiBatchResult(previousResult);
+      setAiBatchResume(null);
+      clearAiTopicBatchResume();
+      onNotify("剩余主题已经不存在，已保留先前完成的整理结果");
+      return;
+    }
+    await executeAiTopicBatch(
+      currentTopics,
+      aiBatchResume.force,
+      aiBatchResume.modelSelection,
+      previousResult,
+    );
+  };
+
+  const pauseAiTopicBatch = () => {
+    if (!aiBatchProgress || aiBatchPauseRequestedRef.current) return;
+    aiBatchPauseRequestedRef.current = true;
+    setAiBatchPauseRequested(true);
+  };
+
+  const discardAiTopicBatchResume = () => {
+    setAiBatchResume(null);
+    clearAiTopicBatchResume();
+    onNotify("已放弃剩余 AI 整理任务；已经完成的主题结果仍然保留");
   };
 
   const retryFailedAiInsights = async () => {
@@ -2233,6 +2403,9 @@ function KnowledgeWorkspaceView({
   const runAiTaxonomyRevision = async (resumeTaskPublicId?: string) => {
     if (aiTaxonomyRunning) return;
     setAiTaxonomyResult(null);
+    setAiTaxonomyPausedByUser(false);
+    setAiTaxonomyPauseRequested(false);
+    aiTaxonomyPauseRequestedRef.current = false;
     setAiTaxonomyContinuing(Boolean(resumeTaskPublicId));
     setAiTaxonomyRunning(true);
     try {
@@ -2253,11 +2426,19 @@ function KnowledgeWorkspaceView({
     } catch (error) {
       const resumableRun = await aiRepository.getResumableTaxonomyRun().catch(() => null);
       setAiTaxonomyResume(resumableRun);
-      setAiTaxonomyResult({
-        status: "failed",
-        message: `${error instanceof Error ? error.message : "AI 全库分类生成失败"}${resumableRun ? " 已完成批次已保存，下次可从断点继续。" : ""}`,
-      });
+      if (aiTaxonomyPauseRequestedRef.current && resumableRun) {
+        setAiTaxonomyPausedByUser(true);
+        setAiTaxonomyResult(null);
+        onNotify("AI 全库分类已暂停，当前断点已保存，可稍后继续");
+      } else {
+        setAiTaxonomyResult({
+          status: "failed",
+          message: `${error instanceof Error ? error.message : "AI 全库分类生成失败"}${resumableRun ? " 已完成批次已保存，下次可从断点继续。" : ""}`,
+        });
+      }
     } finally {
+      aiTaxonomyPauseRequestedRef.current = false;
+      setAiTaxonomyPauseRequested(false);
       setAiTaxonomyRunning(false);
       setAiTaxonomyContinuing(false);
     }
@@ -2266,6 +2447,9 @@ function KnowledgeWorkspaceView({
   const runIncrementalAiTaxonomyRevision = async () => {
     if (aiTaxonomyRunning) return;
     setAiTaxonomyResult(null);
+    setAiTaxonomyPausedByUser(false);
+    setAiTaxonomyPauseRequested(false);
+    aiTaxonomyPauseRequestedRef.current = false;
     setAiTaxonomyRunning(true);
     try {
       const revision = await aiRepository.runIncrementalTaxonomyRevision();
@@ -2281,12 +2465,33 @@ function KnowledgeWorkspaceView({
     } catch (error) {
       const resumableRun = await aiRepository.getResumableTaxonomyRun().catch(() => null);
       setAiTaxonomyResume(resumableRun);
-      setAiTaxonomyResult({
-        status: "failed",
-        message: `${error instanceof Error ? error.message : "AI 增量分类生成失败"}${resumableRun ? " 已完成批次已保存，可从断点继续。" : ""}`,
-      });
+      if (aiTaxonomyPauseRequestedRef.current && resumableRun) {
+        setAiTaxonomyPausedByUser(true);
+        setAiTaxonomyResult(null);
+        onNotify("AI 增量分类已暂停，当前断点已保存，可稍后继续");
+      } else {
+        setAiTaxonomyResult({
+          status: "failed",
+          message: `${error instanceof Error ? error.message : "AI 增量分类生成失败"}${resumableRun ? " 已完成批次已保存，可从断点继续。" : ""}`,
+        });
+      }
     } finally {
+      aiTaxonomyPauseRequestedRef.current = false;
+      setAiTaxonomyPauseRequested(false);
       setAiTaxonomyRunning(false);
+    }
+  };
+
+  const pauseAiTaxonomyRevision = async () => {
+    if (!aiTaxonomyRunning || aiTaxonomyPauseRequestedRef.current) return;
+    aiTaxonomyPauseRequestedRef.current = true;
+    setAiTaxonomyPauseRequested(true);
+    try {
+      await aiRepository.pauseTaxonomyRevision();
+    } catch (error) {
+      aiTaxonomyPauseRequestedRef.current = false;
+      setAiTaxonomyPauseRequested(false);
+      onNotify(error instanceof Error ? error.message : "无法暂停当前 AI 全库分类任务");
     }
   };
 
@@ -2970,10 +3175,15 @@ function KnowledgeWorkspaceView({
           aiSingleResult={aiSingleResult}
           aiBatchProgress={aiBatchProgress}
           aiBatchResult={aiBatchResult}
+          aiBatchPauseRequested={aiBatchPauseRequested}
+          aiBatchResumeCount={aiBatchResume?.topics.length ?? 0}
           onRunAiInsight={() => void runAiInsight()}
           onCloseAiSingleResult={() => setAiSingleResult(null)}
           onRunAllAiInsights={() => void runAllAiInsights()}
           onRunPendingAiInsights={() => void runPendingAiInsights()}
+          onPauseAiBatch={pauseAiTopicBatch}
+          onContinueAiBatch={() => void continueAiTopicBatch()}
+          onDiscardAiBatchResume={discardAiTopicBatchResume}
           onRetryFailedAiInsights={() => void retryFailedAiInsights()}
           onCloseAiBatchResult={() => setAiBatchResult(null)}
           onSelectTopic={(topicId) => {
@@ -3978,9 +4188,12 @@ function KnowledgeWorkspaceView({
           aiContinuing={aiTaxonomyContinuing}
           aiRunning={aiTaxonomyRunning}
           aiResult={aiTaxonomyResult}
+          aiPauseRequested={aiTaxonomyPauseRequested}
+          aiPausedByUser={aiTaxonomyPausedByUser}
           onGenerateAiRevision={() => void runAiTaxonomyRevision()}
           onGenerateIncrementalAiRevision={() => void runIncrementalAiTaxonomyRevision()}
           onContinueAiRevision={(taskPublicId) => void runAiTaxonomyRevision(taskPublicId)}
+          onPauseAiRevision={() => void pauseAiTaxonomyRevision()}
           onDiscardAndGenerateAiRevision={() => void discardAndRestartAiTaxonomyRevision()}
           onCloseAiResult={() => setAiTaxonomyResult(null)}
           onApplyAiRevision={() => void applyAiTaxonomyRevision()}

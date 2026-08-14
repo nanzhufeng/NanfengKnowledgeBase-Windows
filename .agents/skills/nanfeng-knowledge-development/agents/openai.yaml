@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nanfeng KB Development"
+  short_description: "Implement Nanfeng Knowledge Base changes safely"
+  default_prompt: "Implement a scoped Nanfeng Knowledge Base change with evidence and validation."

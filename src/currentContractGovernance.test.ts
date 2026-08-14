@@ -26,6 +26,7 @@ const aiModels = readProjectFile("src-tauri/src/ai/models.rs");
 const aiClient = readProjectFile("src-tauri/src/ai/client.rs");
 const aiPromptCache = readProjectFile("src-tauri/src/ai/prompt_cache.rs");
 const aiRepository = readProjectFile("src-tauri/src/ai/repository.rs");
+const aiRepositoryClient = readProjectFile("src/services/aiRepository.ts");
 const aiCommands = readProjectFile("src-tauri/src/commands.rs");
 const styles = readProjectFile("src/styles.css");
 
@@ -109,6 +110,12 @@ describe("当前合同治理", () => {
     expect(aiAutomationSettings).not.toContain('className="ai-settings-panel elevated-card"');
     expect(aiAutomationSettings).toContain("AiModelPickerTrigger");
     expect(aiAutomationSettings).toContain("AiModelPickerDialog");
+    expect(aiAutomationSettings).toContain("调用记录");
+    expect(aiAutomationSettings).toContain("最近 50 条");
+    expect(aiAutomationSettings).toContain("repository.listCallHistory()");
+    expect(aiRepositoryClient).toContain('invokeAi("list_ai_call_history", { limit })');
+    expect(aiRepositoryClient).toContain("aiCallHistoryEntrySchema");
+    expect(aiRepositoryClient).toContain("errorMessage: z.string().nullable()");
     expect(aiAutomationSettings).not.toContain('<select value={modelId}');
     expect(aiModelPicker).toContain('className="ai-model-picker-trigger"');
     expect(aiModelPicker).toContain('className={`ai-model-option ${presentation.tone}${selected ? " selected" : ""}`}');
@@ -129,18 +136,28 @@ describe("当前合同治理", () => {
     expect(styles).toContain(".ai-model-option.deepseek");
     expect(styles).toMatch(/\.settings-action-section\.ai-automation-entry\s*\{[\s\S]*?background:\s*var\(--settings-item-surface\);/);
     expect(styles).toMatch(/\.prototype-dialog\.ai-automation-dialog\s*\{[\s\S]*?width:\s*min\(1366px,[\s\S]*?height:\s*min\(872px,/);
+    expect(styles).toContain(".ai-call-history-panel");
+    expect(styles).toContain(".ai-call-history-item");
     expect(styles).toMatch(/\.ai-model-picker-dialog\s*\{[\s\S]*?width:\s*min\(840px,[\s\S]*?max-height:\s*min\(760px,/);
     expect(styles).toMatch(/\.ai-model-picker-options\s*\{[\s\S]*?align-content:\s*start;[\s\S]*?grid-auto-rows:\s*max-content;/);
     expect(styles).toMatch(/\.topic-final-filter-controls,\s*\.topic-final-ai-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
     expect(styles).toMatch(/\.settings-page > :is\([\s\S]*?\.ai-automation-entry,[\s\S]*?\.settings-list/);
   });
 
-  it("所有 AI 通道以固定任务路由接入，且高难模型不自动升级", () => {
+  it("所有模型从统一路由入口接入，并明确标注直连或 OpenRouter 来源", () => {
     expect(aiAutomationSettings).toContain('qwen_direct: "千问直连"');
-    expect(aiAutomationSettings).toContain("逐篇整理与批量归属固定用 Qwen3.7 Flash");
-    expect(aiAutomationSettings).toContain("DeepSeek V4 Flash");
     expect(aiAutomationSettings).toContain("任务路由基准");
-    expect(aiAutomationSettings).toContain("绝不跨供应商自动替换");
+    expect(aiAutomationSettings).toContain("routingMode");
+    expect(aiAutomationSettings).toContain("manualSelection");
+    expect(aiAutomationSettings).toContain("调用记录");
+    expect(aiModelPicker).toContain("千问直连");
+    expect(aiModelPicker).toContain("DeepSeek 直连");
+    expect(aiModelPicker).toContain("OpenRouter");
+    expect(aiModelPicker).toContain("自动规划");
+    expect(knowledgeWorkspace).toContain("settings.routePreview");
+    expect(knowledgeWorkspace).toContain("route.topicInsightModelId");
+    expect(aiAutomationSettings).toContain("ai-api-key-saved-mask");
+    expect(styles).toMatch(/\.ai-api-key-control input\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-height:\s*40px;/);
     expect(aiModels).toContain('QWEN_DEFAULT_ORGANIZATION_MODEL: &str = "qwen3.7-flash"');
     expect(aiModels).toContain('DEEPSEEK_DEFAULT_ORGANIZATION_MODEL: &str = "deepseek-v4-flash"');
     expect(aiModels).toContain("openrouter_task_model_route");
@@ -148,8 +165,12 @@ describe("当前合同治理", () => {
     expect(aiModels).toContain("AiTaskModelRoute");
     expect(aiModels).toContain('QWEN_COMPLEX_SYNTHESIS_MODEL: &str = "qwen3.7-plus"');
     expect(aiModels).toContain('QWEN_HARD_JUDGMENT_MODEL: &str = "qwen3.8-max-preview"');
+    expect(aiModels).toContain("is_nanfeng_knowledge_base_model");
     expect(aiRepository).toContain("resolve_task_model_route");
+    expect(aiRepository).toContain("automatic_task_model_route");
+    expect(aiRepository).toContain("manual:");
     expect(aiClient).toContain("QWEN_API");
+    expect(aiClient).toContain("keeps_only_knowledge_base_relevant_openrouter_fallbacks");
     expect(aiClient).toContain("prompt_cache::structured_request");
     expect(aiPromptCache).toContain('"cache_control"');
     expect(aiPromptCache).toContain('body["session_id"]');

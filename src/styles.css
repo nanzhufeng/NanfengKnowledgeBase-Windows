@@ -3736,6 +3736,11 @@ textarea:focus-visible,
   --dark-surface-input-focus: var(--dark-skin-input-focus);
   --dark-surface-subtle: var(--dark-skin-subtle);
   --dark-surface-selected: var(--dark-skin-selected);
+  /* 默认（实体皮肤）前景卡完全不透明；只有下方暗色场景玻璃合同可以改写。 */
+  --dark-frontmost-card-surface: var(--dark-skin-panel);
+  --dark-frontmost-raised-surface: var(--dark-skin-raised);
+  --dark-frontmost-selected-surface: color-mix(in srgb, var(--dark-skin-accent) 15%, var(--dark-skin-raised));
+  --dark-frontmost-human-surface: color-mix(in srgb, var(--dark-skin-accent) 10%, var(--dark-skin-raised));
   --dark-border: var(--dark-skin-border);
   --dark-border-strong: var(--dark-skin-border-strong);
   --dark-text-primary: #f3f8f4;
@@ -3858,27 +3863,27 @@ textarea:focus-visible,
   --knowledge-material-sidebar-surface:
     linear-gradient(145deg, color-mix(in srgb, var(--dark-skin-panel) 94%, transparent), color-mix(in srgb, var(--dark-skin-subtle) 90%, transparent)),
     radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--dark-skin-accent) 12%, transparent), transparent 38%);
-  --knowledge-material-navigation-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 94%, transparent), color-mix(in srgb, var(--dark-skin-panel) 90%, transparent));
+  --knowledge-material-navigation-surface: linear-gradient(150deg, var(--dark-frontmost-raised-surface), var(--dark-frontmost-card-surface));
   --knowledge-material-workspace-surface: linear-gradient(135deg, color-mix(in srgb, var(--dark-skin-panel) 82%, transparent), color-mix(in srgb, var(--dark-skin-subtle) 76%, transparent));
-  --knowledge-material-content-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 95%, transparent), color-mix(in srgb, var(--dark-skin-panel) 95%, transparent));
-  --knowledge-material-foreground-surface: var(--dark-skin-panel);
-  --knowledge-material-foreground-muted-surface: var(--dark-skin-raised);
-  --knowledge-material-browser-group-surface: var(--dark-skin-subtle);
-  --knowledge-material-browser-active-surface: linear-gradient(135deg, var(--dark-skin-input-focus), var(--dark-skin-input));
-  --knowledge-material-reading-surface: var(--dark-skin-subtle);
-  --knowledge-material-positive-surface: linear-gradient(145deg, color-mix(in srgb, #1a6b51 56%, var(--dark-skin-panel)), var(--dark-skin-panel));
-  --knowledge-material-negative-surface: linear-gradient(145deg, #3b292a, #302224);
-  --knowledge-material-action-surface: linear-gradient(145deg, var(--dark-skin-input-focus), var(--dark-skin-input));
-  --knowledge-material-result-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-panel));
-  --knowledge-material-state-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-raised));
+  --knowledge-material-content-surface: linear-gradient(150deg, var(--dark-frontmost-raised-surface), var(--dark-frontmost-card-surface));
+  --knowledge-material-foreground-surface: var(--dark-frontmost-card-surface);
+  --knowledge-material-foreground-muted-surface: var(--dark-frontmost-raised-surface);
+  --knowledge-material-browser-group-surface: var(--dark-frontmost-card-surface);
+  --knowledge-material-browser-active-surface: var(--dark-frontmost-selected-surface);
+  --knowledge-material-reading-surface: var(--dark-frontmost-card-surface);
+  --knowledge-material-positive-surface: color-mix(in srgb, color-mix(in srgb, #1a6b51 56%, var(--dark-skin-panel)) 50%, transparent);
+  --knowledge-material-negative-surface: color-mix(in srgb, #3b292a 50%, transparent);
+  --knowledge-material-action-surface: color-mix(in srgb, var(--dark-skin-input-focus) 50%, transparent);
+  --knowledge-material-result-surface: var(--dark-frontmost-raised-surface);
+  --knowledge-material-state-surface: color-mix(in srgb, var(--dark-skin-input) 50%, transparent);
   --knowledge-material-control-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-panel));
   --knowledge-material-control-muted-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-subtle));
   --knowledge-material-scroll-track: rgba(226, 241, 228, 0.1);
   --knowledge-material-scroll-thumb: rgba(235, 246, 234, 0.36);
   --knowledge-material-scroll-thumb-hover: var(--dark-skin-accent);
-  --knowledge-material-popover-surface: color-mix(in srgb, var(--dark-skin-raised) 97%, transparent);
+  --knowledge-material-popover-surface: var(--dark-skin-raised);
   --knowledge-material-control-filter: saturate(110%) blur(14px);
-  --knowledge-material-modal-surface: color-mix(in srgb, var(--dark-skin-panel) 97%, transparent);
+  --knowledge-material-modal-surface: var(--dark-skin-panel);
 }
 
 .app-shell[data-color-mode="dark"] {
@@ -5768,6 +5773,62 @@ textarea:focus-visible,
   gap: 16px;
 }
 
+.ai-routing-field {
+  display: grid;
+  gap: 7px;
+  color: #52667f;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.ai-routing-field > small {
+  color: #73839a;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.ai-provider-key-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-provider-key-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(95, 117, 145, .22);
+  border-radius: 11px;
+  background: rgba(248, 250, 253, .72);
+}
+
+.ai-provider-key-card > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-provider-key-card strong { color: #385574; font-size: 12px; }
+.ai-provider-key-card small { color: #16885f; font-size: 10px; }
+
+.ai-provider-key-card > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid rgba(95, 117, 145, .22);
+  border-radius: 8px;
+  color: #536b87;
+  background: rgba(255, 255, 255, .86);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-provider-key-card > button:disabled { cursor: wait; opacity: .64; }
+
 .ai-settings-intro {
   margin: 0;
   color: var(--text-muted, #6b788b);
@@ -5848,6 +5909,43 @@ textarea:focus-visible,
 
 .ai-api-key-control {
   position: relative;
+}
+
+.ai-api-key-control input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 43px 0 11px;
+  border: 1px solid rgba(95, 117, 145, .24);
+  border-radius: 10px;
+  outline: 0;
+  color: #243f5f;
+  background: rgba(255, 255, 255, .9);
+  font: inherit;
+}
+
+.ai-api-key-control input:focus {
+  border-color: rgba(255, 123, 51, .62);
+  box-shadow: 0 0 0 3px rgba(255, 123, 51, .1);
+}
+
+.ai-api-key-saved-mask {
+  position: absolute;
+  top: 50%;
+  right: 43px;
+  left: 11px;
+  overflow: hidden;
+  color: #5b6f88;
+  font-size: 14px;
+  letter-spacing: 1.4px;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.ai-api-key-control:focus-within .ai-api-key-saved-mask {
+  opacity: 0;
 }
 
 .ai-api-key-control input {
@@ -6115,6 +6213,152 @@ textarea:focus-visible,
   cursor: wait;
 }
 
+/* 调用记录复用任务账本，只显示用户判断运行状态所需的最小字段。 */
+.ai-call-history-panel {
+  display: grid;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+}
+
+.ai-call-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #dce3ec;
+}
+
+.ai-call-history-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.ai-call-history-header h3,
+.ai-call-history-header p {
+  margin: 0;
+}
+
+.ai-call-history-header h3 {
+  color: #173e6c;
+  font-size: 17px;
+}
+
+.ai-call-history-header p,
+.ai-call-history-item > p {
+  color: #6b788b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ai-call-history-header > button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 11px;
+  gap: 6px;
+  border: 1px solid rgba(95, 117, 145, .24);
+  border-radius: 9px;
+  color: #536b87;
+  background: #fff;
+  cursor: pointer;
+}
+
+.ai-call-history-loading,
+.ai-call-history-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+  margin: 0;
+  gap: 8px;
+  color: #6b788b;
+  font-size: 13px;
+}
+
+.ai-call-history-list {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  margin: 0;
+  padding: 0 2px 2px 0;
+  gap: 9px;
+  overflow: auto;
+  list-style: none;
+}
+
+.ai-call-history-item {
+  display: grid;
+  padding: 12px 14px;
+  gap: 3px;
+  border: 1px solid #dce3ec;
+  border-left: 3px solid #5c9f7c;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.ai-call-history-item.failed {
+  border-left-color: #cf5a4c;
+}
+
+.ai-call-history-item.interrupted {
+  border-left-color: #b18545;
+}
+
+.ai-call-history-item.running {
+  border-left-color: #527eb8;
+}
+
+.ai-call-history-item-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ai-call-history-item-topline > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #2e7b5d;
+  font-size: 13px;
+}
+
+.ai-call-history-item.failed .ai-call-history-item-topline > strong {
+  color: #b54439;
+}
+
+.ai-call-history-item.interrupted .ai-call-history-item-topline > strong {
+  color: #8b652d;
+}
+
+.ai-call-history-item.running .ai-call-history-item-topline > strong {
+  color: #416da8;
+}
+
+.ai-call-history-item time {
+  flex: none;
+  color: #7c8798;
+  font-size: 11px;
+}
+
+.ai-call-history-item > p {
+  margin: 0;
+}
+
+.ai-call-history-item > p.ai-call-history-model {
+  color: #314c70;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ai-call-history-item > p.ai-call-history-error {
+  color: #b54439;
+}
+
 @media (max-width: 760px) {
   .settings-action-section.ai-automation-entry {
     grid-template-columns: 1fr;
@@ -6128,8 +6372,18 @@ textarea:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .ai-provider-key-grid {
+    grid-template-columns: 1fr;
+  }
+
   .ai-settings-footer > div {
     width: 100%;
+  }
+
+  .ai-call-history-item-topline {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 }
 
@@ -6686,9 +6940,28 @@ textarea:focus-visible,
 }
 
 .knowledge-overview-dialog > footer.ai-batch-progress-footer {
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: space-between;
   color: #6d7d90;
   font-size: 10px;
+}
+
+.knowledge-overview-dialog > footer.ai-cooperative-pause-footer {
+  align-items: center;
+  justify-content: space-between;
+  color: #6d7d90;
+  font-size: 10px;
+}
+
+.ai-batch-progress-footer > span,
+.ai-cooperative-pause-footer > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.knowledge-overview-dialog > footer button:disabled {
+  cursor: wait;
+  opacity: .62;
 }
 
 .ai-batch-result-body {
@@ -15879,8 +16152,8 @@ span.source-image-placeholder {
   --knowledge-material-content-surface: linear-gradient(150deg, color-mix(in srgb, var(--dark-skin-raised) 95%, transparent), color-mix(in srgb, var(--dark-skin-panel) 95%, transparent));
   --knowledge-material-foreground-surface: var(--dark-skin-panel);
   --knowledge-material-foreground-muted-surface: var(--dark-skin-raised);
-  --knowledge-material-browser-group-surface: var(--dark-skin-subtle);
-  --knowledge-material-browser-active-surface: linear-gradient(135deg, var(--dark-skin-input-focus), var(--dark-skin-input));
+  --knowledge-material-browser-group-surface: var(--dark-frontmost-card-surface);
+  --knowledge-material-browser-active-surface: var(--dark-frontmost-selected-surface);
   --knowledge-material-reading-surface: var(--dark-skin-subtle);
   --knowledge-material-positive-surface: linear-gradient(145deg, color-mix(in srgb, #1a6b51 56%, var(--dark-skin-panel)), var(--dark-skin-panel));
   --knowledge-material-negative-surface: linear-gradient(145deg, #3b292a, #302224);
@@ -15949,22 +16222,22 @@ span.source-image-placeholder {
   background: var(--dark-skin-input);
 }
 
-/* 最前景卡的浅色合同只适用于默认浅色模式；暗色模式改为不透明深色实体面。 */
+/* 暗色场景玻璃是唯一允许最前景卡使用 50% 透明度的例外；其他模式仍保持实体。 */
 :root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="scene"] {
-  --knowledge-material-foreground-card-color: var(--dark-skin-panel);
+  --knowledge-material-foreground-card-color: var(--dark-frontmost-card-surface);
   --knowledge-material-browser-group-surface: var(--dark-skin-subtle);
-  --knowledge-material-browser-item-surface: var(--dark-skin-raised);
+  --knowledge-material-browser-item-surface: var(--dark-frontmost-raised-surface);
   --knowledge-material-browser-active-surface: linear-gradient(135deg, var(--dark-skin-input-focus), var(--dark-skin-input));
-  --knowledge-material-reading-card-surface: var(--dark-skin-panel);
-  --knowledge-material-reading-card-nested-surface: var(--dark-skin-raised);
-  --knowledge-material-reading-support-surface: var(--dark-skin-raised);
-  --knowledge-material-ai-card-surface: linear-gradient(120deg, var(--dark-skin-raised), var(--dark-skin-panel));
-  --knowledge-material-ai-nested-surface: var(--dark-skin-input);
-  --knowledge-material-positive-card-surface: linear-gradient(145deg, #16362c, #112d25);
-  --knowledge-material-negative-card-surface: linear-gradient(145deg, #3b282b, #302124);
-  --knowledge-material-action-card-surface: linear-gradient(145deg, var(--dark-skin-input-focus), var(--dark-skin-input));
-  --knowledge-material-result-card-surface: linear-gradient(145deg, var(--dark-skin-raised), var(--dark-skin-panel));
-  --knowledge-material-state-card-surface: linear-gradient(145deg, var(--dark-skin-input), var(--dark-skin-raised));
+  --knowledge-material-reading-card-surface: var(--dark-frontmost-card-surface);
+  --knowledge-material-reading-card-nested-surface: var(--dark-frontmost-raised-surface);
+  --knowledge-material-reading-support-surface: var(--dark-frontmost-raised-surface);
+  --knowledge-material-ai-card-surface: linear-gradient(120deg, var(--dark-frontmost-raised-surface), var(--dark-frontmost-card-surface));
+  --knowledge-material-ai-nested-surface: color-mix(in srgb, var(--dark-skin-input) 50%, transparent);
+  --knowledge-material-positive-card-surface: color-mix(in srgb, #16362c 50%, transparent);
+  --knowledge-material-negative-card-surface: color-mix(in srgb, #3b282b 50%, transparent);
+  --knowledge-material-action-card-surface: color-mix(in srgb, var(--dark-skin-input-focus) 50%, transparent);
+  --knowledge-material-result-card-surface: var(--dark-frontmost-raised-surface);
+  --knowledge-material-state-card-surface: color-mix(in srgb, var(--dark-skin-input) 50%, transparent);
 }
 
 .app-shell[data-color-mode="dark"][data-skin-material="entity"] :is(
@@ -16312,7 +16585,7 @@ span.source-image-placeholder {
   color: var(--dark-text);
 }
 
-/* 正文消息、详情和附件承托全部使用不透明深面，保留用户/助手的语义边线。 */
+/* 正文消息、详情和附件承托统一消费前景语义面；仅暗色场景玻璃会把该语义面改为 50%。 */
 .app-shell[data-color-mode="dark"] :is(
   .detail-panel,
   .record-content-card,
@@ -16326,17 +16599,17 @@ span.source-image-placeholder {
 ) {
   color: var(--dark-text);
   border-color: var(--dark-border);
-  background: var(--dark-surface-panel);
+  background: var(--dark-frontmost-card-surface);
 }
 
 .app-shell[data-color-mode="dark"] .source-message.human {
   border-left-color: var(--dark-accent);
-  background: color-mix(in srgb, var(--dark-skin-accent) 12%, var(--dark-skin-panel));
+  background: var(--dark-frontmost-human-surface);
 }
 
 .app-shell[data-color-mode="dark"] .source-message.assistant {
   border-left-color: var(--dark-skin-accent);
-  background: var(--dark-skin-raised);
+  background: var(--dark-frontmost-raised-surface);
 }
 
 .app-shell[data-color-mode="dark"] :is(
@@ -16384,7 +16657,7 @@ span.source-image-placeholder {
 ) {
   color: var(--dark-text);
   border-color: var(--dark-border);
-  background: var(--dark-surface-panel);
+  background: var(--dark-frontmost-card-surface);
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22);
 }
 
@@ -16394,7 +16667,7 @@ span.source-image-placeholder {
   .settings-action-section:hover
 ) {
   border-color: var(--dark-border-strong);
-  background: var(--dark-surface-raised);
+  background: var(--dark-frontmost-raised-surface);
 }
 
 .app-shell[data-color-mode="dark"] .settings-page :is(
@@ -16420,12 +16693,12 @@ span.source-image-placeholder {
 
 .app-shell[data-color-mode="dark"] .skin-option {
   border-color: var(--dark-border);
-  background: var(--dark-surface-raised);
+  background: var(--dark-frontmost-raised-surface);
 }
 
 .app-shell[data-color-mode="dark"] .skin-option.selected {
   border-color: var(--dark-border-strong);
-  background: var(--dark-surface-selected);
+  background: var(--dark-frontmost-selected-surface);
 }
 
 /* 设置内的皮肤缩略图也是界面的一部分：暗色时用当前皮肤材质示意，不保留白卡幻象。 */
@@ -16623,6 +16896,8 @@ span.source-image-placeholder {
   .data-optimization-grid > div.total,
   .ai-settings-route-note,
   .ai-channel-switch button,
+  .ai-provider-key-card,
+  .ai-provider-key-card > button,
   .ai-settings-fields input,
   .ai-settings-fields select,
   .ai-model-picker-trigger,
@@ -16631,6 +16906,32 @@ span.source-image-placeholder {
   color: var(--dark-text-primary);
   border-color: var(--dark-border);
   background: var(--dark-surface-raised);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .ai-call-history-header,
+  .ai-call-history-item
+) {
+  color: var(--dark-text-primary);
+  border-color: var(--dark-border);
+  background: var(--dark-surface-raised);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .ai-call-history-header h3,
+  .ai-call-history-item > p.ai-call-history-model
+) {
+  color: var(--dark-text-primary);
+}
+
+:root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
+  .ai-call-history-header p,
+  .ai-call-history-item > p,
+  .ai-call-history-item time,
+  .ai-call-history-loading,
+  .ai-call-history-empty
+) {
+  color: var(--dark-text-secondary);
 }
 
 :root[data-knowledge-color-mode="dark"] .prototype-dialog :is(
@@ -16644,6 +16945,9 @@ span.source-image-placeholder {
   .settings-action-section > div:first-child > p,
   .ai-settings-intro,
   .ai-settings-route-note,
+  .ai-routing-field,
+  .ai-routing-field > small,
+  .ai-provider-key-card small,
   .ai-settings-fields label,
   .ai-model-field,
   .ai-model-picker-trigger small,
@@ -16664,6 +16968,7 @@ span.source-image-placeholder {
   .settings-storage-overview-heading > strong,
   .settings-action-section > div:first-child > strong,
   .ai-settings-route-note strong,
+  .ai-provider-key-card strong,
   .data-optimization-grid strong,
   .shortcut-list span
 ) {
@@ -16677,7 +16982,9 @@ span.source-image-placeholder {
   .danger-button,
   .storage-refresh-button,
   .ai-settings-footer > button,
-  .ai-api-key-control button
+  .ai-api-key-control button,
+  .ai-provider-key-card > button,
+  .ai-call-history-header > button
 ) {
   color: var(--dark-text-primary);
   border-color: var(--dark-border);
@@ -16798,11 +17105,15 @@ span.source-image-placeholder {
   --search-control-inner-highlight: inset 0 1px color-mix(in srgb, var(--dark-text-primary) 9%, transparent);
 }
 
-/* 场景皮肤允许外层承托面透出背景；输入与可操作面仍保持足够实体，保证文字可读。 */
+/* 暗色场景只让 frontmost 总线透景；弹窗、菜单、输入与高密度阅读面继续使用实体 surface 总线。 */
 :root[data-knowledge-color-mode="dark"][data-knowledge-skin-material="scene"] {
-  --dark-surface-panel: color-mix(in srgb, var(--dark-skin-panel) 91%, transparent);
-  --dark-surface-raised: color-mix(in srgb, var(--dark-skin-raised) 94%, transparent);
+  --dark-surface-panel: var(--dark-skin-panel);
+  --dark-surface-raised: var(--dark-skin-raised);
   --dark-surface-input: color-mix(in srgb, var(--dark-skin-input) 92%, var(--dark-skin-panel));
+  --dark-frontmost-card-surface: color-mix(in srgb, var(--dark-skin-panel) 50%, transparent);
+  --dark-frontmost-raised-surface: color-mix(in srgb, var(--dark-skin-raised) 50%, transparent);
+  --dark-frontmost-selected-surface: color-mix(in srgb, color-mix(in srgb, var(--dark-skin-accent) 15%, var(--dark-skin-raised)) 50%, transparent);
+  --dark-frontmost-human-surface: color-mix(in srgb, color-mix(in srgb, var(--dark-skin-accent) 10%, var(--dark-skin-raised)) 50%, transparent);
 }
 
 /* 搜索输入本体永远透明，避免值文本背后残留一块浅色或默认黑色。 */
@@ -16884,7 +17195,7 @@ span.source-image-placeholder {
 /* 列表卡是五入口共同的卡二承托面；实体皮肤不能从早期规则继承蓝灰描边。 */
 :root[data-knowledge-color-mode="dark"] .unified-note-list-panel {
   border-color: var(--dark-border) !important;
-  background: var(--dark-surface-raised) !important;
+  background: var(--dark-frontmost-card-surface) !important;
   box-shadow: var(--classic-content-shadow, 0 14px 28px -20px rgba(0, 0, 0, 0.48)) !important;
 }
 
@@ -16974,7 +17285,7 @@ span.source-image-placeholder {
   background-image: none !important;
 }
 
-/* 图标底板、回收站卡、附件与等待态使用同一黑色卡片，不再继承场景皮肤的白玻璃边。 */
+/* 图标底板、回收站卡、附件与等待态使用同一前景卡片总线，不再继承浅色白卡变量。 */
 :root[data-knowledge-color-mode="dark"] :is(
   .record-icon,
   .settings-icon,
@@ -16994,7 +17305,7 @@ span.source-image-placeholder {
 ) {
   color: var(--dark-text-primary) !important;
   border-color: var(--dark-border) !important;
-  background: var(--dark-surface-raised) !important;
+  background: var(--dark-frontmost-raised-surface) !important;
   background-image: none !important;
   box-shadow: none !important;
 }
@@ -17029,7 +17340,7 @@ span.source-image-placeholder {
 ) {
   color: var(--dark-text-primary) !important;
   border-color: var(--dark-border) !important;
-  background: var(--dark-surface-raised) !important;
+  background: var(--dark-frontmost-raised-surface) !important;
   background-image: none !important;
   box-shadow: none !important;
 }
@@ -17037,7 +17348,7 @@ span.source-image-placeholder {
 :root[data-knowledge-color-mode="dark"] :is(.record-card.selected, .record-card[aria-current="true"], .unified-note-card.selected, .unified-note-card[aria-current="true"], .knowledge-final-tabs button.active, .knowledge-final-tabs button.active span) {
   color: var(--dark-text-primary) !important;
   border-color: var(--dark-border-strong) !important;
-  background: color-mix(in srgb, var(--dark-skin-accent) 15%, var(--dark-surface-raised)) !important;
+  background: var(--dark-frontmost-selected-surface) !important;
 }
 
 :root[data-knowledge-color-mode="dark"] :is(.attachment-row span, .attachment-history-hit small, .trash-card > div:nth-child(2) span, .topic-final-awaiting-card small) {
@@ -17049,16 +17360,34 @@ span.source-image-placeholder {
 }
 
 :root[data-knowledge-color-mode="dark"] .source-message.human {
-  background: color-mix(in srgb, var(--dark-skin-accent) 10%, var(--dark-surface-raised)) !important;
+  background: var(--dark-frontmost-human-surface) !important;
 }
 
-/* 搜索历史与组合筛选是弹层，不继承页面按钮的实黑底；同一层次只在悬停/选中时加轻微强调。 */
-:root[data-knowledge-color-mode="dark"] :is(.recent-searches, .source-body-tools .source-body-search-history) {
+/*
+ * 搜索历史与组合筛选是弹层；连同轻量菜单都必须有独立实体底，场景纹理与下方列表不能穿透成可读内容。
+ * 渐变只负责同皮肤的轻微层次，真正的底色由不透明 dark-skin-panel 持有。
+ */
+:root[data-knowledge-color-mode="dark"] :is(
+  .recent-searches,
+  .source-search-history,
+  .filter-popover,
+  .action-menu,
+  .sidebar-tag-menu,
+  .app-context-menu
+) {
   color: var(--dark-text-primary) !important;
   border-color: var(--dark-border) !important;
-  background: color-mix(in srgb, var(--dark-skin-panel) 95%, transparent) !important;
-  background-image: none !important;
+  background-color: var(--dark-skin-panel) !important;
+  background-image: linear-gradient(145deg, color-mix(in srgb, var(--dark-skin-raised) 54%, transparent), transparent 72%) !important;
   box-shadow: 0 18px 36px -18px rgba(0, 0, 0, 0.52) !important;
+}
+
+/* 子弹层的 z-index 不能被触发器自己的层叠上下文压回后续工具栏和列表卡下面。 */
+:root[data-knowledge-color-mode="dark"] :is(
+  .source-search-field:has(.source-search-history),
+  .unified-note-list-filter-wrap:has(.filter-popover)
+) {
+  z-index: 40;
 }
 
 :root[data-knowledge-color-mode="dark"] :is(

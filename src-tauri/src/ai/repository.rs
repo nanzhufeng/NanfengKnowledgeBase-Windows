@@ -4,8 +4,9 @@ use uuid::Uuid;
 
 use crate::ai::credentials;
 use crate::ai::models::{
-    task_model_route, AiModelDescriptor, AiModelSelectionInput, AiProviderChannel,
-    AiProviderSettingsView, AiSettingsView, AiSourceMaterial, AiSourceProfile, AiTaskModelRoute,
+    is_nanfeng_knowledge_base_model, task_model_route, AiCallHistoryEntry, AiModelDescriptor,
+    AiModelSelectionInput, AiModelSelectionView, AiProviderChannel, AiProviderSettingsView,
+    AiSettingsView, AiSourceMaterial, AiSourceProfile, AiTaskModelRoute, AiTaskRoutePreview,
     AiTaskUsage, AiTaxonomyApplyResult, AiTaxonomyAssignmentProposal, AiTaxonomyDomainProposal,
     AiTaxonomyResumeView, AiTaxonomyRevisionView, AiTaxonomyRunCheckpoint, AiTaxonomyStructure,
     AiTaxonomyTopicProposal, AiTopicInsightPayload, AiTopicInsightView, AiUsageSummary,
@@ -19,7 +20,7 @@ fn now() -> String {
 }
 
 pub fn get_settings(connection: &Connection) -> AppResult<AiSettingsView> {
-    let active_channel: String = connection.query_row(
+    let routing_storage: String = connection.query_row(
         "SELECT active_channel FROM ai_settings WHERE singleton_id = 1",
         [],
         |row| row.get(0),
@@ -40,12 +41,13 @@ pub fn get_settings(connection: &Connection) -> AppResult<AiSettingsView> {
             [channel.as_str()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
-        let models = if channel == AiProviderChannel::QwenDirect && catalog_json == "[]" {
+        let mut models = if channel == AiProviderChannel::QwenDirect && catalog_json == "[]" {
             crate::ai::models::qwen_model_catalog()
         } else {
             serde_json::from_str::<Vec<AiModelDescriptor>>(&catalog_json)
                 .unwrap_or_else(|_| Vec::new())
         };
+        models.retain(|model| is_nanfeng_knowledge_base_model(channel, model));
         providers.push(AiProviderSettingsView {
             channel: channel.as_str().to_string(),
             configured: credentials::get_api_key(channel)?.is_some(),
@@ -118,11 +120,119 @@ pub fn get_settings(connection: &Connection) -> AppResult<AiSettingsView> {
             })
         },
     )?;
+    let manual_channel = routing_storage
+        .strip_prefix("manual:")
+        .map(AiProviderChannel::parse)
+        .transpose()?;
+    let manual_selection = manual_channel.and_then(|channel| {
+        providers
+            .iter()
+            .find(|provider| provider.channel == channel.as_str())
+            .and_then(|provider| {
+                provider.selected_model_id.as_ref().filter(|model_id| {
+                    provider
+                        .models
+                        .iter()
+                        .any(|model| model.id == model_id.as_str())
+                })
+            })
+            .map(|model_id| AiModelSelectionView {
+                channel: channel.as_str().to_string(),
+                model_id: model_id.clone(),
+            })
+    });
+    let route_preview = resolve_task_model_route(connection, None)
+        .ok()
+        .map(|(channel, route)| AiTaskRoutePreview {
+            provider_channel: channel.as_str().to_string(),
+            profile_model_id: route.profile_model_id,
+            synthesis_model_id: route.synthesis_model_id,
+            topic_insight_model_id: route.topic_insight_model_id,
+        });
     Ok(AiSettingsView {
-        active_channel,
+        active_channel: manual_channel.map(|channel| channel.as_str().to_string()),
+        routing_mode: if manual_selection.is_some() {
+            "manual"
+        } else {
+            "auto"
+        }
+        .to_string(),
+        manual_selection,
+        route_preview,
         providers,
         usage,
     })
+}
+
+/// 统一读取逐阶段调用和旧版任务汇总。历史任务没有阶段审计时只回退一行，
+/// 避免为了展示记录另建日志或误把同一任务重复列出。
+pub fn list_call_history(
+    connection: &Connection,
+    limit: u32,
+) -> AppResult<Vec<AiCallHistoryEntry>> {
+    let safe_limit = i64::from(limit.clamp(1, 100));
+    let mut statement = connection.prepare(
+        "SELECT task_public_id, task_kind, stage, provider_channel, model_id, status,
+                prompt_tokens, completion_tokens, reasoning_tokens, cached_tokens,
+                total_tokens, occurred_at, error_message
+           FROM (
+             SELECT step.task_public_id,
+                    run.task_kind,
+                    step.stage,
+                    step.provider_channel,
+                    step.model_id,
+                    'succeeded' AS status,
+                    step.prompt_tokens,
+                    step.completion_tokens,
+                    step.reasoning_tokens,
+                    step.cached_tokens,
+                    step.total_tokens,
+                    step.created_at AS occurred_at,
+                    NULL AS error_message
+               FROM ai_task_model_steps step
+               JOIN ai_task_runs run ON run.public_id = step.task_public_id
+             UNION ALL
+             SELECT run.public_id,
+                    run.task_kind,
+                    NULL AS stage,
+                    run.provider_channel,
+                    run.model_id,
+                    run.status,
+                    run.prompt_tokens,
+                    run.completion_tokens,
+                    run.reasoning_tokens,
+                    run.cached_tokens,
+                    run.total_tokens,
+                    COALESCE(run.completed_at, run.started_at) AS occurred_at,
+                    run.error_message
+               FROM ai_task_runs run
+              WHERE NOT EXISTS (
+                SELECT 1 FROM ai_task_model_steps step
+                 WHERE step.task_public_id = run.public_id
+              )
+           )
+          WHERE occurred_at IS NOT NULL
+          ORDER BY occurred_at DESC
+          LIMIT ?1",
+    )?;
+    let rows = statement.query_map([safe_limit], |row| {
+        Ok(AiCallHistoryEntry {
+            task_public_id: row.get(0)?,
+            task_kind: row.get(1)?,
+            stage: row.get(2)?,
+            provider_channel: row.get(3)?,
+            model_id: row.get(4)?,
+            status: row.get(5)?,
+            prompt_tokens: row.get(6)?,
+            completion_tokens: row.get(7)?,
+            reasoning_tokens: row.get(8)?,
+            cached_tokens: row.get(9)?,
+            total_tokens: row.get(10)?,
+            occurred_at: row.get(11)?,
+            error_message: row.get(12)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
 pub fn record_task_model_step(
@@ -177,25 +287,47 @@ pub fn save_settings(
     connection: &Connection,
     input: &SaveAiSettingsInput,
 ) -> AppResult<AiSettingsView> {
-    if let Some(api_key) = input.api_key.as_deref() {
-        if !api_key.trim().is_empty() {
-            credentials::save_api_key(input.active_channel, api_key)?;
-        }
-    }
     let timestamp = now();
-    connection.execute(
-        "UPDATE ai_settings SET active_channel = ?1, updated_at = ?2 WHERE singleton_id = 1",
-        params![input.active_channel.as_str(), timestamp],
-    )?;
-    if let Some(model_id) = input.selected_model_id.as_deref() {
-        let model_id = model_id.trim();
-        if !model_id.is_empty() {
+    match input.routing_mode.trim() {
+        "auto" => {
+            connection.execute(
+                "UPDATE ai_settings SET active_channel = 'auto', updated_at = ?1 WHERE singleton_id = 1",
+                [timestamp],
+            )?;
+        }
+        "manual" => {
+            let selection = input
+                .manual_selection
+                .as_ref()
+                .ok_or_else(|| AppError::Validation("手动路由需要选择一个可用模型".to_string()))?;
+            let model_id = selection.model_id.trim();
+            if model_id.is_empty() {
+                return Err(AppError::Validation("请选择一个具体模型".to_string()));
+            }
+            if credentials::get_api_key(selection.channel)?.is_none() {
+                return Err(AppError::Validation(
+                    "请先保存该模型对应的 API Key".to_string(),
+                ));
+            }
+            if !model_catalog(connection, selection.channel)?
+                .iter()
+                .any(|model| model.id == model_id)
+            {
+                return Err(AppError::Validation(
+                    "所选模型不在当前可用目录中，请更新对应模型目录".to_string(),
+                ));
+            }
             connection.execute(
                 "UPDATE ai_provider_settings
                  SET selected_model_id = ?1, updated_at = ?2 WHERE channel = ?3",
-                params![model_id, timestamp, input.active_channel.as_str()],
+                params![model_id, timestamp, selection.channel.as_str()],
+            )?;
+            connection.execute(
+                "UPDATE ai_settings SET active_channel = ?1, updated_at = ?2 WHERE singleton_id = 1",
+                params![format!("manual:{}", selection.channel.as_str()), timestamp],
             )?;
         }
+        _ => return Err(AppError::Validation("不支持的任务路由模式".to_string())),
     }
     get_settings(connection)
 }
@@ -234,44 +366,96 @@ pub fn save_model_catalog(
     Ok(())
 }
 
-pub fn active_selection(connection: &Connection) -> AppResult<(AiProviderChannel, String)> {
-    let channel_value: String = connection.query_row(
+fn stored_manual_selection(
+    connection: &Connection,
+) -> AppResult<Option<(AiProviderChannel, String)>> {
+    let routing_storage: String = connection.query_row(
         "SELECT active_channel FROM ai_settings WHERE singleton_id = 1",
         [],
         |row| row.get(0),
     )?;
-    let channel = AiProviderChannel::parse(&channel_value)?;
+    let Some(channel_value) = routing_storage.strip_prefix("manual:") else {
+        return Ok(None);
+    };
+    let channel = AiProviderChannel::parse(channel_value)?;
     let model_id: Option<String> = connection.query_row(
         "SELECT selected_model_id FROM ai_provider_settings WHERE channel = ?1",
         [channel.as_str()],
         |row| row.get(0),
     )?;
-    let model_id = model_id
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AppError::Validation("请先在设置中刷新并选择 AI 模型".to_string()))?;
-    Ok((channel, model_id))
+    let Some(model_id) = model_id.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if !model_catalog(connection, channel)?
+        .iter()
+        .any(|model| model.id == model_id)
+    {
+        return Ok(None);
+    }
+    Ok(Some((channel, model_id)))
 }
 
-pub fn resolve_selection(
+fn automatic_channel_priority() -> [AiProviderChannel; 3] {
+    [
+        AiProviderChannel::QwenDirect,
+        AiProviderChannel::DeepseekDirect,
+        AiProviderChannel::Openrouter,
+    ]
+}
+
+fn automatic_task_model_route(
+    connection: &Connection,
+) -> AppResult<(AiProviderChannel, AiTaskModelRoute)> {
+    // 南枫知识库自动任务先使用已验证的千问 Flash/Plus 组合：高频阶段成本和延迟可控，
+    // 跨文档阶段使用 Plus。千问未配置时才降到 DeepSeek 直连，最后使用 OpenRouter。
+    for channel in automatic_channel_priority() {
+        if credentials::get_api_key(channel)?.is_none() {
+            continue;
+        }
+        let catalog = model_catalog(connection, channel)?;
+        let selected_model_id = match channel {
+            AiProviderChannel::QwenDirect => crate::ai::models::QWEN_COMPLEX_SYNTHESIS_MODEL.to_string(),
+            AiProviderChannel::DeepseekDirect => crate::ai::models::DEEPSEEK_COMPLEX_SYNTHESIS_MODEL.to_string(),
+            AiProviderChannel::Openrouter => connection
+                .query_row(
+                    "SELECT selected_model_id FROM ai_provider_settings WHERE channel = 'openrouter'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )?
+                .filter(|model_id| catalog.iter().any(|model| model.id == *model_id))
+                .or_else(|| catalog.first().map(|model| model.id.clone()))
+                .ok_or_else(|| AppError::Validation("OpenRouter 尚无可用模型目录，请更新模型目录".to_string()))?,
+        };
+        return Ok((
+            channel,
+            task_model_route(channel, &selected_model_id, &catalog),
+        ));
+    }
+    Err(AppError::Validation(
+        "请先在 API Key 中配置千问、DeepSeek 或 OpenRouter".to_string(),
+    ))
+}
+
+fn resolve_selection(
     connection: &Connection,
     requested: Option<AiModelSelectionInput>,
 ) -> AppResult<(AiProviderChannel, String)> {
-    let Some(requested) = requested else {
-        return active_selection(connection);
+    if requested.is_none() {
+        if let Some(selection) = stored_manual_selection(connection)? {
+            return Ok(selection);
+        }
+        let (channel, route) = automatic_task_model_route(connection)?;
+        return Ok((channel, route.synthesis_model_id));
     };
+    let requested = requested.expect("checked above");
     let model_id = requested.model_id.trim().to_string();
     if model_id.is_empty() {
         return Err(AppError::Validation("请选择可用的 AI 模型".to_string()));
     }
-    let configured: Option<i64> = connection
-        .query_row(
-            "SELECT 1 FROM ai_provider_settings WHERE channel = ?1",
-            [requested.channel.as_str()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if configured.is_none() {
-        return Err(AppError::Validation("AI 通道尚未配置".to_string()));
+    if credentials::get_api_key(requested.channel)?.is_none() {
+        return Err(AppError::Validation(
+            "请先保存该模型对应的 API Key".to_string(),
+        ));
     }
     Ok((requested.channel, model_id))
 }
@@ -296,6 +480,11 @@ pub fn resolve_task_model_route(
     connection: &Connection,
     requested: Option<AiModelSelectionInput>,
 ) -> AppResult<(AiProviderChannel, AiTaskModelRoute)> {
+    if requested.is_none() {
+        if stored_manual_selection(connection)?.is_none() {
+            return automatic_task_model_route(connection);
+        }
+    }
     let (channel, selected_model_id) = resolve_selection(connection, requested)?;
     let catalog = model_catalog(connection, channel)?;
     Ok((
@@ -313,13 +502,13 @@ fn model_catalog(
         [channel.as_str()],
         |row| row.get(0),
     )?;
-    Ok(
-        if channel == AiProviderChannel::QwenDirect && catalog_json == "[]" {
-            crate::ai::models::qwen_model_catalog()
-        } else {
-            serde_json::from_str(&catalog_json).unwrap_or_default()
-        },
-    )
+    let mut catalog = if channel == AiProviderChannel::QwenDirect && catalog_json == "[]" {
+        crate::ai::models::qwen_model_catalog()
+    } else {
+        serde_json::from_str(&catalog_json).unwrap_or_default()
+    };
+    catalog.retain(|model| is_nanfeng_knowledge_base_model(channel, model));
+    Ok(catalog)
 }
 
 pub fn model_descriptor(
@@ -1870,12 +2059,25 @@ fn is_taxonomy_source_visible(connection: &Connection, source_item_id: i64) -> A
 
 #[cfg(test)]
 mod tests {
+    use super::automatic_channel_priority;
     use crate::ai::models::{
         AiProviderChannel, AiSourceMaterial, AiSourceProfile, AiTaskUsage,
         AiTaxonomyAssignmentProposal, AiTaxonomyDomainProposal, AiTaxonomyStructure,
         AiTaxonomyTopicProposal, AiTopicInsightPayload,
     };
     use crate::database::open_memory_database;
+
+    #[test]
+    fn automatic_route_prioritizes_qwen_then_deepseek_then_openrouter() {
+        assert_eq!(
+            automatic_channel_priority(),
+            [
+                AiProviderChannel::QwenDirect,
+                AiProviderChannel::DeepseekDirect,
+                AiProviderChannel::Openrouter,
+            ]
+        );
+    }
 
     #[test]
     fn ai_migration_creates_required_tables() {
@@ -1999,6 +2201,60 @@ mod tests {
         assert_eq!(settings.usage.known_cache_savings_record_count, 0);
         assert_eq!(settings.usage.unknown_cache_savings_record_count, 1);
         assert_eq!(settings.usage.known_cache_savings_usd, 0.0);
+    }
+
+    #[test]
+    fn call_history_unifies_stage_ledger_and_legacy_task_without_sensitive_content() {
+        let connection = open_memory_database().expect("memory database");
+        connection
+            .execute(
+                "INSERT INTO ai_task_runs(
+                   public_id, task_kind, provider_channel, model_id, status,
+                   prompt_tokens, completion_tokens, total_tokens, started_at, completed_at
+                 ) VALUES ('stage-task', 'taxonomy_revision', 'qwen_direct', 'qwen3.7-flash',
+                           'succeeded', 100, 20, 120, '2026-08-13T00:00:00Z', '2026-08-13T00:01:00Z')",
+                [],
+            )
+            .expect("insert stage task");
+        super::record_task_model_step(
+            &connection,
+            "stage-task",
+            "assignments",
+            AiProviderChannel::QwenDirect,
+            "qwen3.7-flash",
+            &AiTaskUsage {
+                prompt_tokens: 100,
+                completion_tokens: 20,
+                cached_tokens: 60,
+                total_tokens: 120,
+                ..AiTaskUsage::default()
+            },
+        )
+        .expect("record stage");
+        connection
+            .execute(
+                "INSERT INTO ai_task_runs(
+                   public_id, task_kind, provider_channel, model_id, status, error_message,
+                   started_at, completed_at
+                 ) VALUES ('legacy-failure', 'topic_insight', 'deepseek_direct', 'deepseek-v4-pro',
+                           'failed', '连接超时', '2026-08-12T00:00:00Z', '2026-08-12T00:01:00Z')",
+                [],
+            )
+            .expect("insert legacy task");
+
+        let history = super::list_call_history(&connection, 50).expect("call history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].task_public_id, "stage-task");
+        assert_eq!(history[0].stage.as_deref(), Some("assignments"));
+        assert_eq!(history[0].status, "succeeded");
+        assert_eq!(history[0].cached_tokens, 60);
+        let legacy = history
+            .iter()
+            .find(|entry| entry.task_public_id == "legacy-failure")
+            .expect("legacy row");
+        assert_eq!(legacy.stage, None);
+        assert_eq!(legacy.status, "failed");
+        assert_eq!(legacy.error_message.as_deref(), Some("连接超时"));
     }
 
     #[test]

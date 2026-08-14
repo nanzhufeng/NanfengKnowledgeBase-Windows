@@ -58,11 +58,20 @@ pub fn run() {
             }
 
             app.manage(AppState::new(connection, paths, instance_guard));
+            // Windows 从 BAT 或旧显示器布局启动时，WebView 窗口偶尔会留在后台或屏幕外。
+            // 启动完成后显式恢复、居中并聚焦，保证用户能看到已经成功启动的主窗口。
+            if let Some(main_window) = app.get_webview_window("main") {
+                main_window.unminimize()?;
+                main_window.center()?;
+                main_window.show()?;
+                main_window.set_focus()?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_runtime_build_info,
             commands::get_ai_settings,
+            commands::list_ai_call_history,
             commands::save_ai_settings,
             commands::reveal_ai_api_key,
             commands::refresh_ai_models,
@@ -72,6 +81,7 @@ pub fn run() {
             commands::get_applied_ai_taxonomy_revision,
             commands::get_resumable_ai_taxonomy_run,
             commands::discard_ai_taxonomy_run,
+            commands::pause_ai_taxonomy_revision,
             commands::run_ai_taxonomy_revision,
             commands::run_ai_incremental_taxonomy_revision,
             commands::apply_ai_taxonomy_revision,

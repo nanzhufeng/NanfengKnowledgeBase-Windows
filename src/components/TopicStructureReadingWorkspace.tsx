@@ -4,6 +4,7 @@ import {
   FileText,
   FolderTree,
   Network,
+  Pause,
   Plus,
   Search,
   ShieldCheck,
@@ -69,9 +70,12 @@ type TopicStructureReadingWorkspaceProps = {
   aiContinuing: boolean;
   aiRunning: boolean;
   aiResult: AiTaxonomyRunResult | null;
+  aiPauseRequested: boolean;
+  aiPausedByUser: boolean;
   onGenerateAiRevision: () => void;
   onGenerateIncrementalAiRevision: () => void;
   onContinueAiRevision: (taskPublicId: string) => void;
+  onPauseAiRevision: () => void;
   onDiscardAndGenerateAiRevision: () => void;
   onCloseAiResult: () => void;
   onApplyAiRevision: () => void;
@@ -94,9 +98,12 @@ export function TopicStructureReadingWorkspace({
   aiContinuing,
   aiRunning,
   aiResult,
+  aiPauseRequested,
+  aiPausedByUser,
   onGenerateAiRevision,
   onGenerateIncrementalAiRevision,
   onContinueAiRevision,
+  onPauseAiRevision,
   onDiscardAndGenerateAiRevision,
   onCloseAiResult,
   onApplyAiRevision,
@@ -129,8 +136,8 @@ export function TopicStructureReadingWorkspace({
   const selectedResume = Boolean(aiResume);
 
   useEffect(() => {
-    if (aiResume && !aiRunning && !aiResult) setResumePromptOpen(true);
-  }, [aiResult, aiResume, aiRunning]);
+    if (aiResume && !aiRunning && !aiResult && !aiPausedByUser) setResumePromptOpen(true);
+  }, [aiPausedByUser, aiResult, aiResume, aiRunning]);
 
   const attentionTopicIds = useMemo(
     () => collectTopicStructuralAttentionIds(topics, aliases, relationSuggestions),
@@ -562,17 +569,31 @@ export function TopicStructureReadingWorkspace({
             </header>
             <div className="ai-single-dialog-body" aria-live="polite">
               <strong>
-                {aiContinuing
+                {aiPauseRequested
+                  ? "正在保存当前批次并暂停"
+                  : aiContinuing
                   ? "正在从已保存断点继续"
                   : aiResume ? "正在生成并保存当前进度" : "正在理解全部笔记"}
               </strong>
               <p>
-                {aiResume
+                {aiPauseRequested
+                  ? "不会再发起新批次；当前已经发出的请求完成后会保存结果并退出，稍后只继续未完成部分。"
+                  : aiResume
                   ? `已保留语义档案 ${aiResume.profiledSourceCount}/${aiResume.sourceCount} 条、笔记归属 ${aiResume.assignedSourceCount}/${aiResume.sourceCount} 条、主题整合 ${aiResume.integratedTopicCount}/${aiResume.totalTopicCount} 份；只继续未完成批次。`
                   : "正在生成领域、主题、全部笔记归属和每个主题的整合内容；完成前不会修改正式分类。"}
               </p>
               <div className="ai-taxonomy-progress-track" aria-label="AI 全库分类生成中"><i /></div>
             </div>
+            <footer className="ai-cooperative-pause-footer">
+              <span>已完成结果会保留，暂停不会撤销或重新生成。</span>
+              <button
+                type="button"
+                disabled={aiPauseRequested}
+                onClick={onPauseAiRevision}
+              >
+                <Pause size={14} />{aiPauseRequested ? "正在暂停…" : "暂停，稍后继续"}
+              </button>
+            </footer>
           </section>
         </div>,
         document.body,

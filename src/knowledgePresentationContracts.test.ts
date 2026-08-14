@@ -120,7 +120,7 @@ describe("全局反馈与知识阅读层级合同", () => {
     expect(reader).toContain("AI 全量重新整理");
     expect(reader).toContain("全部整理中 ${aiBatchProgress.current}/${aiBatchProgress.total}");
     expect(workspace).toContain("runAiTopicBatch");
-    expect(workspace).toContain("setAiBatchResult(result)");
+    expect(workspace).toContain("mergeAiTopicBatchResults(previousResult, result)");
     expect(reader).toContain('role="alertdialog"');
     expect(reader).toContain("部分主题整理失败");
     expect(reader).toContain("全部主题整理成功");
@@ -131,6 +131,10 @@ describe("全局反馈与知识阅读层级合同", () => {
     expect(reader).toContain("aiBatchProgress.items.map");
     expect(reader).toContain("请求失败，正在重试");
     expect(reader).toContain("整理过程中请保持软件开启");
+    expect(reader).toContain("暂停，稍后继续");
+    expect(reader).toContain("继续剩余 {aiBatchResumeCount} 个主题");
+    expect(workspace).toContain("shouldPause: () => aiBatchPauseRequestedRef.current");
+    expect(workspace).toContain("saveAiTopicBatchResume");
     expect(styles).toMatch(/\.ai-batch-failure-list\s*\{[\s\S]*?padding-top:\s*6px;/);
     expect(styles).toMatch(/\.ai-batch-progress-dialog\s*\{[\s\S]*?width:\s*min\(760px/);
     expect(reader).toContain("AI 正在整理主题");
@@ -200,7 +204,7 @@ describe("全局反馈与知识阅读层级合同", () => {
     expect(styles).not.toContain("--skin-material-");
   });
 
-  it("所有入口的最前景卡完全不透明并保护主题整合主要来源卡", () => {
+  it("亮色与暗色实体入口的最前景卡保持不透明并保护主题整合主要来源卡", () => {
     for (const role of [
       "browser-group",
       "browser-item",
@@ -417,9 +421,51 @@ describe("全局反馈与知识阅读层级合同", () => {
     expect(workspace).not.toContain('className="knowledge-source-filters"');
     expect(workspace).toContain("sourceVirtualList.onScroll()");
     expect(app).toContain("recordVirtualList.onScroll()");
-    expect(hoverWheelRouting).toContain("hasNativeScrollAncestor(origin, panel)");
+    expect(hoverWheelRouting).toContain("findNativeScrollAncestor(origin, panel)");
+    expect(hoverWheelRouting).toContain("documentRoot.elementFromPoint(event.clientX, event.clientY)");
+    expect(hoverWheelRouting).toContain("cancelPendingExcept(target)");
+    expect(hoverWheelRouting).toContain('documentRoot.addEventListener("pointerover", handlePointerOver');
     expect(hoverWheelRouting).toContain("window.requestAnimationFrame");
     expect(hoverWheelRouting).not.toContain("candidate.scrollTop");
+  });
+
+  it("暗色搜索历史与组合筛选使用实体弹层底并高于后续列表内容", () => {
+    expect(styles).toMatch(
+      /:root\[data-knowledge-color-mode="dark"\] :is\([\s\S]*?\.source-search-history,[\s\S]*?\.filter-popover,[\s\S]*?\.app-context-menu[\s\S]*?\)\s*\{[\s\S]*?background-color:\s*var\(--dark-skin-panel\) !important;[\s\S]*?background-image:\s*linear-gradient/,
+    );
+    expect(styles).toMatch(
+      /\.source-search-field:has\(\.source-search-history\),[\s\S]*?\.unified-note-list-filter-wrap:has\(\.filter-popover\)[\s\S]*?\)\s*\{[\s\S]*?z-index:\s*40;/,
+    );
+  });
+
+  it("只有暗色场景玻璃把共享最前景卡总线改为 50% 且弹层不跟随透明", () => {
+    expect(styles).toMatch(
+      /默认（实体皮肤）前景卡完全不透明；只有下方暗色场景玻璃合同可以改写。[\s\S]*?--dark-frontmost-card-surface:\s*var\(--dark-skin-panel\);[\s\S]*?--dark-frontmost-raised-surface:\s*var\(--dark-skin-raised\);/,
+    );
+    const sceneContract = styles.match(
+      /:root\[data-knowledge-color-mode="dark"\]\[data-knowledge-skin-material="scene"\]\s*\{[\s\S]*?--dark-frontmost-card-surface:[\s\S]*?\}/g,
+    )?.at(-1) ?? "";
+    expect(sceneContract).toContain("--dark-frontmost-card-surface: color-mix(in srgb, var(--dark-skin-panel) 50%, transparent);");
+    expect(sceneContract).toContain("--dark-frontmost-raised-surface: color-mix(in srgb, var(--dark-skin-raised) 50%, transparent);");
+    expect(sceneContract).toContain("--dark-frontmost-selected-surface:");
+    expect(styles).toContain("--knowledge-material-browser-group-surface: var(--dark-frontmost-card-surface);");
+    expect(styles).toContain("--knowledge-material-browser-active-surface: var(--dark-frontmost-selected-surface);");
+    expect(styles).toContain("--knowledge-material-reading-surface: var(--dark-frontmost-card-surface);");
+    expect(styles).toMatch(
+      /\.unified-note-list-panel\s*\{[\s\S]*?background:\s*var\(--dark-frontmost-card-surface\) !important;/,
+    );
+    expect(styles).toMatch(
+      /:root\[data-knowledge-color-mode="dark"\] :is\([\s\S]*?\.record-card,[\s\S]*?\.unified-note-card,[\s\S]*?\.attachment-text-state[\s\S]*?\)\s*\{[\s\S]*?background:\s*var\(--dark-frontmost-raised-surface\) !important;/,
+    );
+    const popoverContract = styles.match(
+      /搜索历史与组合筛选是弹层；[\s\S]*?:root\[data-knowledge-color-mode="dark"\] :is\([\s\S]*?\.app-context-menu[\s\S]*?\)\s*\{[\s\S]*?\}/,
+    )?.[0] ?? "";
+    expect(popoverContract).toContain("background-color: var(--dark-skin-panel) !important;");
+    expect(popoverContract).not.toContain("--dark-frontmost");
+    expect(styles).toContain("--knowledge-material-popover-surface: var(--dark-skin-raised);");
+    expect(styles).toContain("--knowledge-material-modal-surface: var(--dark-skin-panel);");
+    expect(sceneContract).toContain("--dark-surface-panel: var(--dark-skin-panel);");
+    expect(sceneContract).toContain("--dark-surface-raised: var(--dark-skin-raised);");
   });
 
   it("卡二条件挂载后重新测量真实视口，不停留在零高度的七行保底窗口", () => {
@@ -603,10 +649,13 @@ describe("全局反馈与知识阅读层级合同", () => {
     expect(topicManager).toContain("继续上次生成");
     expect(topicManager).toContain("正在从已保存断点继续");
     expect(topicManager).toContain("正在生成并保存当前进度");
+    expect(topicManager).toContain("正在保存当前批次并暂停");
+    expect(topicManager).toContain("暂停，稍后继续");
     expect(workspace).toContain("window.setInterval(refreshCheckpoint, 1_200)");
     expect(workspace).toContain("已完成批次已保存，下次可从断点继续");
     expect(aiRepository).toContain('invokeAi("get_resumable_ai_taxonomy_run")');
     expect(aiRepository).toContain('invokeAi("discard_ai_taxonomy_run"');
+    expect(aiRepository).toContain('invokeAi("pause_ai_taxonomy_revision")');
     expect(aiClient).toContain("canonical_taxonomy_topic_source_ids");
     expect(aiClient).toContain("来源清单由已经确认的主题归属唯一决定");
     expect(topicManager).toContain("查看分类草稿");

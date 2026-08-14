@@ -34,6 +34,7 @@ pub struct AppState {
     connection: Arc<Mutex<Connection>>,
     paths: AppPaths,
     data_optimization_approvals: Arc<Mutex<HashMap<String, DataOptimizationApproval>>>,
+    ai_taxonomy_runtime: Arc<Mutex<AiTaxonomyRuntime>>,
     _instance_guard: TcpListener,
 }
 
@@ -43,7 +44,44 @@ struct DataOptimizationApproval {
     expires_at: SystemTime,
 }
 
+#[derive(Debug, Default)]
+struct AiTaxonomyRuntime {
+    active_task_public_id: Option<String>,
+    pause_requested: bool,
+}
+
+struct ActiveAiTaxonomyTaskGuard {
+    runtime: Arc<Mutex<AiTaxonomyRuntime>>,
+    task_public_id: String,
+}
+
+impl ActiveAiTaxonomyTaskGuard {
+    fn stop_if_paused(&self) -> AppResult<()> {
+        let runtime = self.runtime.lock().map_err(|_| {
+            AppError::Conflict("AI 分类运行状态暂时不可用，请重启应用后重试".to_string())
+        })?;
+        if runtime.active_task_public_id.as_deref() == Some(self.task_public_id.as_str())
+            && runtime.pause_requested
+        {
+            return Err(AppError::Conflict(AI_TAXONOMY_PAUSED_MESSAGE.to_string()));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ActiveAiTaxonomyTaskGuard {
+    fn drop(&mut self) {
+        if let Ok(mut runtime) = self.runtime.lock() {
+            if runtime.active_task_public_id.as_deref() == Some(self.task_public_id.as_str()) {
+                runtime.active_task_public_id = None;
+                runtime.pause_requested = false;
+            }
+        }
+    }
+}
+
 const DATA_OPTIMIZATION_APPROVAL_TTL: Duration = Duration::from_secs(5 * 60);
+const AI_TAXONOMY_PAUSED_MESSAGE: &str = "用户主动暂停；当前批次已保存，可稍后继续";
 
 impl AppState {
     pub fn new(connection: Connection, paths: AppPaths, instance_guard: TcpListener) -> Self {
@@ -51,6 +89,7 @@ impl AppState {
             connection: Arc::new(Mutex::new(connection)),
             paths,
             data_optimization_approvals: Arc::new(Mutex::new(HashMap::new())),
+            ai_taxonomy_runtime: Arc::new(Mutex::new(AiTaxonomyRuntime::default())),
             _instance_guard: instance_guard,
         }
     }
@@ -59,6 +98,35 @@ impl AppState {
         self.connection
             .lock()
             .map_err(|_| AppError::Conflict("数据库连接暂时不可用，请重启应用后重试".to_string()))
+    }
+
+    fn begin_ai_taxonomy_task(&self, task_public_id: &str) -> AppResult<ActiveAiTaxonomyTaskGuard> {
+        let mut runtime = self.ai_taxonomy_runtime.lock().map_err(|_| {
+            AppError::Conflict("AI 分类运行状态暂时不可用，请重启应用后重试".to_string())
+        })?;
+        if let Some(active_task_public_id) = runtime.active_task_public_id.as_deref() {
+            return Err(AppError::Conflict(format!(
+                "已有 AI 全库分类任务正在运行（{active_task_public_id}），请先暂停或等待完成"
+            )));
+        }
+        runtime.active_task_public_id = Some(task_public_id.to_string());
+        runtime.pause_requested = false;
+        Ok(ActiveAiTaxonomyTaskGuard {
+            runtime: Arc::clone(&self.ai_taxonomy_runtime),
+            task_public_id: task_public_id.to_string(),
+        })
+    }
+
+    fn request_ai_taxonomy_pause(&self) -> AppResult<String> {
+        let mut runtime = self.ai_taxonomy_runtime.lock().map_err(|_| {
+            AppError::Conflict("AI 分类运行状态暂时不可用，请重启应用后重试".to_string())
+        })?;
+        let task_public_id = runtime
+            .active_task_public_id
+            .clone()
+            .ok_or_else(|| AppError::Conflict("当前没有正在运行的 AI 全库分类任务".to_string()))?;
+        runtime.pause_requested = true;
+        Ok(task_public_id)
     }
 
     fn issue_data_optimization_approval(&self, candidate_manifest: String) -> AppResult<String> {
@@ -151,6 +219,18 @@ pub fn get_ai_settings(
 ) -> Result<crate::ai::models::AiSettingsView, CommandError> {
     let connection = command(state.connection())?;
     command(crate::ai::repository::get_settings(&connection))
+}
+
+#[tauri::command(async)]
+pub fn list_ai_call_history(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> Result<Vec<crate::ai::models::AiCallHistoryEntry>, CommandError> {
+    let connection = command(state.connection())?;
+    command(crate::ai::repository::list_call_history(
+        &connection,
+        limit.unwrap_or(50),
+    ))
 }
 
 #[tauri::command(async)]
@@ -402,6 +482,29 @@ fn merge_ai_usage(
     }
 }
 
+fn record_taxonomy_attempt_usages(
+    connection: &Connection,
+    checkpoint: &mut crate::ai::models::AiTaxonomyRunCheckpoint,
+    task_public_id: &str,
+    stage: &str,
+    channel: crate::ai::models::AiProviderChannel,
+    model_id: &str,
+    usages: Vec<crate::ai::models::AiTaskUsage>,
+) -> AppResult<()> {
+    for usage in usages {
+        merge_ai_usage(&mut checkpoint.usage, usage.clone());
+        crate::ai::repository::record_task_model_step(
+            connection,
+            task_public_id,
+            stage,
+            channel,
+            model_id,
+            &usage,
+        )?;
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn get_latest_ai_taxonomy_revision(
     state: State<'_, AppState>,
@@ -456,6 +559,11 @@ pub fn discard_ai_taxonomy_run(
         &connection,
         &task_public_id,
     ))
+}
+
+#[tauri::command(async)]
+pub fn pause_ai_taxonomy_revision(state: State<'_, AppState>) -> Result<String, CommandError> {
+    command(state.request_ai_taxonomy_pause())
 }
 
 fn taxonomy_background_error(error: impl std::fmt::Display) -> AppError {
@@ -608,16 +716,18 @@ async fn execute_ai_taxonomy_revision(
             &checkpoint,
         ))?;
     }
+    let active_task = command(state.begin_ai_taxonomy_task(&task_public_id))?;
 
     let pipeline_result: AppResult<_> = async {
+        active_task.stop_if_paused()?;
         while checkpoint.profile_offset < pipeline_materials.len() {
             let end = (checkpoint.profile_offset + 24).min(pipeline_materials.len());
             let batch = pipeline_materials[checkpoint.profile_offset..end].to_vec();
             let run_api_key = api_key.clone();
             let run_model_id = profile_model_id.clone();
             let run_descriptor = profile_descriptor.clone();
-            let (items, batch_usage) = tauri::async_runtime::spawn_blocking(move || {
-                crate::ai::client::run_source_profile_batch(
+            let recovery = tauri::async_runtime::spawn_blocking(move || {
+                crate::ai::client::run_source_profile_batch_resilient(
                     channel,
                     &run_api_key,
                     &run_model_id,
@@ -626,21 +736,39 @@ async fn execute_ai_taxonomy_revision(
                 )
             })
             .await
-            .map_err(taxonomy_background_error)??;
-            checkpoint.profiles.extend(items);
+            .map_err(taxonomy_background_error)?;
+            let recovered = match recovery {
+                Ok(recovered) => recovered,
+                Err(failure) => {
+                    let connection = state.connection()?;
+                    record_taxonomy_attempt_usages(
+                        &connection,
+                        &mut checkpoint,
+                        &task_public_id,
+                        "profiles",
+                        channel,
+                        &profile_model_id,
+                        failure.usages,
+                    )?;
+                    crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+                    Err(failure.error)?
+                }
+            };
+            checkpoint.profiles.extend(recovered.items);
             checkpoint.profile_offset = end;
             checkpoint.stage = "profiles".to_string();
-            merge_ai_usage(&mut checkpoint.usage, batch_usage.clone());
             let connection = state.connection()?;
-            crate::ai::repository::record_task_model_step(
+            record_taxonomy_attempt_usages(
                 &connection,
+                &mut checkpoint,
                 &task_public_id,
                 "profiles",
                 channel,
                 &profile_model_id,
-                &batch_usage,
+                recovered.usages,
             )?;
             crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+            active_task.stop_if_paused()?;
         }
 
         if checkpoint.taxonomy.is_none() {
@@ -672,6 +800,7 @@ async fn execute_ai_taxonomy_revision(
                 &taxonomy_usage,
             )?;
             crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+            active_task.stop_if_paused()?;
         }
 
         while checkpoint.assignment_offset < checkpoint.profiles.len() {
@@ -684,8 +813,8 @@ async fn execute_ai_taxonomy_revision(
             let run_api_key = api_key.clone();
             let run_model_id = profile_model_id.clone();
             let run_descriptor = profile_descriptor.clone();
-            let (items, batch_usage) = tauri::async_runtime::spawn_blocking(move || {
-                crate::ai::client::run_taxonomy_assignment_batch(
+            let recovery = tauri::async_runtime::spawn_blocking(move || {
+                crate::ai::client::run_taxonomy_assignment_batch_resilient(
                     channel,
                     &run_api_key,
                     &run_model_id,
@@ -695,21 +824,39 @@ async fn execute_ai_taxonomy_revision(
                 )
             })
             .await
-            .map_err(taxonomy_background_error)??;
-            checkpoint.assignments.extend(items);
+            .map_err(taxonomy_background_error)?;
+            let recovered = match recovery {
+                Ok(recovered) => recovered,
+                Err(failure) => {
+                    let connection = state.connection()?;
+                    record_taxonomy_attempt_usages(
+                        &connection,
+                        &mut checkpoint,
+                        &task_public_id,
+                        "assignments",
+                        channel,
+                        &profile_model_id,
+                        failure.usages,
+                    )?;
+                    crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+                    Err(failure.error)?
+                }
+            };
+            checkpoint.assignments.extend(recovered.items);
             checkpoint.assignment_offset = end;
             checkpoint.stage = "assignments".to_string();
-            merge_ai_usage(&mut checkpoint.usage, batch_usage.clone());
             let connection = state.connection()?;
-            crate::ai::repository::record_task_model_step(
+            record_taxonomy_attempt_usages(
                 &connection,
+                &mut checkpoint,
                 &task_public_id,
                 "assignments",
                 channel,
                 &profile_model_id,
-                &batch_usage,
+                recovered.usages,
             )?;
             crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+            active_task.stop_if_paused()?;
         }
 
         if checkpoint.run_mode == "incremental" {
@@ -778,8 +925,8 @@ async fn execute_ai_taxonomy_revision(
             };
             let run_assignments = checkpoint.assignments.clone();
             let run_descriptor = descriptor.clone();
-            let (items, batch_usage) = tauri::async_runtime::spawn_blocking(move || {
-                crate::ai::client::run_taxonomy_topic_integration_batch(
+            let recovery = tauri::async_runtime::spawn_blocking(move || {
+                crate::ai::client::run_taxonomy_topic_integration_batch_resilient(
                     channel,
                     &run_api_key,
                     &run_model_id,
@@ -790,8 +937,26 @@ async fn execute_ai_taxonomy_revision(
                 )
             })
             .await
-            .map_err(taxonomy_background_error)??;
-            let integrations_by_topic = items
+            .map_err(taxonomy_background_error)?;
+            let recovered = match recovery {
+                Ok(recovered) => recovered,
+                Err(failure) => {
+                    let connection = state.connection()?;
+                    record_taxonomy_attempt_usages(
+                        &connection,
+                        &mut checkpoint,
+                        &task_public_id,
+                        "integrations",
+                        channel,
+                        &model_id,
+                        failure.usages,
+                    )?;
+                    crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+                    Err(failure.error)?
+                }
+            };
+            let integrations_by_topic = recovered
+                .items
                 .into_iter()
                 .map(|item| (item.topic_key.clone(), item))
                 .collect::<std::collections::HashMap<_, _>>();
@@ -804,22 +969,24 @@ async fn execute_ai_taxonomy_revision(
             checkpoint.integration_offset = end;
             checkpoint.stage = "integrations".to_string();
             checkpoint.taxonomy = Some(taxonomy.clone());
-            merge_ai_usage(&mut checkpoint.usage, batch_usage.clone());
             let connection = state.connection()?;
-            crate::ai::repository::record_task_model_step(
+            record_taxonomy_attempt_usages(
                 &connection,
+                &mut checkpoint,
                 &task_public_id,
                 "integrations",
                 channel,
                 &model_id,
-                &batch_usage,
+                recovered.usages,
             )?;
             crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+            active_task.stop_if_paused()?;
         }
         checkpoint.stage = "ready".to_string();
         checkpoint.taxonomy = Some(taxonomy.clone());
         let connection = state.connection()?;
         crate::ai::repository::save_taxonomy_checkpoint(&connection, &checkpoint)?;
+        active_task.stop_if_paused()?;
         Ok((
             checkpoint.profiles.clone(),
             taxonomy,
@@ -2329,6 +2496,24 @@ mod tests {
             "candidate-manifest"
         );
         assert!(state.take_data_optimization_approval(&token).is_err());
+    }
+
+    #[test]
+    fn taxonomy_pause_targets_only_the_active_task_and_resets_after_drop() {
+        let state = test_state();
+        assert!(state.request_ai_taxonomy_pause().is_err());
+        let guard = state
+            .begin_ai_taxonomy_task("taxonomy-task-1")
+            .expect("begin taxonomy task");
+        assert!(state.begin_ai_taxonomy_task("taxonomy-task-2").is_err());
+        assert_eq!(
+            state.request_ai_taxonomy_pause().expect("request pause"),
+            "taxonomy-task-1"
+        );
+        assert!(guard.stop_if_paused().is_err());
+        drop(guard);
+        assert!(state.request_ai_taxonomy_pause().is_err());
+        assert!(state.begin_ai_taxonomy_task("taxonomy-task-2").is_ok());
     }
 
     #[test]

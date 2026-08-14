@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nanfeng KB Code Review"
+  short_description: "Review data, AI, IPC and UI risks"
+  default_prompt: "Review this Nanfeng Knowledge Base change with evidence-backed findings."

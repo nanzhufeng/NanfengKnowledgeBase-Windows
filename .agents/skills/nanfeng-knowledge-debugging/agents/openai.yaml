@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nanfeng KB Debugging"
+  short_description: "Diagnose Nanfeng Knowledge Base safely"
+  default_prompt: "Diagnose a reproducible Nanfeng Knowledge Base issue from evidence."

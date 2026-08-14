@@ -8,9 +8,10 @@ import { AiRepository, normalizeAiCommandError } from "./aiRepository";
 describe("AiRepository", () => {
   beforeEach(() => invoke.mockReset());
 
-  it("keeps API keys inside the save command and never reads them back", async () => {
+  it("saves a manual route without putting API keys in the route command", async () => {
     invoke.mockResolvedValue({
-      activeChannel: "openrouter",
+      routingMode: "manual",
+      manualSelection: { channel: "openrouter", modelId: "openai/latest" },
       providers: [{
         channel: "openrouter",
         configured: true,
@@ -28,23 +29,23 @@ describe("AiRepository", () => {
     });
     const repository = new AiRepository();
     const result = await repository.saveSettings({
-      activeChannel: "openrouter",
-      selectedModelId: "openai/latest",
-      apiKey: "secret",
+      routingMode: "manual",
+      manualSelection: { channel: "openrouter", modelId: "openai/latest" },
     });
     expect(invoke).toHaveBeenCalledWith("save_ai_settings", {
       input: {
-        activeChannel: "openrouter",
-        selectedModelId: "openai/latest",
-        apiKey: "secret",
+        routingMode: "manual",
+        manualSelection: { channel: "openrouter", modelId: "openai/latest" },
       },
     });
     expect(result.providers[0]).not.toHaveProperty("apiKey");
   });
 
-  it("accepts the Qwen direct channel without exposing its API key", async () => {
+  it("accepts automatic routing without exposing any API key", async () => {
     invoke.mockResolvedValue({
-      activeChannel: "qwen_direct",
+      activeChannel: null,
+      routingMode: "auto",
+      manualSelection: null,
       providers: [{
         channel: "qwen_direct",
         configured: false,
@@ -54,10 +55,35 @@ describe("AiRepository", () => {
       }],
       usage: { taskCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, knownCostUsd: 0 },
     });
-    await expect(new AiRepository().saveSettings({
-      activeChannel: "qwen_direct",
-      selectedModelId: "qwen3.7-flash",
-    })).resolves.toMatchObject({ activeChannel: "qwen_direct" });
+    await expect(new AiRepository().saveSettings({ routingMode: "auto" }))
+      .resolves.toMatchObject({ routingMode: "auto" });
+  });
+
+  it("reads the recent call ledger without accepting prompt or API-key fields", async () => {
+    invoke.mockResolvedValue([{
+      taskPublicId: "ai-task-history-1",
+      taskKind: "taxonomy_revision",
+      stage: "assignments",
+      providerChannel: "qwen_direct",
+      modelId: "qwen3.7-flash",
+      status: "succeeded",
+      promptTokens: 1200,
+      completionTokens: 88,
+      reasoningTokens: 0,
+      cachedTokens: 900,
+      totalTokens: 1288,
+      occurredAt: "2026-08-14T08:00:00Z",
+      errorMessage: null,
+    }]);
+    const entries = await new AiRepository().listCallHistory();
+    expect(invoke).toHaveBeenCalledWith("list_ai_call_history", { limit: 50 });
+    expect(entries[0]).toMatchObject({
+      providerChannel: "qwen_direct",
+      cachedTokens: 900,
+      status: "succeeded",
+    });
+    expect(entries[0]).not.toHaveProperty("prompt");
+    expect(entries[0]).not.toHaveProperty("apiKey");
   });
 
   it("runs a single topic insight task by topic id", async () => {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nanfeng KB Documentation"
+  short_description: "Synchronize evidence-based project docs"
+  default_prompt: "Synchronize Nanfeng Knowledge Base documentation from verified evidence."

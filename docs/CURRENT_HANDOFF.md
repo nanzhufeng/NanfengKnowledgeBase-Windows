@@ -1,5 +1,69 @@
 # 南枫知识库当前交接
 
+## v156 API Key 输入承托与模型精简（2026-08-14）
+
+- 三张 API Key 卡恢复完整宽度的40px输入框与右侧内嵌眼睛。已配置但未点击眼睛时仅显示遮罩圆点，不把真实Key放进前端；眼睛才按既有显式命令从Windows凭据库短暂读取。没有删除Key入口，只有填入新值并点“保存并更新”才会替换凭据。
+- 具体模型列表不再显示“每作者最新三条”的冗余目录：千问直连保留`Flash / Plus / Max`，DeepSeek直连仅保留`Flash / Pro`；OpenRouter只保留`OpenAI Terra`与`Anthropic Sonnet`这两种人工高质量兜底，移除Luna、Opus、重复Pro和经OpenRouter的DeepSeek。旧目录读取时也会过滤；若旧手动选择已被过滤，安全回退自动规划而不继续调用隐藏模型。
+- 自动验证：前端220/220、TypeScript、Vite、Rust150/150（1项真实Shell测试按设计忽略）、格式和diff已通过。当前唯一验收程序为`v156-key-field-and-model-curation`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,864,960 bytes，SHA-256=`48A8E471BB8C1077A76EC93B3CCC2458912021FCE8A8E82B6D77B75442B9A636`，142文件源码指纹=`35AAFD925538E9F70079B61F7F5AD53D1ADA5541AF4390942584B97928ED5687`。Windows PowerShell 5.1与根BAT`--verify`均通过；未启动应用、未读取/写入正式数据库，未调用真实AI。
+
+## v155 统一任务路由基准（2026-08-14）
+
+- 设置 → AI 自动整理不再把三个 API 平台当成三套独立“路由选择”。现只保留一个`任务路由基准`模型框：默认`自动规划`，或由南烛枫从保留模型中人工指定`通道 + 模型`。API Key 保持三张独立卡，仅负责让`千问直连 / DeepSeek 直连 / OpenRouter`可用与更新各自目录，不再改变路由语义。
+- 自动优先级由Rust唯一持有并在创建任务时冻结：已配置千问直连优先（档案/归属`qwen3.7-flash`，结构/整合/常规洞察`qwen3.7-plus`）→ DeepSeek直连（`deepseek-v4-flash → deepseek-v4-pro`）→ OpenRouter（仍仅在其已选供应商家族内分档）。`qwen3.8-max-preview`及OpenRouter高难档必须人工选中，自动不升级。主题洞察批量开始前读取后端`routePreview.topicInsightModelId`，将实际`通道 + 模型`冻结给整批，后续改设置不改变在途任务或断点续跑。
+- 模型卡的第一行必须明确显示来源，例如`千问直连 · Qwen · …`、`DeepSeek 直连 · DeepSeek · …`、`OpenRouter · OpenAI/Anthropic/DeepSeek · …`；第二行仅保留本知识库任务场景说明。模型目录仍只保留已核对的千问三档、DeepSeek可用档及OpenRouter每个支持作者的结构化输出候选，避免把无路由价值的模型塞入手动列表。
+- 自动验证：前端220/220、TypeScript、Rust149/149（1项真实资源管理器测试按设计忽略）、Vite生产构建、Sites 4/4、Rust格式与`git diff --check`通过。全量浏览器`knowledge-final-view.spec.ts`在本轮路由交互前被暗色皮肤的历史固定RGB断言拦截（期待`rgb(12,16,17)`、实际新场景语义色），非本轮改动范围；此轮没有把它冒充为路由失败。未读取/写入正式库、未调用真实AI。
+- 当前唯一验收程序为`v155-unified-ai-routing`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,855,744 bytes，SHA-256=`59C332DA90A387E961637ED362D542C6D51BF5FD83EA9C3AA54F8A0BACAEA730`，142文件源码指纹=`5B353A280C95E880BAFB826F95930567C09B556B8526302E455F816084747510`。系统Windows PowerShell 5.1的`--prepare / --verify`与根BAT`--verify`均通过；构建和验证没有启动应用、没有读取或写入正式资料库、没有调用AI。真实WebView2设置页、Key配置和一次真实任务路由仍待南烛枫从根BAT确认。
+
+## v154 AI 调用记录（2026-08-14）
+
+- 设置 → AI 自动整理新增“调用记录”入口；记录页显示最近50条模型调用的成功/失败/中断状态、通道与模型、任务阶段、时间、输入/输出/缓存/推理 token 和失败摘要，并可返回设置。模型步骤优先来自`ai_task_model_steps`；没有步骤账本的历史任务才从`ai_task_runs`回退一条，避免重复。已经成功的前序步骤不会因后续阶段失败而被误标为失败。
+- 调用记录只读复用现有账本，不新增迁移、日志表或平行成本源；不保存或展示 Prompt、知识正文、API Key、缓存键、稳定前缀原文或价格快照。设置页辅助说明已压缩，保留模型路由、缓存与成本判断所需内容。
+- 自动验证：前端37文件、220/220项通过；Rust148项通过、1项真实资源管理器测试按设计忽略；新增内存SQLite合同覆盖“逐阶段记录 + 旧任务回退 + 无敏感内容”；Vite生产构建、Rust `cargo check`、`cargo fmt --check`和`git diff --check`通过。未启动应用、未读取/写入正式库、未调用真实AI。
+- 当前唯一验收程序为`v154-ai-call-history`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,858,304 bytes，SHA-256=`11618D0A319D083C8C5E6BFDF643E739E9B4AE20E07C1C369EF4501DDFE4752D`，142文件源码指纹=`E52DA11E5660D906A883EA0124DA3C505E16BF97C93A9CE5950F0FE345ABAE83`。系统Windows PowerShell 5.1 的`--prepare / --verify`及根BAT`--verify`均通过；构建和验证没有启动应用、没有读取或写入正式资料库、没有调用AI。真实WebView2界面与真实历史账本显示仍待南烛枫双击根BAT确认。
+
+## v153 暗色场景玻璃最前景卡统一合同（2026-08-14）
+
+- 南烛枫明确把暗色场景玻璃设为唯一例外：`暗色 + 花房/奔马`的普通最前景业务卡统一使用50%透明度；三套暗色实体皮肤与全部浅色皮肤仍保持不透明。实现没有按页面继续叠加私有颜色，而是新增并统一消费`--dark-frontmost-card/raised/selected/human-surface`四个语义入口，覆盖五入口卡二/卡三、主题树领域组和选中项、正文/消息、列表、详情、知识四状态、设置与回收站等前景卡消费者。
+- 控制层明确排除：搜索历史、组合筛选、菜单、弹窗、输入与高密度Markdown块继续消费100%不透明`--dark-surface-* / --knowledge-material-popover/modal-surface`；PDF等原生文档画布保持内容原貌。此前卡二搜索弹层透出后方文字的问题仍由实体`dark-skin-panel`和`z-index:40`共同收口，不会因前景卡50%规则回退。
+- 同一验收程序同时包含v152悬浮滚轮归属修复：每个wheel按当前鼠标坐标重新命中真实滚动层，跨卡立即取消旧卡待执行尾帧，避免Chromium/WebView2连续滚轮事务保留旧`event.target`后继续滑动上一张卡。
+- 自动验证：前端37文件、219/219项通过；TypeScript、Vite生产构建和`git diff --check`通过。1702×1066 Chrome定向回归3/3通过，分别实算暗色场景业务卡alpha=0.50、暗色实体/浅色业务卡alpha=1.00、搜索与筛选弹层alpha=1.00，并保留卡二/卡三旧目标锁定滚轮回归。证据为`.runtime-qa/dark-glass-frontmost-evidence/dark-scene-frontmost-50-percent-1702x1066.png`与`.runtime-qa/dark-popover-evidence/dark-popover-solid-backing-1702x1066.png`。完整`knowledge-final-view.spec.ts`仍含v145之前按统一近黑固定RGB编写的旧断言，本轮不把该旧单体用例冒充当前材质合同；当前改动由新增的跨模式实算用例覆盖。
+- 当前唯一验收程序为`v153-dark-glass-frontmost-contract`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,785,600 bytes，SHA-256=`DC1588030A5E0008D998FEF29BA8EE7DF9DC4560665C5E5C46E292D7689B4056`，142文件源码指纹=`436C28FD46D98AD3AA727C96D3B67DA81F99D18ECC729EDC297999294CEADA93`。系统Windows PowerShell 5.1、根BAT`--verify / --path`均通过；构建和验证没有启动应用、没有读取或写入正式库、没有调用AI。真实WebView2中花房/奔马五入口整体观感仍需南烛枫双击根BAT确认。
+
+## v151 AI 推理重阶段超时恢复（2026-08-14）
+
+- 南烛枫截图中的`operation timed out`已用正式库只读证据定位，不是余额、API Key、断点损坏或模型拒答。任务`ai-task-7447c811-b290-4788-8a10-f7d2c91a3361`在`2026-08-14T04:01:47.687Z`保存最后一次归属步骤，随后于`04:04:17.692Z`失败，间隔约150秒，和`src-tauri/src/ai/client.rs`旧全局请求上限150秒精确吻合。检查点为`profiles 893/893、assignments 893/893、integrations 0`，因此已完成档案与归属仍可复用，续跑只从主题整合继续。
+- 根因是高质量跨文档阶段与高频轻任务共用150秒总超时；第一批8个主题由`qwen3.7-plus`保留推理，响应超过150秒后，旧恢复器又没有把网络超时识别为可缩批错误，于是整次任务立即中断。现只把`taxonomy_structure / taxonomy_topic_integrations`和单主题洞察的请求上限提高到300秒，Flash档案、归属等高频阶段仍为150秒；实际模型、推理强度、Prompt Cache稳定前缀、结构质量门禁和断点合同均未改变。
+- 网络发送改为请求级超时：连接尚未建立的瞬时故障最多补试1次、间隔800毫秒；请求已经发出后发生超时不原样盲重发，交给结构化恢复器把8主题批次逐级二分，只发送更小子集。单项连续3次仍失败即停止并保存断点，避免无限重试与不可控计费。超时报错会明确显示等待上限秒数。供应商未返回usage的超时调用不会伪造Token账本；是否已被供应商计费只能以百炼账单为准。
+- 自动验证：Rust格式通过；3项新增超时合同通过；Rust全量147项通过、1项真实打开资源管理器的Shell测试按设计忽略；Vite/Tauri生产构建通过。根BAT在系统Windows PowerShell 5.1下`--verify`返回0。验证没有启动应用、没有调用真实AI、没有续跑任务、没有写正式数据库；因此“主题整合在真实百炼响应下最终完成”仍需南烛枫从断点人工验收。
+- 当前唯一验收程序为`v151-ai-timeout-batch-recovery`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,787,136 bytes，SHA-256=`2ADA22EC148F72A0738FFA8205357140D81FF6753923DE95CEEF90DDA1ED5229`，142文件源码指纹=`431BF1252C771CA2E27CAA26D2A9F4DACA0E01F32F6C32EF42C7324842F24AEB`。唯一入口仍为根目录`启动南枫知识库-当前验收.bat`。
+
+## v150 Windows 启动器与主窗口恢复（2026-08-14）
+
+- “双击 BAT 打不开”的直接根因不在 EXE、AI 数据或正式 SQLite：根 BAT 曾被保存为 Unix LF 换行，`cmd.exe` 会把后续行的开头吞掉，导致 `rem / set / powershell` 等命令残缺并一闪而过；换行修好后又暴露 Windows PowerShell 5.1 会把无 BOM 的 UTF-8 中文脚本按 ANSI 解码，破坏脚本语法。旧 `--verify` 还在括号块内使用 `%errorlevel%`，会提前展开并把真实失败误报为退出码 0。
+- 根 BAT 现固定为 ASCII + CRLF，改用标签分支传播真实退出码；失败窗口会停留供截图。PowerShell 启动器固定为 UTF-8 BOM + CRLF，并在 `-Prepare / -Verify / -Launch` 前校验 BAT 的 ASCII/CRLF 与脚本 BOM，格式不合格直接拒绝构建。构建指纹现同时覆盖 BAT、启动器和启动探针，避免“EXE 已更新、入口仍是旧版”。
+- PowerShell 5.1 与 7 的 `Sort-Object` 文化排序会让同一批 142 个文件生成不同源码指纹；现改用 .NET ordinal 排序。`build-info.json`通过显式 UTF-8 读写，不再依赖宿主 PowerShell 的默认编码。两种 PowerShell 已得到相同指纹。
+- 启动器新增 `-Launch`：校验 EXE/元数据，识别当前与旧文件名进程，检查 47633 单实例端口，启动后等待 3 秒确认存活并记录`.runtime-qa/current-acceptance-launch.log`。再次启动当前版本时会恢复已有窗口，而不是静默退出。Tauri 主程序启动完成后显式恢复、居中、显示并聚焦`main`窗口，收口旧显示器布局、后台或最小化造成的“进程存在但看不到窗口”。
+- 验证证据：根 BAT 在系统 Windows PowerShell 5.1 下`--verify`返回 0；隔离首次启动 3 秒后进程存活，主窗口标题为“南枫知识库”、窗口句柄非 0、47633 归属同一 PID；第二次启动成功恢复已有窗口。还用正式库三个 SQLite 文件的只读临时副本稳定运行 10 秒，排除正式数据内容触发秒退；所有隔离进程和约 800 MB 临时副本均已清理。Codex没有启动正式库程序、没有写正式数据、没有调用AI。
+- 当前唯一验收程序为`v150-startup-window-recovery`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,778,944 bytes，SHA-256=`56436311C04D9D7EC3FD5D9D09682E105029AB1552B56C4575A840C901CCFA57`，142文件源码指纹=`017F00E798585432E355737959388E9C33D26EEA2343E31C6A95638F7FB4479A`。交付入口仍是根目录`启动南枫知识库-当前验收.bat`；真实正式库窗口路径待南烛枫双击确认。
+
+## v149 AI 手动暂停与单条归属确定性降级（2026-08-14）
+
+- 南烛枫真实全库任务`ai-task-7447c811-b290-4788-8a10-f7d2c91a3361`的失败已做正式库只读核对：断点完整保留`893/893`份语义档案、`240/893`条主题归属、10个领域、36个主题，卡在来源ID 241；任务累计`1,473,361` tokens。最后3次单条归属均返回可解析、长度正常的JSON并记录`85/86/85` completion tokens，但没有形成合法唯一归属。百炼Chat Completions的`json_object`只保证JSON，不执行本地JSON Schema枚举，因此继续重发同一`topicKey`请求无法解决模型自创key、错ID或坏字段。
+- `src-tauri/src/ai/client.rs`保留既有批量合法项和最小子集恢复；缩到单条后不再要求供应商回传`sourceItemId/topicKey`，改为只选择0起始的合法主题编号。本地根据编号确定性写入真实来源ID和真实topicKey，并统一复核编号范围、置信度、说明和`uncertain`。供应商仍负责语义判断，本地不做关键词硬归类；编号选择仍异常时继续沿用单条3次止损。新降级阶段使用独立`nanfeng_taxonomy_assignment_choice`缓存身份，稳定主题编号表可跨缺项复用，现有`nfkb-ai-execution-v1`断点无需迁移即可续跑。
+- 主题管理的全库/增量分类进度弹窗新增协作式暂停：后端只接受当前活动任务的暂停信号，当前逻辑批次完成并保存checkpoint后不再发新请求；前端关闭进度弹窗并保留“继续上次生成”，重启应用后仍可发现断点。主题洞察的全主题批处理同样在当前主题完成或重试前暂停，剩余主题ID、已完成计数、强制重整模式和实际供应商/模型保存到按已应用分类修订隔离的本地恢复快照；返回页面或重启后显示“继续剩余 N 个主题”，已完成主题不重复生成。分类修订变化、主题删除或模型设置变化均不会把旧队列错误套到新任务。
+- 自动验证：Rust 144项通过、1项真实Shell测试按设计忽略；前端217/217、TypeScript、Vite生产构建、Rust格式和`git diff --check`通过。新增覆盖单条编号本地映射/越界拒绝、活动任务暂停所有权、批处理在成功后暂停、重试前暂停、恢复快照分类修订隔离、冻结模型和累计结果合并。没有调用真实AI验证新降级请求，不能把自动合同写成来源241已经生成成功。
+- 当前唯一验收程序为`v149-ai-pause-assignment-choice`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,777,920 bytes，SHA-256=`3065195EF4E9417EA70322AEB8D5A3737BA21CFB8A367DFFB95F6DA59E37220A`，139文件源码指纹=`2E582AD3B39144A15C6E3C0EBE48AF27715ACA13F2E350C2D92AD3BDBEF865E2`；固定共享缓存`--prepare / --verify`通过。构建未启动应用、未写正式库、未调用AI；正式库只执行了上述只读断点与账本查询。
+
+## 全库 AI 分类不完整批次恢复（2026-08-14）
+
+- 截图中的共同错误已定位：档案阶段固定把 24 条来源交给模型，旧客户端要求一次精确返回 24 条；千问偶发漏一条时，后端直接以“AI 笔记语义档案未完整覆盖本批来源”中断整批，没有补齐、缩批或自动重试。`24/893`继续到`264/893`后再次出现同错，符合不同批次随机漏项，而不是断点数据库损坏。
+- `src-tauri/src/ai/client.rs`现统一恢复档案、归属和主题整合：保留唯一合法项，仅重试缺失/重复/无效子集；整批无有效项、JSON 破损或输出长度截断时二分；单条最多 3 次，仍不完整则停止并保留断点，避免无限计费。最终覆盖、顺序、topicKey 和非空内容门禁没有放宽。
+- `src-tauri/src/commands.rs`将恢复过程中的每次供应商 usage 分别写入阶段账本并合并任务总量；失败前可取得的用量也随检查点保存。没有模型 usage 的网络/解析失败不会伪造 Token。
+- Prompt Cache 请求合同升级为`nfkb-prompt-cache-v3`。OpenRouter继续使用含当前 ID/数量的严格 JSON Schema；千问/DeepSeek 的`json_object`不执行 JSON Schema，因此动态 ID 不再写进 system 前缀，精确覆盖交给本地恢复器，从而保持跨批次稳定前缀和 taxonomy 缓存命中。持久化结果字段、任务语义与模型路由未变，执行合同仍为`nfkb-ai-execution-v1`，现有中断任务可继续。
+- 自动验证：Rust 142/142，1 项会真实打开资源管理器的 Shell 测试按设计忽略；恢复、二分、逐项解析、无效/重复清理、三次止损和缓存前缀定向合同通过；TypeScript通过。前端现为211/213，2项失败来自此前未提交的根`AGENTS.md`删去了现行入口名和视觉禁令，而合同测试仍要求这些长期规则；不是本轮 AI Rust 链路失败，本轮没有改该文件。
+- 当前唯一验收程序已更新为`v148-ai-taxonomy-batch-recovery`：`.runtime-qa/current-acceptance-app/release/nanfeng-knowledge-base.exe`，29,720,064 bytes，SHA-256=`B651822FC4F32C6EE16E5117B47467243B76574001397F4E8E4F3BA8C3977906`，137文件源码指纹=`0FD85B8F5540F68476DB5E61C603A4D2658F8E35C2261090DC4B417806B7F986`；`--prepare / --verify`与根BAT `--path`通过。首次构建发现共享Cargo缓存的Tauri产物仍引用已移除的v142绝对路径，已只重建Tauri及三个插件的136.5MiB可再生产物，没有清空共享缓存。
+- 安全边界：未读取或写入`D:\南枫知识库`，未调用真实 AI，未应用或撤销分类修订。893/901来源继续生成、真实用量与长任务稳定性仍需在新验收程序中由南烛枫明确授权后验证。
+
 ## Prompt Cache 后端合同与成本证据（2026-08-13）
 
 - 风险收口已完成：migration v15新增`nfkb-ai-execution-v1`，任务、断点、主题洞察、来源档案与分类修订按执行契约隔离；旧结果为`legacy`只读历史，不参与当前续跑、增量或复用。启动恢复会把上次遗留`running`转为`interrupted`并保留分类断点，主题洞察后台线程异常也会落为失败任务。

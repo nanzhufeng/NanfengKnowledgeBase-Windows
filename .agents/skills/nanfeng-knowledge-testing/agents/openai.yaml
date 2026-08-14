@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nanfeng KB Testing"
+  short_description: "Plan and run bounded validation"
+  default_prompt: "Select and run the smallest sufficient validation for this Nanfeng Knowledge Base change."

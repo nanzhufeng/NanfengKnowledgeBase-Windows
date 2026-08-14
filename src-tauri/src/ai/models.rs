@@ -63,6 +63,33 @@ pub fn qwen_model_catalog() -> Vec<AiModelDescriptor> {
     .collect()
 }
 
+/// 手动模型列表只保留南枫知识库确实需要的档位。日常生成由千问/DeepSeek直连承担；
+/// OpenRouter只保留可作为人工高质量兜底的 OpenAI Terra 与 Anthropic Sonnet，避免
+/// 同系列的 Luna、Opus、重复 Pro 或经 OpenRouter 的 DeepSeek 把选择变成成本噪音。
+pub fn is_nanfeng_knowledge_base_model(
+    channel: AiProviderChannel,
+    model: &AiModelDescriptor,
+) -> bool {
+    let identity = format!("{} {}", model.id, model.name).to_ascii_lowercase();
+    match channel {
+        AiProviderChannel::QwenDirect => matches!(
+            model.id.as_str(),
+            QWEN_DEFAULT_ORGANIZATION_MODEL
+                | QWEN_COMPLEX_SYNTHESIS_MODEL
+                | QWEN_HARD_JUDGMENT_MODEL
+        ),
+        AiProviderChannel::DeepseekDirect => matches!(
+            model.id.as_str(),
+            DEEPSEEK_DEFAULT_ORGANIZATION_MODEL | DEEPSEEK_COMPLEX_SYNTHESIS_MODEL
+        ),
+        AiProviderChannel::Openrouter => match model.author.to_ascii_lowercase().as_str() {
+            "openai" => identity.contains("terra"),
+            "anthropic" => identity.contains("sonnet"),
+            _ => false,
+        },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AiModelPricing {
@@ -238,18 +265,61 @@ pub struct AiUsageSummary {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiSettingsView {
-    pub active_channel: String,
+    /// `active_channel`是旧字段的兼容投影；自动规划时为空。
+    pub active_channel: Option<String>,
+    pub routing_mode: String,
+    pub manual_selection: Option<AiModelSelectionView>,
+    pub route_preview: Option<AiTaskRoutePreview>,
     pub providers: Vec<AiProviderSettingsView>,
     pub usage: AiUsageSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelSelectionView {
+    pub channel: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTaskRoutePreview {
+    pub provider_channel: String,
+    pub profile_model_id: String,
+    pub synthesis_model_id: String,
+    pub topic_insight_model_id: String,
+}
+
+/// 用户可见的 AI 调用账本行。它只携带运行状态和用量，不包含提示词、正文或密钥。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCallHistoryEntry {
+    pub task_public_id: String,
+    pub task_kind: String,
+    pub stage: Option<String>,
+    pub provider_channel: String,
+    pub model_id: String,
+    pub status: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cached_tokens: i64,
+    pub total_tokens: i64,
+    pub occurred_at: String,
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAiSettingsInput {
-    pub active_channel: AiProviderChannel,
-    pub selected_model_id: Option<String>,
+    #[serde(default = "default_ai_routing_mode")]
+    pub routing_mode: String,
     #[serde(default)]
-    pub api_key: Option<String>,
+    pub manual_selection: Option<AiModelSelectionInput>,
+}
+
+fn default_ai_routing_mode() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -541,6 +611,26 @@ pub struct AiTaxonomyApplyResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_picker_excludes_redundant_or_costly_fallbacks() {
+        assert!(is_nanfeng_knowledge_base_model(
+            AiProviderChannel::Openrouter,
+            &descriptor("openai/gpt-5.6-terra", "OpenAI", "GPT-5.6 Terra"),
+        ));
+        assert!(is_nanfeng_knowledge_base_model(
+            AiProviderChannel::Openrouter,
+            &descriptor("anthropic/claude-sonnet-5", "Anthropic", "Claude Sonnet 5"),
+        ));
+        assert!(!is_nanfeng_knowledge_base_model(
+            AiProviderChannel::Openrouter,
+            &descriptor("openai/gpt-5.6-luna", "OpenAI", "GPT-5.6 Luna"),
+        ));
+        assert!(!is_nanfeng_knowledge_base_model(
+            AiProviderChannel::Openrouter,
+            &descriptor("anthropic/claude-opus-5", "Anthropic", "Claude Opus 5"),
+        ));
+    }
 
     #[test]
     fn qwen_taxonomy_uses_flash_for_volume_and_plus_for_cross_document_synthesis() {

@@ -9,6 +9,8 @@ import {
   GitBranch,
   ListTodo,
   Maximize2,
+  Pause,
+  Play,
   ShieldCheck,
   Sparkles,
   StickyNote,
@@ -94,10 +96,15 @@ type KnowledgeReadingWorkspaceProps = {
   aiSingleResult: AiSingleInsightResult | null;
   aiBatchProgress: AiTopicBatchProgress | null;
   aiBatchResult: AiTopicBatchResult | null;
+  aiBatchPauseRequested: boolean;
+  aiBatchResumeCount: number;
   onRunAiInsight: () => void;
   onCloseAiSingleResult: () => void;
   onRunAllAiInsights: () => void;
   onRunPendingAiInsights: () => void;
+  onPauseAiBatch: () => void;
+  onContinueAiBatch: () => void;
+  onDiscardAiBatchResume: () => void;
   onRetryFailedAiInsights: () => void;
   onCloseAiBatchResult: () => void;
 };
@@ -781,10 +788,15 @@ export function KnowledgeReadingWorkspace({
   aiSingleResult,
   aiBatchProgress,
   aiBatchResult,
+  aiBatchPauseRequested,
+  aiBatchResumeCount,
   onRunAiInsight,
   onCloseAiSingleResult,
   onRunAllAiInsights,
   onRunPendingAiInsights,
+  onPauseAiBatch,
+  onContinueAiBatch,
+  onDiscardAiBatchResume,
   onRetryFailedAiInsights,
   onCloseAiBatchResult,
 }: KnowledgeReadingWorkspaceProps) {
@@ -1111,27 +1123,40 @@ export function KnowledgeReadingWorkspace({
                 {topicDetail.topic.description ? <p>{topicDetail.topic.description}</p> : null}
               </div>
               <div className="knowledge-final-heading-actions">
-                <button type="button" disabled={aiRunning || Boolean(aiBatchProgress)} onClick={onRunAiInsight}>
+                <button type="button" disabled={aiRunning || Boolean(aiBatchProgress) || aiBatchResumeCount > 0} onClick={onRunAiInsight}>
                   <Sparkles size={15} />{aiRunning ? "AI 整理中…" : aiInsight ? "AI 重新整理" : "用 AI 整理"}
                 </button>
-                <button
-                  type="button"
-                  disabled={aiRunning || Boolean(aiBatchProgress) || !topics.length}
-                  title="只补当前模型尚未生成、或笔记内容已变化的主题；相同输入直接复用已有结果。"
-                  onClick={onRunPendingAiInsights}
-                >
-                  <ListTodo size={15} />AI 补充未生成主题
-                </button>
-                <button
-                  type="button"
-                  disabled={aiRunning || Boolean(aiBatchProgress) || !topics.length}
-                  onClick={onRunAllAiInsights}
-                >
-                  <ListTodo size={15} />
-                  {aiBatchProgress
-                    ? `全部整理中 ${aiBatchProgress.current}/${aiBatchProgress.total}`
-                    : "AI 全量重新整理"}
-                </button>
+                {aiBatchResumeCount > 0 ? (
+                  <>
+                    <button type="button" disabled={aiRunning} onClick={onContinueAiBatch}>
+                      <Play size={15} />继续剩余 {aiBatchResumeCount} 个主题
+                    </button>
+                    <button type="button" disabled={aiRunning} onClick={onDiscardAiBatchResume}>
+                      <X size={15} />放弃剩余任务
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={aiRunning || Boolean(aiBatchProgress) || !topics.length}
+                      title="只补当前模型尚未生成、或笔记内容已变化的主题；相同输入直接复用已有结果。"
+                      onClick={onRunPendingAiInsights}
+                    >
+                      <ListTodo size={15} />AI 补充未生成主题
+                    </button>
+                    <button
+                      type="button"
+                      disabled={aiRunning || Boolean(aiBatchProgress) || !topics.length}
+                      onClick={onRunAllAiInsights}
+                    >
+                      <ListTodo size={15} />
+                      {aiBatchProgress
+                        ? `全部整理中 ${aiBatchProgress.current}/${aiBatchProgress.total}`
+                        : "AI 全量重新整理"}
+                    </button>
+                  </>
+                )}
               </div>
             </header>
 
@@ -1588,7 +1613,18 @@ export function KnowledgeReadingWorkspace({
               </ol>
             </div>
             <footer className="ai-batch-progress-footer">
-              <span>整理过程中请保持软件开启；瞬时网络错误会自动重试一次。</span>
+              <span>
+                {aiBatchPauseRequested
+                  ? "暂停申请已收到；正在完成当前请求并保存剩余队列。"
+                  : "整理过程中请保持软件开启；瞬时网络错误会自动重试一次。"}
+              </span>
+              <button
+                type="button"
+                disabled={aiBatchPauseRequested}
+                onClick={onPauseAiBatch}
+              >
+                <Pause size={14} />{aiBatchPauseRequested ? "正在暂停…" : "暂停，稍后继续"}
+              </button>
             </footer>
           </section>
         </div>,
