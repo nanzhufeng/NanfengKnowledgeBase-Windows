@@ -29,7 +29,7 @@ try {
     $tauri = Get-Content -LiteralPath $tauriConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $readme = Get-Content -LiteralPath $readmePath -Raw -Encoding UTF8
     $version = [string]$tauri.version
-    $expectedInstallerName = "NanfengKnowledgeBase-Windows-v$version-Setup.exe"
+    $expectedInstallerName = "Nanfeng-Knowledge-Base-Windows-v$version-Setup.exe"
     $installerPath = Join-Path $releaseDirectory $expectedInstallerName
 
     Assert-ReleaseContract ($package.version -eq $version) "package.json and Tauri versions do not match."

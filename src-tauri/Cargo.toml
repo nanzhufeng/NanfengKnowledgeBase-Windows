@@ -1,6 +1,6 @@
 [package]
 name = "nanfeng-knowledge-base"
-version = "0.5.0"
+version = "0.5.1"
 description = "南枫知识库：本地知识档案与判断版本库"
 authors = ["南烛枫"]
 license = ""

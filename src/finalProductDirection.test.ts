@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const workspace = readFileSync(
   new URL("./components/KnowledgeWorkspace.tsx", import.meta.url),
   "utf8",
@@ -24,7 +24,7 @@ const topicWorkspace = readFileSync(
   new URL("./components/TopicStructureReadingWorkspace.tsx", import.meta.url),
   "utf8",
 );
-const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const recordRepository = readFileSync(
   new URL("./services/recordRepository.ts", import.meta.url),
   "utf8",

@@ -21,6 +21,7 @@ import {
   History,
   Image as ImageIcon,
   Inbox,
+  Info,
   Keyboard,
   LayoutGrid,
   MoreHorizontal,
@@ -2940,6 +2941,7 @@ function SettingsPage({
   const [legacyAttachmentInspecting, setLegacyAttachmentInspecting] = useState(false);
   const [legacyAttachmentRecoveryConfirming, setLegacyAttachmentRecoveryConfirming] = useState(false);
   const [aiAutomationSettingsOpen, setAiAutomationSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [recoveringLegacyAttachments, setRecoveringLegacyAttachments] = useState(false);
   const [runtimeBuildInfo, setRuntimeBuildInfo] = useState<RuntimeBuildInfo | null>(null);
   const [runtimeBuildInfoError, setRuntimeBuildInfoError] = useState("");
@@ -3076,7 +3078,32 @@ function SettingsPage({
             </AppCard>
           );
         })}
+        <AppCard
+          className="settings-row settings-row-clickable"
+          interactive
+          onClick={() => setAboutOpen(true)}
+        >
+          <div className="settings-icon"><Info size={21} /></div>
+          <div><strong>关于</strong><span>版本、开发者和项目更新地址</span></div>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setAboutOpen(true);
+            }}
+          >
+            <span>查看</span><ChevronRight size={18} />
+          </button>
+        </AppCard>
       </div>
+      <details className="settings-feature-review">
+        <summary>功能审阅 <span>关于</span></summary>
+        <div>
+          <strong>保留</strong>
+          <span>入口：设置 → 关于</span>
+          <small>集中核对版本、开发者与项目更新来源，不新增侧栏入口。</small>
+        </div>
+      </details>
       <section className="runtime-build-card elevated-card" aria-labelledby="runtime-build-title">
         <div className="settings-icon"><ShieldCheck size={21} /></div>
         <div className="runtime-build-copy">
@@ -3405,6 +3432,34 @@ function SettingsPage({
           onClose={() => setAiAutomationSettingsOpen(false)}
         >
           <AiAutomationSettings onNotify={onNotify} />
+        </PrototypeDialog>
+      ) : null}
+      {aboutOpen ? (
+        <PrototypeDialog
+          eyebrow="南枫知识库"
+          title="关于"
+          className="about-dialog"
+          resizable={false}
+          onClose={() => setAboutOpen(false)}
+        >
+          <article className="about-panel">
+            <section className="about-identity">
+              <h3>南枫知识库</h3>
+              <p>本地优先的知识管理与主题洞察工作区。</p>
+            </section>
+            <section className="about-section">
+              <h3>版本信息</h3>
+              <p>Desktop 版本 {runtimeBuildInfo?.version ?? "0.5.0"}</p>
+              <p>开发时间 2026-09-15 23:01</p>
+            </section>
+            <section className="about-section">
+              <h3>开发者信息</h3>
+              <p>开发者：席瑞</p>
+              <p>联系邮箱：nanzhufeng.studio@gmail.com</p>
+              <p>源码与更新：<a href="https://github.com/nanzhufeng/NanfengKnowledgeBase-Windows" target="_blank" rel="noreferrer">GitHub · nanzhufeng/NanfengKnowledgeBase-Windows</a></p>
+              <p>版权所有 © 2026 席瑞</p>
+            </section>
+          </article>
         </PrototypeDialog>
       ) : null}
       {dataMigrationPreview ? (

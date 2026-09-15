@@ -2,7 +2,7 @@
 
 本地优先的 Windows 知识整理与判断版本库。软件使用 Tauri 2、React/TypeScript、Rust 和 SQLite/FTS5，笔记、来源文件、主题结构、判断版本与备份均保存在本机。
 
-当前版本：**v0.5.0**
+当前版本：**v0.5.1**
 
 ![南枫知识库 Windows 主界面](docs/screenshots/nanfeng-knowledge-base-windows.png)
 

@@ -3304,6 +3304,102 @@ textarea:focus-visible,
   font-size: 11px;
 }
 
+.settings-feature-review {
+  max-width: 980px;
+  margin: 10px auto 0;
+  color: #667287;
+  font-size: 11px;
+}
+
+.settings-feature-review summary {
+  width: max-content;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-feature-review summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-feature-review summary span {
+  margin-left: 5px;
+  color: #8c96a6;
+}
+
+.settings-feature-review > div {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 9px 11px;
+  border: 1px solid rgba(139, 155, 176, .24);
+  border-radius: 9px;
+  background: rgba(248, 250, 253, .7);
+}
+
+.settings-feature-review strong {
+  color: #315275;
+}
+
+.settings-feature-review small {
+  min-width: 0;
+  color: #7f8999;
+}
+
+.prototype-dialog.about-dialog {
+  width: min(760px, calc(100vw - 44px));
+  padding: 24px 30px 28px;
+}
+
+.about-panel {
+  margin: 0 -30px -28px;
+}
+
+.about-panel section {
+  padding: 22px 30px;
+  border-bottom: 1px solid #e2e7ee;
+}
+
+.about-panel section:last-child {
+  border-bottom: 0;
+}
+
+.about-panel h3,
+.about-panel p {
+  margin: 0;
+}
+
+.about-panel h3 {
+  color: #16395f;
+  font-size: 16px;
+}
+
+.about-panel p {
+  margin-top: 6px;
+  color: #53667d;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.about-identity {
+  padding-top: 24px !important;
+  padding-bottom: 25px !important;
+}
+
+.about-identity h3 {
+  font-size: 18px;
+}
+
+.about-panel a {
+  color: #2859bc;
+  text-decoration: none;
+}
+
+.about-panel a:hover {
+  text-decoration: underline;
+}
+
 .tag-manager {
   display: grid;
   padding-top: 16px;
@@ -16773,6 +16869,31 @@ span.source-image-placeholder {
 ) {
   color: var(--dark-text);
   border-color: var(--dark-border);
+}
+
+:root[data-knowledge-color-mode="dark"] .about-panel section {
+  border-color: var(--dark-border);
+}
+
+:root[data-knowledge-color-mode="dark"] .about-panel :is(h3, p) {
+  color: var(--dark-text);
+}
+
+:root[data-knowledge-color-mode="dark"] .about-panel a {
+  color: var(--dark-skin-accent);
+}
+
+.app-shell[data-color-mode="dark"] .settings-feature-review {
+  color: var(--dark-text-secondary);
+}
+
+.app-shell[data-color-mode="dark"] .settings-feature-review > div {
+  border-color: var(--dark-border);
+  background: var(--dark-skin-raised);
+}
+
+.app-shell[data-color-mode="dark"] .settings-feature-review strong {
+  color: var(--dark-text-primary);
 }
 
 :root[data-knowledge-color-mode="dark"] :is(

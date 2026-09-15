@@ -48,7 +48,7 @@ describe("UnifiedNoteListCard", () => {
   it("keeps Record views and the source archive on the same functional toolbar structure", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const workspace = readFileSync(new URL("./KnowledgeWorkspace.tsx", import.meta.url), "utf8");
-    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const toolbar = renderToStaticMarkup(
       <>
         <UnifiedNoteListSearchRow>搜索</UnifiedNoteListSearchRow>
@@ -199,7 +199,7 @@ describe("UnifiedNoteListCard", () => {
   it("uses one compact information-density contract across all four list entrances", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const workspace = readFileSync(new URL("./KnowledgeWorkspace.tsx", import.meta.url), "utf8");
-    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
     expect(formatNoteCardDate("2026-07-25T08:00:00Z")).toBe("2026-07-25");
     expect(app).toContain("const [compactMode, setCompactMode] = useState(true)");
@@ -211,7 +211,7 @@ describe("UnifiedNoteListCard", () => {
   });
 
   it("pins the display actions to the far right and reserves the count at three digits", () => {
-    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const toolbar = renderToStaticMarkup(
       <UnifiedNoteListDisplayToolbar
         label="全部笔记"
@@ -237,7 +237,7 @@ describe("UnifiedNoteListCard", () => {
   });
 
   it("indents hierarchy labels without shifting the shared count column", () => {
-    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const knowledgeTree = readFileSync(new URL("./KnowledgeReadingWorkspace.tsx", import.meta.url), "utf8");
     const topicTree = readFileSync(new URL("./TopicStructureReadingWorkspace.tsx", import.meta.url), "utf8");
     const sharedHierarchy = readFileSync(new URL("./KnowledgeTopicHierarchy.tsx", import.meta.url), "utf8");
@@ -289,7 +289,7 @@ describe("UnifiedNoteListCard", () => {
   });
 
   it("reveals quick actions only for hover, keyboard-visible action focus, or an open menu", () => {
-    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
     expect(styles).toContain(
       ".unified-note-card:hover .unified-note-actions .note-list-quick-actions",

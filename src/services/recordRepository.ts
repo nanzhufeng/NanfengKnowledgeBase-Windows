@@ -758,7 +758,7 @@ export class BrowserRecordRepository implements RecordRepository {
 
   async getRuntimeBuildInfo(): Promise<RuntimeBuildInfo> {
     return {
-      version: "0.2.0",
+      version: "0.5.0",
       buildLabel: "浏览器演示",
       executableSizeBytes: 0,
       executableSha256: "浏览器演示不提供 EXE 校验",

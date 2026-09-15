@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const readProjectFile = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const readProjectFile = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 const assetView = readProjectFile("src/components/SourceAttachmentAsset.tsx");
 const timelineMediaCard = readProjectFile("src/components/AttachmentTimelineMediaCard.tsx");

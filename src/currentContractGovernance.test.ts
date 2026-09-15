@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const readProjectFile = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const readProjectFile = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 const agents = readProjectFile("AGENTS.md");
 const masterSpec = readProjectFile("docs/南枫知识库_产品定义与自动分类主规格.md");
@@ -32,7 +32,7 @@ const styles = readProjectFile("src/styles.css");
 
 describe("当前合同治理", () => {
   it("用户可见入口、内部兼容标识与历史证据边界明确", () => {
-    for (const contract of [agents, masterSpec, architecture, designBaseline, acceptance, nextPrompt]) {
+    for (const contract of [agents, masterSpec, architecture, designBaseline, acceptance]) {
       expect(contract).toContain("主题洞察");
       expect(contract).toContain("全部笔记");
       expect(contract).toContain("主题管理");
@@ -40,8 +40,8 @@ describe("当前合同治理", () => {
     expect(masterSpec).toContain("现行合同说明（2026-08-03）");
     expect(architecture).toContain("当前合同判定顺序");
     expect(designBaseline).toContain("只用于证据定位");
-    expect(nextPrompt).toContain("当前分支：`codex/nanfeng-ai-automation-mvp-20260810`");
-    expect(nextPrompt).toContain("AI 开发前保护 checkpoint：`30045e9e9a133802ea0a471baa8dd50370d84f45`");
+    expect(nextPrompt).toContain("CURRENT_HANDOFF.md 是唯一动态入口");
+    expect(nextPrompt).toContain("不自动开始功能、构建、数据库、真实 AI 或发布操作");
   });
 
   it("旧阶段和旧视觉规则不能重新取得当前所有权", () => {
@@ -91,8 +91,8 @@ describe("当前合同治理", () => {
     expect(appShell).toContain("readCachedStorageStats");
     expect(appShell).not.toContain('window.addEventListener("focus", refreshWhenActive)');
     expect(appShell).not.toContain('document.addEventListener("visibilitychange", refreshWhenActive)');
-    expect(appShell).toContain("await reloadCollections(recordId);\n              await refreshStorageStats();");
-    expect(appShell).toContain("await reloadCollections();\n              await refreshStorageStats();");
+    expect(appShell).toMatch(/await reloadCollections\(recordId\);\s+await refreshStorageStats\(\);/);
+    expect(appShell).toMatch(/await reloadCollections\(\);\s+await refreshStorageStats\(\);/);
   });
 
   it("AI 自动整理在设置页只保留入口，详细配置复用可外部关闭的二级弹窗", () => {
@@ -142,6 +142,17 @@ describe("当前合同治理", () => {
     expect(styles).toMatch(/\.ai-model-picker-options\s*\{[\s\S]*?align-content:\s*start;[\s\S]*?grid-auto-rows:\s*max-content;/);
     expect(styles).toMatch(/\.topic-final-filter-controls,\s*\.topic-final-ai-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
     expect(styles).toMatch(/\.settings-page > :is\([\s\S]*?\.ai-automation-entry,[\s\S]*?\.settings-list/);
+  });
+
+  it("关于信息在设置内集中呈现，并使用当前项目的版本与发布地址", () => {
+    expect(appShell).toContain('<div><strong>关于</strong><span>版本、开发者和项目更新地址</span></div>');
+    expect(appShell).toContain('title="关于"');
+    expect(appShell).toContain('Desktop 版本 {runtimeBuildInfo?.version ?? "0.5.0"}');
+    expect(appShell).toContain('开发时间 2026-09-15 23:01');
+    expect(appShell).toContain('https://github.com/nanzhufeng/NanfengKnowledgeBase-Windows');
+    expect(appShell).toContain('功能审阅 <span>关于</span>');
+    expect(styles).toContain('.prototype-dialog.about-dialog');
+    expect(styles).toContain('.about-panel');
   });
 
   it("所有模型从统一路由入口接入，并明确标注直连或 OpenRouter 来源", () => {
